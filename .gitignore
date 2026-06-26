@@ -1,0 +1,54 @@
+# === 上下文 & 会话追踪（不上传） ===
+context.md
+*.memory.md
+
+# === 二进制 ===
+*.exe
+*.exe~
+*.exe.bak-*
+mgmt-system/mgmt-server
+mail-node/mail-node
+
+# === 日志 ===
+*.log
+*.out.log
+*.err.log
+
+# === 配置包含密钥（不上传） ===
+config.yaml
+config.prod.yaml
+roundcube.conf
+*.prod.yaml
+
+# === 部署产物 ===
+*.tar.gz
+*.zip
+
+# === 备份 ===
+*.bak-*
+*~
+*.orig
+
+# === IDE ===
+.idea/
+.vscode/
+*.iml
+
+# === Go ===
+.gocache/
+vendor/
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === 内部协作文档(不公开) ===
+CLAUDE.md
+REQUIREMENTS_ANALYSIS.md
+DEPLOY.md
+docs/design/phase1b-deploy-log.md
+docs/design/phase1b-intl-deploy-log.md
+
+# === 本地/测试配置与编译产物 ===
+mail-node/config.t5a.local.yaml
+mail-node/mail-node.t5*

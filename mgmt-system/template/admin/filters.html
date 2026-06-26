@@ -1,0 +1,213 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{.title}}</title>
+    <script src="/static/htmx.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; color: #333; }
+        .sidebar { width: 200px; background: #1a1a2e; color: #eee; position: fixed; top: 0; left: 0; bottom: 0; padding: 20px 0; }
+        .sidebar h2 { padding: 0 20px 20px; font-size: 16px; border-bottom: 1px solid #333; margin-bottom: 10px; }
+        .sidebar a { display: block; padding: 10px 20px; color: #aaa; text-decoration: none; font-size: 14px; }
+        .sidebar a:hover, .sidebar a.active { color: #fff; background: #16213e; }
+        .main { margin-left: 200px; padding: 24px; }
+        .section { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        th { font-weight: 600; color: #666; background: #fafafa; }
+        .btn { padding: 8px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; }
+        .btn-primary { background: #1a1a2e; color: #fff; }
+        .btn-primary:hover { background: #2a2a4e; }
+        .btn-sm { padding: 4px 12px; font-size: 12px; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-success { background: #27ae60; color: #fff; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .form-row { display: flex; gap: 12px; }
+        .form-row .form-group { flex: 1; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .tag.pass { background: #e8f5e9; color: #2e7d32; }
+        .tag.block { background: #ffebee; color: #c62828; }
+        .tag.flag { background: #fff3e0; color: #e65100; }
+        .tag.whitelist_sender { background: #e8f5e9; color: #2e7d32; }
+        .tag.blacklist_sender { background: #ffebee; color: #c62828; }
+        .tag.keyword { background: #e3f2fd; color: #1565c0; }
+        .tag.regex { background: #f3e5f5; color: #7b1fa2; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #fff; padding: 24px; border-radius: 8px; width: 520px; max-width: 90%%; }
+        .modal h3 { margin-bottom: 16px; }
+        .toggle-section { margin-bottom: 12px; }
+        .toggle-section summary { cursor: pointer; font-size: 15px; font-weight: 600; padding: 8px 0; color: #1a1a2e; }
+        .spinner { color: #888; font-size: 13px; margin-left: 8px; display: none; }
+        .htmx-request .spinner { display: inline; }
+        .success-msg { background: #e8f5e9; color: #2e7d32; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+        .error-msg { background: #ffebee; color: #c62828; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+        .hint { font-size: 12px; color: #888; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h2>📧 邮箱管理</h2>
+        <a href="/admin/">仪表盘</a>
+        <a href="/admin/servers">服务器管理</a>
+        <a href="/admin/filters" class="active">过滤规则</a>
+        <a href="/admin/mailboxes">邮箱管理</a>
+    </nav>
+
+    <div class="main">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <div>
+                <h1>过滤规则管理</h1>
+                <p style="color:#888;font-size:13px;margin-top:4px;">规则优先级数字越小越先匹配。修改后邮箱服务器 30 秒内自动拉取生效。</p>
+            </div>
+            <button class="btn btn-primary" onclick="openAdd()">➕ 新增规则</button>
+        </div>
+
+        <!-- 规则列表 -->
+        <div class="section">
+            <table>
+                <thead>
+                    <tr><th>优先级</th><th>名称</th><th>类型</th><th>匹配模式</th><th>动作</th><th>启用</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    {{range .rules}}
+                    <tr>
+                        <td>{{.Priority}}</td>
+                        <td><strong>{{.Name}}</strong></td>
+                        <td><span class="tag {{.RuleType}}">{{.RuleType}}</span></td>
+                        <td><code>{{.Pattern}}</code></td>
+                        <td><span class="tag {{.Action}}">{{.Action}}</span></td>
+                        <td>{{if .Enabled}}✅{{else}}❌{{end}}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="openEdit({{.ID}})">编辑</button>
+                            <button class="btn btn-sm btn-danger"
+                                    hx-delete="/api/v1/admin/filters/{{.ID}}"
+                                    hx-target="body"
+                                    hx-swap="none"
+                                    onclick="if(confirm('确定删除？')){setTimeout(function(){location.reload()},300)}">删除</button>
+                        </td>
+                    </tr>
+                    {{end}}
+                    {{if not .rules}}
+                    <tr><td colspan="7" style="color:#888;text-align:center;padding:20px;">暂无过滤规则，去添加第一条吧</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 新增/编辑规则弹窗 -->
+    <div id="rule-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+            <h3 id="modal-title">新增规则</h3>
+            <form hx-post="/api/v1/admin/filters"
+                  hx-target="#modal-result"
+                  hx-indicator="#modal-spinner"
+                  id="rule-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>规则名称 *</label>
+                        <input type="text" name="name" id="rule-name" placeholder="例如: 白名单-XX航空" required>
+                    </div>
+                    <div class="form-group">
+                        <label>类型 *</label>
+                        <select name="rule_type" id="rule-type">
+                            <option value="whitelist_sender">发件人白名单</option>
+                            <option value="blacklist_sender">发件人黑名单</option>
+                            <option value="keyword">关键词</option>
+                            <option value="regex">正则表达式</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>匹配模式 *</label>
+                    <input type="text" name="pattern" id="rule-pattern"
+                           placeholder="白名单/黑名单: @airline.com — 关键词: 行程单 — 正则: (?i)itinerary"
+                           required>
+                    <div class="hint">白名单/黑名单填写发件人域名; 关键词填写要匹配的词; 正则填写 Go 正则表达式</div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>动作</label>
+                        <select name="action" id="rule-action">
+                            <option value="pass">pass（放行转发）</option>
+                            <option value="flag">flag（标记疑似）</option>
+                            <option value="block">block（直接丢弃）</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>优先级</label>
+                        <input type="number" name="priority" id="rule-priority" value="10" min="0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" name="enabled" id="rule-enabled" value="true" checked> 启用此规则
+                    </label>
+                </div>
+                <button type="submit" class="btn btn-success">保存</button>
+                <button type="button" class="btn" onclick="closeModal()" style="background:#eee;">取消</button>
+                <span id="modal-spinner" class="spinner">保存中...</span>
+            </form>
+            <div id="modal-result"></div>
+        </div>
+    </div>
+
+    <!-- 规则数据给 JS -->
+    <script id="rules-data" type="application/json">{{.rulesJSON}}</script>
+
+    <script>
+        var rulesData = JSON.parse(document.getElementById('rules-data').textContent || '[]');
+
+        function openAdd() {
+            document.getElementById('modal-title').textContent = '新增规则';
+            document.getElementById('rule-form').setAttribute('hx-post', '/api/v1/admin/filters');
+            document.getElementById('rule-form').removeAttribute('hx-put');
+            document.getElementById('rule-name').value = '';
+            document.getElementById('rule-type').value = 'whitelist_sender';
+            document.getElementById('rule-pattern').value = '';
+            document.getElementById('rule-action').value = 'pass';
+            document.getElementById('rule-priority').value = 10;
+            document.getElementById('rule-enabled').checked = true;
+            document.getElementById('modal-result').innerHTML = '';
+            document.getElementById('rule-modal').classList.add('active');
+        }
+
+        function openEdit(id) {
+            var r = rulesData.find(function(x) { return x.id === id; });
+            if (!r) return;
+            document.getElementById('modal-title').textContent = '编辑规则 #' + r.id;
+            document.getElementById('rule-form').setAttribute('hx-put', '/api/v1/admin/filters/' + r.id);
+            document.getElementById('rule-form').removeAttribute('hx-post');
+            document.getElementById('rule-name').value = r.name || '';
+            document.getElementById('rule-type').value = r.rule_type || 'whitelist_sender';
+            document.getElementById('rule-pattern').value = r.pattern || '';
+            document.getElementById('rule-action').value = r.action || 'pass';
+            document.getElementById('rule-priority').value = r.priority || 10;
+            document.getElementById('rule-enabled').checked = r.enabled;
+            document.getElementById('modal-result').innerHTML = '';
+            document.getElementById('rule-modal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('rule-modal').classList.remove('active');
+        }
+
+        // htmx after swap
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            if (evt.detail.target.id !== 'modal-result') return;
+            var resp = JSON.parse(evt.detail.xhr.responseText || '{}');
+            if (resp.code === 0) {
+                document.getElementById('modal-result').innerHTML = '<div class="success-msg">✅ 保存成功！页面即将刷新...</div>';
+                setTimeout(function(){ location.reload(); }, 800);
+            } else {
+                document.getElementById('modal-result').innerHTML = '<div class="error-msg">❌ ' + (resp.message || '操作失败') + '</div>';
+            }
+        });
+    </script>
+</body>
+</html>
+

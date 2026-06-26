@@ -1,0 +1,384 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{.title}}</title>
+    <script src="/static/htmx.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; color: #333; }
+        .sidebar { width: 200px; background: #1a1a2e; color: #eee; position: fixed; top: 0; left: 0; bottom: 0; padding: 20px 0; }
+        .sidebar h2 { padding: 0 20px 20px; font-size: 16px; border-bottom: 1px solid #333; margin-bottom: 10px; }
+        .sidebar a { display: block; padding: 10px 20px; color: #aaa; text-decoration: none; font-size: 14px; }
+        .sidebar a:hover, .sidebar a.active { color: #fff; background: #16213e; }
+        .main { margin-left: 200px; padding: 24px; }
+        .section { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        th { font-weight: 600; color: #666; background: #fafafa; }
+        .btn { padding: 8px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; }
+        .btn-primary { background: #1a1a2e; color: #fff; }
+        .btn-primary:hover { background: #2a2a4e; }
+        .btn-sm { padding: 4px 12px; font-size: 12px; }
+        .btn-danger { background: #e74c3c; color: #fff; }
+        .btn-success { background: #27ae60; color: #fff; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; font-weight: 500; }
+        .form-group input, .form-group select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        .form-row { display: flex; gap: 12px; }
+        .form-row .form-group { flex: 1; }
+        .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .status.healthy { background: #e8f5e9; color: #2e7d32; }
+        .status.degraded { background: #fff3e0; color: #e65100; }
+        .status.down { background: #ffebee; color: #c62828; }
+        .status.draining { background: #e3f2fd; color: #1565c0; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #fff; padding: 24px; border-radius: 8px; width: 500px; max-width: 90%; }
+        .modal h3 { margin-bottom: 16px; }
+        .toggle-section { margin-bottom: 12px; }
+        .toggle-section summary { cursor: pointer; font-size: 15px; font-weight: 600; padding: 8px 0; color: #1a1a2e; }
+        .spinner { color: #888; font-size: 13px; margin-left: 8px; display: none; }
+        .htmx-request .spinner { display: inline; }
+        .success-msg { background: #e8f5e9; color: #2e7d32; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+        .error-msg { background: #ffebee; color: #c62828; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h2>📧 邮箱管理</h2>
+        <a href="/admin/">仪表盘</a>
+        <a href="/admin/servers" class="active">服务器管理</a>
+        <a href="/admin/filters">过滤规则</a>
+        <a href="/admin/mailboxes">邮箱管理</a>
+    </nav>
+
+    <div class="main">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+            <h1>服务器管理</h1>
+            <button class="btn btn-primary" onclick="toggleAddForm()">➕ 注册服务器</button>
+        </div>
+
+        <!-- 添加服务器表单（默认隐藏） -->
+        <div id="add-form" class="section" style="display:none; margin-bottom:20px;">
+            <h3 style="margin-bottom:16px;">注册新服务器</h3>
+            <form id="add-form-inner" onsubmit="return submitAdd(event)">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>服务器名称 *</label>
+                        <input type="text" name="name" placeholder="例如: mail-node-01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>API 地址 *</label>
+                        <input type="text" name="api_host" placeholder="例如: 10.0.0.2:8081" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>SMTP 地址</label>
+                        <input type="text" name="smtp_host" placeholder="例如: mail-node-01">
+                    </div>
+                    <div class="form-group">
+                        <label>IMAP 地址</label>
+                        <input type="text" name="imap_host" placeholder="例如: mail-node-01">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>容量上限</label>
+                    <input type="number" name="capacity" value="5000" min="1">
+                </div>
+                <button type="submit" class="btn btn-success">注册</button>
+                <button type="button" class="btn" onclick="toggleAddForm()" style="background:#eee;">取消</button>
+                <span id="add-spinner" class="spinner">注册中...</span>
+            </form>
+            <div id="add-result"></div>
+        </div>
+
+        <!-- 服务器列表 -->
+        <div class="section">
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>名称</th><th>API</th><th>SMTP</th><th>IMAP</th><th>负载</th><th>状态</th><th>心跳</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    {{range .servers}}
+                    <tr>
+                        <td>{{.ID}}</td>
+                        <td><strong>{{.Name}}</strong></td>
+                        <td><code>{{.APIHost}}</code></td>
+                        <td>{{if .SMTPHost}}{{.SMTPHost}}{{else}}-{{end}}</td>
+                        <td>{{if .IMAPHost}}{{.IMAPHost}}{{else}}-{{end}}</td>
+                        <td>{{.CurrentLoad}} / {{.Capacity}}</td>
+                        <td><span class="status {{.Status}}">{{.Status}}</span></td>
+                        <td>{{if .LastHeartbeat}}{{.LastHeartbeat.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="openEdit({{.ID}})">编辑</button>
+                            <a class="btn btn-sm btn-success" href="/admin/servers/{{.ID}}/domains" style="margin-left:4px;">域名池</a>
+                            <button class="btn btn-sm btn-danger" onclick="deleteServer({{.ID}})" style="margin-left:4px;">删除</button>
+                        </td>
+                    </tr>
+                    {{end}}
+                    {{if not .servers}}
+                    <tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- 编辑服务器弹窗 -->
+    <div id="edit-modal" class="modal-overlay" onclick="if(event.target===this)closeEdit()">
+        <div class="modal">
+            <h3>编辑服务器 <span id="edit-id-label"></span></h3>
+            <form id="edit-form" onsubmit="return submitEdit(event)">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>名称</label>
+                        <input type="text" name="name" id="edit-name">
+                    </div>
+                    <div class="form-group">
+                        <label>API 地址</label>
+                        <input type="text" name="api_host" id="edit-apihost">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>SMTP 地址</label>
+                        <input type="text" name="smtp_host" id="edit-smtphost">
+                    </div>
+                    <div class="form-group">
+                        <label>IMAP 地址</label>
+                        <input type="text" name="imap_host" id="edit-imaphost">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>容量</label>
+                        <input type="number" name="capacity" id="edit-capacity">
+                    </div>
+                    <div class="form-group">
+                        <label>状态</label>
+                        <select name="status" id="edit-status">
+                            <option value="healthy">healthy</option>
+                            <option value="degraded">degraded</option>
+                            <option value="draining">draining</option>
+                            <option value="down">down</option>
+                        </select>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary">保存</button>
+                <button type="button" class="btn btn-danger" onclick="deleteServer(currentEditId)" style="margin-left:8px;">删除</button>
+                <button type="button" class="btn" onclick="closeEdit()" style="background:#eee;">取消</button>
+                <span id="edit-spinner" class="spinner">保存中...</span>
+            </form>
+            <div id="edit-result"></div>
+        </div>
+    </div>
+
+    <!-- 存放服务器数据供 JS 读取 -->
+    <script id="server-data" type="application/json">{{.serversJSON}}</script>
+
+    <!-- Toast 通知 -->
+    <div id="toast" style="display:none; position:fixed; top:20px; right:20px; z-index:9999; padding:10px 20px; border-radius:6px; font-size:14px; max-width:400px; transition:opacity 0.3s;"></div>
+
+    <script>
+        var serverData = JSON.parse(document.getElementById('server-data').textContent || '[]');
+        var currentEditId = 0;
+        var toastTimer = null;
+
+        // ---- Toast 通知 ----
+        function showToast(msg, type) {
+            var el = document.getElementById('toast');
+            el.textContent = msg;
+            el.style.display = 'block';
+            el.style.opacity = '1';
+            el.style.background = type === 'ok' ? '#e8f5e9' : '#ffebee';
+            el.style.color = type === 'ok' ? '#2e7d32' : '#c62828';
+            el.style.border = '1px solid ' + (type === 'ok' ? '#a5d6a7' : '#ef9a9a');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function() {
+                el.style.opacity = '0';
+                setTimeout(function() { el.style.display = 'none'; }, 300);
+            }, 2500);
+        }
+
+        // ---- 渲染表格 ----
+        function renderServerTable(servers) {
+            var tbody = document.querySelector('table tbody');
+            if (!servers || servers.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < servers.length; i++) {
+                var s = servers[i];
+                var hb = s.last_heartbeat ? new Date(s.last_heartbeat).toLocaleString('zh-CN', {hour12: false}) : '-';
+                html += '<tr>' +
+                    '<td>' + s.id + '</td>' +
+                    '<td><strong>' + escHtml(s.name) + '</strong></td>' +
+                    '<td><code>' + escHtml(s.api_host) + '</code></td>' +
+                    '<td>' + (s.smtp_host || '-') + '</td>' +
+                    '<td>' + (s.imap_host || '-') + '</td>' +
+                    '<td>' + s.current_load + ' / ' + s.capacity + '</td>' +
+                    '<td><span class="status ' + s.status + '">' + s.status + '</span></td>' +
+                    '<td>' + hb + '</td>' +
+                    '<td>' +
+                        '<button class="btn btn-sm btn-primary" onclick="openEdit(' + s.id + ')">编辑</button> ' +
+                        '<a class="btn btn-sm btn-success" href="/admin/servers/' + s.id + '/domains" style="margin-left:4px;">域名池</a>' +
+                        '<button class="btn btn-sm btn-danger" onclick="deleteServer(' + s.id + ')" style="margin-left:4px;">删除</button>' +
+                    '</td>' +
+                    '</tr>';
+            }
+            tbody.innerHTML = html;
+        }
+
+        function escHtml(s) {
+            var div = document.createElement('div');
+            div.appendChild(document.createTextNode(s));
+            return div.innerHTML;
+        }
+
+        // ---- 刷新列表（从 API 拉最新数据） ----
+        function refreshServerList() {
+            fetch('/api/v1/admin/servers')
+                .then(function(r) { return r.json(); })
+                .then(function(resp) {
+                    if (resp.code === 0 && resp.data) {
+                        serverData = resp.data;
+                        renderServerTable(serverData);
+                    }
+                });
+        }
+
+        // ---- 新增表单 ----
+        function toggleAddForm() {
+            var el = document.getElementById('add-form');
+            var form = document.getElementById('add-form-inner');
+            if (el.style.display === 'none') {
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+                form.reset();
+                document.getElementById('add-result').innerHTML = '';
+            }
+        }
+
+        function submitAdd(e) {
+            e.preventDefault();
+            var form = document.getElementById('add-form-inner');
+            var data = {
+                name: form.querySelector('[name="name"]').value,
+                api_host: form.querySelector('[name="api_host"]').value,
+                smtp_host: form.querySelector('[name="smtp_host"]').value || '',
+                imap_host: form.querySelector('[name="imap_host"]').value || '',
+                capacity: parseInt(form.querySelector('[name="capacity"]').value) || 5000
+            };
+            var spinnerEl = document.getElementById('add-spinner');
+            spinnerEl.style.display = 'inline';
+
+            fetch('/api/v1/admin/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(resp) {
+                spinnerEl.style.display = 'none';
+                if (resp.code === 0) {
+                    form.reset();
+                    document.getElementById('add-form').style.display = 'none';
+                    showToast('✅ 服务器注册成功', 'ok');
+                    refreshServerList();
+                } else {
+                    document.getElementById('add-result').innerHTML = '<div class="error-msg">❌ ' + (resp.message || '操作失败') + '</div>';
+                }
+            })
+            .catch(function(err) {
+                spinnerEl.style.display = 'none';
+                document.getElementById('add-result').innerHTML = '<div class="error-msg">❌ 网络错误: ' + err.message + '</div>';
+            });
+            return false;
+        }
+
+        // ---- 编辑弹窗 ----
+        function openEdit(id) {
+            var s = serverData.find(function(s) { return s.id === id; });
+            if (!s) return;
+            document.getElementById('edit-id-label').textContent = '#' + s.id;
+            document.getElementById('edit-name').value = s.name || '';
+            document.getElementById('edit-apihost').value = s.api_host || '';
+            document.getElementById('edit-smtphost').value = s.smtp_host || '';
+            document.getElementById('edit-imaphost').value = s.imap_host || '';
+            document.getElementById('edit-capacity').value = s.capacity || 5000;
+            document.getElementById('edit-status').value = s.status || 'healthy';
+            document.getElementById('edit-form').setAttribute('data-put-url', '/api/v1/admin/servers/' + s.id);
+            document.getElementById('edit-result').innerHTML = '';
+            currentEditId = s.id;
+            document.getElementById('edit-modal').classList.add('active');
+        }
+
+        function closeEdit() {
+            document.getElementById('edit-modal').classList.remove('active');
+            document.getElementById('edit-result').innerHTML = '';
+        }
+
+        function submitEdit(e) {
+            e.preventDefault();
+            var url = document.getElementById('edit-form').getAttribute('data-put-url');
+            if (!url) { return false; }
+            var data = {
+                name: document.getElementById('edit-name').value,
+                api_host: document.getElementById('edit-apihost').value,
+                smtp_host: document.getElementById('edit-smtphost').value,
+                imap_host: document.getElementById('edit-imaphost').value,
+                capacity: parseInt(document.getElementById('edit-capacity').value) || 5000,
+                status: document.getElementById('edit-status').value
+            };
+            var spinnerEl = document.getElementById('edit-spinner');
+            spinnerEl.style.display = 'inline';
+
+            fetch(url, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(resp) {
+                spinnerEl.style.display = 'none';
+                if (resp.code === 0) {
+                    closeEdit();
+                    showToast('✅ 修改保存成功', 'ok');
+                    refreshServerList();
+                } else {
+                    document.getElementById('edit-result').innerHTML = '<div class="error-msg">❌ ' + (resp.message || '操作失败') + '</div>';
+                }
+            })
+            .catch(function(err) {
+                spinnerEl.style.display = 'none';
+                document.getElementById('edit-result').innerHTML = '<div class="error-msg">❌ 网络错误: ' + err.message + '</div>';
+            });
+            return false;
+        }
+
+        // ---- 删除 ----
+        function deleteServer(id) {
+            if (!confirm('确定要删除服务器 #' + id + ' 吗？此操作不可撤销。')) return;
+            fetch('/api/v1/admin/servers/' + id, { method: 'DELETE' })
+                .then(function(r) { return r.json(); })
+                .then(function(resp) {
+                    if (resp.code === 0) {
+                        if (currentEditId === id) closeEdit();
+                        showToast('✅ 服务器已删除', 'ok');
+                        refreshServerList();
+                    } else {
+                        showToast('❌ ' + (resp.message || '删除失败'), 'err');
+                    }
+                })
+                .catch(function(err) {
+                    showToast('❌ 网络错误: ' + err.message, 'err');
+                });
+        }
+    </script>
+</body>
+</html>
+

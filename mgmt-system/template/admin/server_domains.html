@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>{{.title}}</title>
+    <script src="/static/htmx.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; color: #333; }
+        .sidebar { width: 200px; background: #1a1a2e; color: #eee; position: fixed; top: 0; left: 0; bottom: 0; padding: 20px 0; }
+        .sidebar h2 { padding: 0 20px 20px; font-size: 16px; border-bottom: 1px solid #333; margin-bottom: 10px; }
+        .sidebar a { display: block; padding: 10px 20px; color: #aaa; text-decoration: none; font-size: 14px; }
+        .sidebar a:hover, .sidebar a.active { color: #fff; background: #16213e; }
+        .main { margin-left: 200px; padding: 24px; }
+        .section { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #eee; font-size: 13px; }
+        th { font-weight: 600; color: #666; background: #fafafa; }
+        .btn { padding: 8px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-primary { background: #1a1a2e; color: #fff; }
+        .btn-sm { padding: 4px 12px; font-size: 12px; }
+        .btn-success { background: #27ae60; color: #fff; }
+        code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-size: 12px; }
+        .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .status.synced, .status.active, .status.ok { background: #e8f5e9; color: #2e7d32; }
+        .status.partial { background: #fff3e0; color: #e65100; }
+        .status.sync_failed, .status.inactive, .status.failed { background: #ffebee; color: #c62828; }
+        .status.pending { background: #e3f2fd; color: #1565c0; }
+        .meta-row { display: flex; gap: 24px; font-size: 13px; color: #666; margin-top: 6px; flex-wrap: wrap; }
+        .meta-row span b { color: #333; }
+        .back-link { color: #1a1a2e; text-decoration: none; font-size: 13px; }
+        .note { background: #e3f2fd; color: #1565c0; padding: 10px 14px; border-radius: 4px; font-size: 13px; line-height: 1.6; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; font-family: inherit; }
+        .form-row { display: flex; gap: 12px; }
+        .form-row .form-group { flex: 1; }
+        .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+        .tab { padding: 6px 16px; border: 1px solid #ddd; background: #fafafa; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .tab.active { background: #1a1a2e; color: #fff; border-color: #1a1a2e; }
+        .spinner { color: #888; font-size: 13px; margin-left: 8px; display: none; }
+        .muted { color: #888; font-size: 12px; }
+        .result-row { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+        .result-row.ok { color: #2e7d32; }
+        .result-row.fail { color: #c62828; }
+        .copy-btn { background: none; border: 1px solid #ddd; border-radius: 3px; padding: 1px 6px; font-size: 11px; cursor: pointer; color: #666; }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h2>📧 邮箱管理</h2>
+        <a href="/admin/">仪表盘</a>
+        <a href="/admin/servers" class="active">服务器管理</a>
+        <a href="/admin/filters">过滤规则</a>
+        <a href="/admin/mailboxes">邮箱管理</a>
+    </nav>
+
+    <div class="main">
+        <div style="margin-bottom:16px;">
+            <a href="/admin/servers" class="back-link">← 返回服务器管理</a>
+        </div>
+
+        <div style="margin-bottom:16px;">
+            <h1>域名池 — {{.server.Name}}</h1>
+            <div class="meta-row">
+                <span>API：<code>{{.server.APIHost}}</code></span>
+                <span>公网主机：<code>{{if .server.PublicHost}}{{.server.PublicHost}}{{else}}-{{end}}</code></span>
+                <span>状态：<span class="status {{.server.Status}}">{{.server.Status}}</span></span>
+                <span>负载：{{.server.CurrentLoad}} / {{.server.Capacity}}</span>
+            </div>
+        </div>
+
+        <div class="note">
+            📌 域名池列出本服务器已提供收发服务的域名（远端 Postfix <code>virtual_mailbox_domains</code> + DKIM 同步状态）。
+            可在「该服务器该域下创建邮箱」（宝塔式：服务器→域名→邮箱，固定 server+domain，只输前缀/密码）。
+            「添加新域名（配 Postfix+DKIM+DNS）」在 T5A-C 接入。
+        </div>
+
+        <div class="section" style="margin-top:16px;">
+            <h3 style="margin-bottom:14px;">添加域名到该服务器</h3>
+            <div class="form-row" style="max-width:720px;">
+                <div class="form-group">
+                    <label>原始域名</label>
+                    <input type="text" id="add-domain-name" placeholder="example.com">
+                </div>
+                <div class="form-group">
+                    <label>A 记录主机头（MX 指向它）</label>
+                    <input type="text" id="add-a-record-host" value="mail" placeholder="mail">
+                </div>
+                <div class="form-group" style="flex:0 0 auto; align-self:flex-end;">
+                    <button class="btn btn-primary" onclick="submitAddDomain()">添加域名</button>
+                    <span id="add-domain-spinner" class="spinner">配置中...</span>
+                </div>
+            </div>
+            <div id="dns-records" style="margin-top:12px;"></div>
+        </div>
+
+        <!-- 域名池列表 -->
+        <div class="section" style="margin-top:16px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>域名</th>
+                        <th>绑定状态</th>
+                        <th>同步状态</th>
+                        <th>Postfix</th>
+                        <th>DKIM</th>
+                        <th>Selector</th>
+                        <th>邮箱数</th>
+                        <th>同步时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .bindings}}
+                    <tr>
+                        <td><strong>{{if .Domain.Name}}{{.Domain.Name}}{{else}}#{{.DomainID}}{{end}}</strong></td>
+                        <td><span class="status {{.Status}}">{{.Status}}</span></td>
+                        <td><span class="status {{.SyncStatus}}">{{.SyncStatus}}</span></td>
+                        <td><span class="status {{.PostfixStatus}}">{{.PostfixStatus}}</span></td>
+                        <td><span class="status {{.DkimStatus}}">{{.DkimStatus}}</span></td>
+                        <td>{{if .DkimSelector}}<code>{{.DkimSelector}}</code>{{else}}-{{end}}</td>
+                        <td>{{index $.mailboxCounts .DomainID}}</td>
+                        <td>{{if .SyncedAt}}{{.SyncedAt.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td>
+                            {{if eq .Status "inactive"}}
+                            <span class="muted">已移除</span>
+                            {{else if eq (index $.mailboxCounts .DomainID) 0}}
+                            <button class="btn btn-sm btn-danger" onclick="removeDomain({{.DomainID}}, '{{.Domain.Name}}')">移除</button>
+                            {{else}}
+                            <span class="muted">有邮箱不可移除</span>
+                            {{end}}
+                        </td>
+                    </tr>
+                    {{end}}
+                    {{if not .bindings}}
+                    <tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">该服务器暂无绑定域名。添加域名后即可在该域下创建邮箱。</td></tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+
+        {{if and .bindings (eq .server.Status "healthy")}}
+        <!-- 在该服务器创建邮箱 -->
+        <div class="section">
+            <h3 style="margin-bottom:14px;">在该服务器创建邮箱</h3>
+            <div class="form-group" style="max-width:320px;">
+                <label>目标域名</label>
+                <select id="create-domain">
+                    {{range .bindings}}{{if and (eq .Status "active") (eq .PostfixStatus "synced")}}
+                    <option value="{{.DomainID}}">{{.Domain.Name}}</option>
+                    {{end}}{{end}}
+                </select>
+            </div>
+
+            <div class="tabs">
+                <div class="tab active" onclick="switchCreateTab('single')">单个创建</div>
+                <div class="tab" onclick="switchCreateTab('batch')">批量粘贴</div>
+            </div>
+
+            <div id="create-single">
+                <div class="form-row" style="max-width:560px;">
+                    <div class="form-group">
+                        <label>邮箱前缀</label>
+                        <input type="text" id="single-prefix" placeholder="airline-cz-001">
+                    </div>
+                    <div class="form-group">
+                        <label>密码（留空自动）</label>
+                        <input type="text" id="single-password" placeholder="自动生成">
+                    </div>
+                </div>
+                <button class="btn btn-primary" onclick="submitSingle()">创建邮箱</button>
+                <span id="single-spinner" class="spinner">创建中...</span>
+            </div>
+
+            <div id="create-batch" style="display:none;">
+                <p class="muted" style="margin-bottom:8px;">每行一个前缀，格式：<code>前缀</code> 或 <code>前缀,密码</code>（密码可省略自动生成）</p>
+                <div class="form-group">
+                    <textarea id="batch-text" rows="5" style="font-family:monospace;" placeholder="airline-cz-001&#10;airline-cz-002&#10;airline-cz-003,mypassword123"></textarea>
+                </div>
+                <button class="btn btn-primary" onclick="submitBatch()">批量创建</button>
+                <span id="batch-spinner" class="spinner">创建中...</span>
+            </div>
+
+            <div id="create-result" style="margin-top:14px;"></div>
+        </div>
+        {{else if .bindings}}
+        <div class="section"><span class="muted">该服务器当前非 healthy，暂不能创建邮箱。</span></div>
+        {{end}}
+    </div>
+
+    <div id="toast" style="display:none; position:fixed; top:20px; right:20px; z-index:9999; padding:10px 20px; border-radius:6px; font-size:14px; max-width:400px;"></div>
+
+    <script>
+        var SERVER_ID = {{.server.ID}};
+
+        function switchCreateTab(name) {
+            document.getElementById('create-single').style.display = name === 'single' ? 'block' : 'none';
+            document.getElementById('create-batch').style.display = name === 'batch' ? 'block' : 'none';
+            document.querySelectorAll('.tabs .tab').forEach(function(t, i) {
+                t.classList.toggle('active', i === (name === 'single' ? 0 : 1));
+            });
+        }
+
+        function showToast(msg, type) {
+            var el = document.getElementById('toast');
+            el.textContent = msg;
+            el.style.display = 'block';
+            el.style.background = type === 'ok' ? '#e8f5e9' : '#ffebee';
+            el.style.color = type === 'ok' ? '#2e7d32' : '#c62828';
+            el.style.border = '1px solid ' + (type === 'ok' ? '#a5d6a7' : '#ef9a9a');
+            setTimeout(function() { el.style.display = 'none'; }, 2500);
+        }
+
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(function() { showToast('已复制', 'ok'); });
+        }
+
+        function renderResults(results) {
+            var box = document.getElementById('create-result');
+            if (!results || results.length === 0) { box.innerHTML = ''; return; }
+            var html = '';
+            results.forEach(function(r) {
+                if (r.status === 'ok') {
+                    html += '<div class="result-row ok">✅ <strong>' + (r.email_address || r.prefix) + '</strong>';
+                    if (r.password) { html += ' &nbsp;密码：<code>' + r.password + '</code> <button class="copy-btn" onclick="copyText(\'' + r.password + '\')">复制</button>'; }
+                    html += ' <span class="muted">(' + r.sync_status + ')</span></div>';
+                } else {
+                    html += '<div class="result-row fail">❌ <strong>' + (r.prefix || '?') + '</strong> — ' + (r.error || '失败') + '</div>';
+                }
+            });
+            box.innerHTML = html;
+        }
+
+        function renderDNSRecords(records) {
+            var box = document.getElementById('dns-records');
+            if (!records || records.length === 0) { box.innerHTML = ''; return; }
+            var html = '<div class="note" style="background:#fff3e0;color:#e65100;margin-bottom:8px;">请到域名厂商 DNS 控制台手动添加以下记录；系统已配置 mail-node，但不会自动修改厂商 DNS。A 记录把你填写的主机头映射到服务器公网 IP，MX 再指向这个完整主机名。DKIM 记录挂在 <code>selector._domainkey.原始域名</code>，不依赖 A 记录。</div>';
+            html += '<table><thead><tr><th>类型</th><th>主机记录</th><th>值</th><th>操作</th></tr></thead><tbody>';
+            records.forEach(function(r) {
+                html += '<tr><td><code>' + r.type + '</code></td><td><code>' + r.host + '</code></td><td><code>' + r.value + '</code></td><td><button class="copy-btn" onclick="copyText(\'' + escJS(r.value) + '\')">复制值</button></td></tr>';
+            });
+            html += '</tbody></table>';
+            box.innerHTML = html;
+        }
+
+        function escJS(s) {
+            return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        }
+
+        function submitAddDomain() {
+            var name = document.getElementById('add-domain-name').value.trim();
+            var aRecordHost = document.getElementById('add-a-record-host').value.trim();
+            if (!name) { showToast('请输入域名', 'err'); return; }
+            document.getElementById('add-domain-spinner').style.display = 'inline';
+            fetch('/api/v1/admin/servers/' + SERVER_ID + '/domains', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name, a_record_host: aRecordHost })
+            }).then(function(r) { return r.json(); }).then(function(resp) {
+                document.getElementById('add-domain-spinner').style.display = 'none';
+                if (resp.code === 0 && resp.data && resp.data.setup) {
+                    renderDNSRecords(resp.data.setup.dns_records || []);
+                    showToast('域名已添加，刷新后可查看状态', 'ok');
+                } else {
+                    showToast('❌ ' + (resp.message || '添加失败'), 'err');
+                }
+            }).catch(function(err) {
+                document.getElementById('add-domain-spinner').style.display = 'none';
+                showToast('❌ 网络错误: ' + err.message, 'err');
+            });
+        }
+
+        function removeDomain(domainID, name) {
+            if (!confirm('确定从该服务器移除域名 ' + name + ' 吗？')) return;
+            fetch('/api/v1/admin/servers/' + SERVER_ID + '/domains/' + domainID, { method: 'DELETE' })
+                .then(function(r) { return r.json(); })
+                .then(function(resp) {
+                    if (resp.code === 0) {
+                        showToast('域名已移除', 'ok');
+                        setTimeout(function() { location.reload(); }, 800);
+                    } else {
+                        showToast('❌ ' + (resp.message || '移除失败'), 'err');
+                    }
+                }).catch(function(err) {
+                    showToast('❌ 网络错误: ' + err.message, 'err');
+                });
+        }
+
+        function submitSingle() {
+            var domainID = Number(document.getElementById('create-domain').value || 0);
+            var prefix = document.getElementById('single-prefix').value.trim();
+            var password = document.getElementById('single-password').value.trim();
+            if (!prefix) { showToast('请输入邮箱前缀', 'err'); return; }
+            document.getElementById('single-spinner').style.display = 'inline';
+            var body = [{ prefix: prefix, password: password, domain_id: domainID, server_id: SERVER_ID }];
+            fetch('/api/v1/admin/mailboxes/batch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            }).then(function(r) { return r.json(); }).then(function(resp) {
+                document.getElementById('single-spinner').style.display = 'none';
+                if (resp.code === 0 && resp.data) {
+                    renderResults(resp.data.results);
+                    var ok = resp.data.success, fail = resp.data.failed;
+                    showToast((ok > 0 ? '✅ 创建成功 ' + ok + ' 个' : '') + (fail > 0 ? ' ❌ 失败 ' + fail : ''), ok > 0 ? 'ok' : 'err');
+                } else {
+                    showToast('❌ ' + (resp.message || '失败'), 'err');
+                }
+            }).catch(function(err) {
+                document.getElementById('single-spinner').style.display = 'none';
+                showToast('❌ 网络错误: ' + err.message, 'err');
+            });
+        }
+
+        function submitBatch() {
+            var domainID = Number(document.getElementById('create-domain').value || 0);
+            var text = document.getElementById('batch-text').value;
+            var items = [];
+            text.split('\n').forEach(function(line) {
+                line = line.trim();
+                if (!line || line.startsWith('#')) return;
+                var parts = line.split(',');
+                items.push({ prefix: parts[0].trim(), password: parts.length > 1 ? parts.slice(1).join(',').trim() : '', domain_id: domainID, server_id: SERVER_ID });
+            });
+            if (items.length === 0) { showToast('请输入至少一个前缀', 'err'); return; }
+            document.getElementById('batch-spinner').style.display = 'inline';
+            fetch('/api/v1/admin/mailboxes/batch', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(items)
+            }).then(function(r) { return r.json(); }).then(function(resp) {
+                document.getElementById('batch-spinner').style.display = 'none';
+                if (resp.code === 0 && resp.data) {
+                    renderResults(resp.data.results);
+                    var ok = resp.data.success, fail = resp.data.failed;
+                    showToast('成功 ' + ok + ' / 失败 ' + fail, ok > 0 ? 'ok' : 'err');
+                } else {
+                    showToast('❌ ' + (resp.message || '失败'), 'err');
+                }
+            }).catch(function(err) {
+                document.getElementById('batch-spinner').style.display = 'none';
+                showToast('❌ 网络错误: ' + err.message, 'err');
+            });
+        }
+    </script>
+</body>
+</html>

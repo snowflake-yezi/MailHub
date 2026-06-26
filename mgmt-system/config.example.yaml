@@ -1,0 +1,33 @@
+# 管理系统配置文件（示例 — 复制为 config.yaml 并填入真实值）
+server:
+  port: 8080
+  mode: debug  # debug | release | test
+
+database:
+  driver: mysql
+  dsn: "root:YOUR_PASSWORD@tcp(127.0.0.1:3306)/email_mgmt?charset=utf8mb4&parseTime=true&loc=Local"
+
+auth:
+  tokens:
+    - name: "出票中心"
+      token: "sk-ticket-CHANGE-ME"
+      scopes:
+        - "mailbox:create"
+        - "mailbox:read"
+    - name: "大模型系统"
+      token: "sk-llm-CHANGE-ME"
+      scopes:
+        - "email:read"
+
+# 域名配置
+domains:
+  - name: "example.com"
+
+# 邮箱默认保留天数
+default_retention_days: 30
+
+# 过滤引擎同步配置
+filter:
+  reload_interval: 30
+  default_action: "pass"
+  default_flag_subject_prefix: "[疑似]"

@@ -1,0 +1,41 @@
+# 邮箱服务器节点配置（示例 — 复制为 config.yaml 并填入真实值）
+server:
+  port: 8081
+  mode: release
+
+maildir:
+  base_path: "/var/mail/vhosts"
+  vmail_uid: 5000
+  vmail_gid: 5000
+
+management:
+  api_url: "http://127.0.0.1:8080"
+  heartbeat_interval: 60
+  filter_sync_interval: 3600
+
+forward:
+  smtp_host: "mail.example.com:587"
+  smtp_user: "union@example.com"
+  smtp_pass: "CHANGE-ME"
+  target_address: "union@example.com"
+  subject_prefix: "[源邮箱: ${source_addr}] "
+  scan_interval: 5
+  max_email_size: 10485760
+
+filter:
+  default_action: "pass"
+  flag_subject_prefix: "[疑似]"
+
+node:
+  id: 1
+  name: "mail-node-01"
+
+mail_domain: "example.com"
+
+public_host: "mail.example.com"
+
+dkim:
+  selector: "mail-s1"
+  key_dir: "/etc/opendkim/keys"
+  signing_table: "/etc/opendkim/SigningTable"
+  key_table: "/etc/opendkim/KeyTable"
