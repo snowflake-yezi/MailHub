@@ -28,7 +28,7 @@ func parseUint64(s string) uint64 {
 }
 
 // proxyToServer 代理请求到邮箱服务器的内部 API
-func proxyToServer(serverAPIHost string, method string, path string, body io.Reader) ([]byte, error) {
+func proxyToServer(serverAPIHost string, method string, path string, body io.Reader, sharedSecret string) ([]byte, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	url := fmt.Sprintf("http://%s%s", serverAPIHost, path)
@@ -38,7 +38,7 @@ func proxyToServer(serverAPIHost string, method string, path string, body io.Rea
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", "internal-proxy-token") // 内部鉴权
+	req.Header.Set("X-Internal-Token", sharedSecret)
 
 	resp, err := client.Do(req)
 	if err != nil {

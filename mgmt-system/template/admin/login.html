@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <style>
+        :root {
+            --bg: #f0f2f5;
+            --panel: #ffffff;
+            --text: #20242a;
+            --muted: #6b7280;
+            --brand: #1f4f46;
+            --brand-hover: #173d36;
+            --line: #d4d9df;
+            --danger: #a82424;
+            --danger-bg: #fdecec;
+            --shadow: 0 10px 30px rgba(28, 39, 49, 0.1);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+            color: var(--text);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        .login-card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            padding: 40px;
+            width: 360px;
+            max-width: 95vw;
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+        .login-header h1 {
+            font-size: 22px;
+            font-weight: 750;
+            color: var(--brand);
+        }
+        .login-header p {
+            color: var(--muted);
+            font-size: 13px;
+            margin-top: 6px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        .form-group label {
+            display: block;
+            color: #4b5563;
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+        input {
+            height: 40px;
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            background: #fff;
+            color: var(--text);
+            font-size: 14px;
+            padding: 0 12px;
+            outline: none;
+        }
+        input:focus {
+            border-color: var(--brand);
+            box-shadow: 0 0 0 3px rgba(31, 79, 70, 0.12);
+        }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 42px;
+            border: 0;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 650;
+            background: var(--brand);
+            color: #fff;
+        }
+        .btn:hover { background: var(--brand-hover); }
+        .error-msg {
+            background: var(--danger-bg);
+            color: var(--danger);
+            border: 1px solid #f0c5c5;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <h1>邮箱管理系统</h1>
+            <p>管理后台 — 请登录</p>
+        </div>
+        {{if .error}}
+        <div class="error-msg">{{.error}}</div>
+        {{end}}
+        <form method="POST" action="/admin/login">
+            <input type="hidden" name="next" value="{{.next}}">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" name="username" placeholder="请输入用户名" required autofocus>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" name="password" placeholder="请输入密码" required>
+            </div>
+            <button type="submit" class="btn">登 录</button>
+        </form>
+    </div>
+</body>
+</html>

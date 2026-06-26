@@ -418,6 +418,25 @@ func (s *Store) ListMailboxesWithFilter(page, size int, filter MailboxListFilter
 		Order("id DESC").Offset((page - 1) * size).Limit(size).Find(&list).Error
 	return list, total, err
 }
+// GetMailboxByID returns a mailbox account by ID with Domain and Server preloaded.
+func (s *Store) GetMailboxByID(id uint64) (*model.MailboxAccount, error) {
+	var mb model.MailboxAccount
+	err := s.db.Preload("Domain").Preload("Server").First(&mb, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &mb, nil
+}
+
+// UpdateMailboxPassword updates the password for a mailbox account and marks sync as pending.
+func (s *Store) UpdateMailboxPassword(id uint64, password string) error {
+	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"password":    password,
+			"sync_status": "pending",
+		}).Error
+}
+
 func (s *Store) DisableMailbox(id uint64) error {
 	now := time.Now()
 	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", id).

@@ -121,6 +121,54 @@ func (m *Manager) Create(email, password string) (*MailboxInfo, error) {
 	return info, nil
 }
 
+// UpdatePassword rewrites a user's password line in Dovecot users.conf.
+// It reads the file, replaces the matching line, writes atomically (.tmp → rename),
+// and runs doveadm reload.
+func (m *Manager) UpdatePassword(email, newPassword string) error {
+	if !m.mailboxExists(email) {
+		return fmt.Errorf("mailbox not found: %s", email)
+	}
+
+	data, err := os.ReadFile(m.usersFile)
+	if err != nil {
+		return fmt.Errorf("read users.conf: %w", err)
+	}
+
+	prefix := email + ":"
+	newEntry := fmt.Sprintf("%s:{PLAIN}%s::::::", email, newPassword)
+
+	var lines []string
+	found := false
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue // skip empty trailing lines
+		}
+		if strings.HasPrefix(line, prefix) {
+			lines = append(lines, newEntry)
+			found = true
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	if !found {
+		return fmt.Errorf("mailbox entry not found in users.conf: %s", email)
+	}
+
+	// Atomic write: write to .tmp first, then rename (atomic on same filesystem).
+	tmpPath := m.usersFile + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		return fmt.Errorf("write tmp users.conf: %w", err)
+	}
+	if err := os.Rename(tmpPath, m.usersFile); err != nil {
+		return fmt.Errorf("rename users.conf: %w", err)
+	}
+
+	// Reload Dovecot so the new password takes effect immediately.
+	exec.Command("doveadm", "reload").Run()
+
+	return nil
+}
+
 // Delete 安全删除邮箱（软删除：Rename 到 .trash/ 而非 rm -rf）。
 // 协议见 forwarding-design.md §9。
 //

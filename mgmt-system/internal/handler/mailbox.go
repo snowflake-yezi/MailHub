@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/service"
@@ -14,16 +17,20 @@ import (
 )
 
 type MailboxHandler struct {
-	store     *store.Store
-	allocator *service.Allocator
-	creator   *service.MailboxCreator
+	store        *store.Store
+	allocator    *service.Allocator
+	creator      *service.MailboxCreator
+	sharedSecret string
+	client       *http.Client
 }
 
-func NewMailboxHandler(s *store.Store, alloc *service.Allocator) *MailboxHandler {
+func NewMailboxHandler(s *store.Store, alloc *service.Allocator, sharedSecret string) *MailboxHandler {
 	return &MailboxHandler{
-		store:     s,
-		allocator: alloc,
-		creator:   alloc.Creator(),
+		store:        s,
+		allocator:    alloc,
+		creator:      alloc.Creator(),
+		sharedSecret: sharedSecret,
+		client:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -261,15 +268,94 @@ func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 	})
 }
 
+// UpdateMailboxPassword updates the password for a mailbox account.
+// PUT /api/v1/admin/mailboxes/:id
+func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
+	id := parseUint64(c.Param("id"))
+	if id == 0 {
+		badRequest(c, ErrCodeParamMissing, "invalid mailbox id")
+		return
+	}
+
+	existing, err := h.store.GetMailboxByID(id)
+	if err != nil {
+		notFound(c, "mailbox not found")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, ErrCodeParamMissing, "password is required")
+		return
+	}
+	if len(req.Password) < 6 {
+		badRequest(c, ErrCodeParamInvalid, "password must be at least 6 characters")
+		return
+	}
+
+	// Update password on remote mail-node first.
+	srv, err := h.store.GetServer(existing.ServerID)
+	if err == nil {
+		if err := h.callNodeUpdatePassword(srv.APIHost, existing.EmailAddress, req.Password); err != nil {
+			serverError(c, ErrCodeExternalFail, "failed to update password on mail node: "+err.Error())
+			return
+		}
+	}
+
+	// Update in local database.
+	if err := h.store.UpdateMailboxPassword(id, req.Password); err != nil {
+		serverError(c, ErrCodeInternal, "failed to update password: "+err.Error())
+		return
+	}
+
+	success(c, "password updated", gin.H{
+		"id":            id,
+		"email_address": existing.EmailAddress,
+	})
+}
+
+// callNodeUpdatePassword sends a password update request to the mail-node.
+func (h *MailboxHandler) callNodeUpdatePassword(apiHost, email, newPassword string) error {
+	body, _ := json.Marshal(map[string]string{
+		"email_address": email,
+		"password":      newPassword,
+	})
+	url := fmt.Sprintf("http://%s/internal/mailboxes/%s/password", apiHost, email)
+	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", h.sharedSecret)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+	}
+	return nil
+}
+
+// RegisterRoutes registers external API routes on the given group.
 func (h *MailboxHandler) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/mailboxes", h.CreateMailbox)
 	r.GET("/mailboxes/:order_id", h.GetMailbox)
 	r.POST("/mailboxes/:order_id/disable", h.DisableMailbox)
+}
 
-	admin := r.Group("/admin")
-	admin.GET("/mailboxes", h.ListMailboxes)
-	admin.POST("/mailboxes/batch", h.CreateMailboxBatch)
-	admin.POST("/mailboxes/upload", h.UploadMailboxCSV)
+// RegisterAdminRoutes registers admin API routes on the given (already auth-protected) group.
+func (h *MailboxHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
+	r.GET("/mailboxes", h.ListMailboxes)
+	r.POST("/mailboxes/batch", h.CreateMailboxBatch)
+	r.POST("/mailboxes/upload", h.UploadMailboxCSV)
+	r.PUT("/mailboxes/:id", h.UpdateMailboxPassword)
 }
 
 var _ = http.Handler(nil)

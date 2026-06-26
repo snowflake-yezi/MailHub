@@ -1,24 +1,20 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
-// AuthRequired 验证 Bearer Token
+// AuthRequired 验证 Bearer Token。
+// 外部 API（/api/v1/mailboxes、/api/v1/emails 等）需要此中间件。
+// 管理后台 API 由独立的 session 鉴权 group 保护，不再经过此中间件。
 func AuthRequired(store *store.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 管理后台 API（/api/v1/admin/*）由 Web 页面访问，不走 Token 鉴权
-		// （htmx 表单不便带 Bearer header）。对外 API（/api/v1/mailboxes、/api/v1/emails 等）仍需 Token。
-		// 生产环境靠 Nginx 反代加 IP 白名单 / Basic Auth 保护 /admin。
-		if strings.HasPrefix(c.Request.URL.Path, "/api/v1/admin/") {
-			c.Next()
-			return
-		}
-
 		header := c.GetHeader("Authorization")
 		if header == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -62,13 +58,7 @@ func RequireScope(scope string) gin.HandlerFunc {
 			return
 		}
 
-		token := tokenVal.(*struct {
-			ID      uint64
-			Name    string
-			Token   string
-			Scopes  string
-			Enabled bool
-		})
+		token := tokenVal.(*model.ApiToken)
 
 		// 简单 scope 检查：支持 "*" 通配和精确匹配
 		scopes := token.Scopes // 实际中用逗号分隔的字符串
@@ -80,5 +70,36 @@ func RequireScope(scope string) gin.HandlerFunc {
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"code": 1005, "message": "insufficient scope, required: " + scope,
 		})
+	}
+}
+
+// InternalAuthRequired validates the X-Internal-Token header against the configured
+// shared secret. Used on mgmt-side /api/v1/internal/* routes that are called by
+// mail-node instances. If sharedSecret is empty, the middleware fails closed.
+func InternalAuthRequired(sharedSecret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if sharedSecret == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code": 1003, "message": "internal auth not configured (empty shared_secret)",
+			})
+			return
+		}
+
+		token := c.GetHeader("X-Internal-Token")
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code": 1003, "message": "missing X-Internal-Token header",
+			})
+			return
+		}
+
+		if subtle.ConstantTimeCompare([]byte(token), []byte(sharedSecret)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code": 1003, "message": "invalid internal token",
+			})
+			return
+		}
+
+		c.Next()
 	}
 }

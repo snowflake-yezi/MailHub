@@ -17,12 +17,13 @@ import (
 )
 
 type ServerHandler struct {
-	store  *store.Store
-	client *http.Client
+	store        *store.Store
+	client       *http.Client
+	sharedSecret string
 }
 
-func NewServerHandler(s *store.Store) *ServerHandler {
-	return &ServerHandler{store: s, client: &http.Client{Timeout: 15 * time.Second}}
+func NewServerHandler(s *store.Store, sharedSecret string) *ServerHandler {
+	return &ServerHandler{store: s, client: &http.Client{Timeout: 15 * time.Second}, sharedSecret: sharedSecret}
 }
 
 type DNSRecord struct {
@@ -378,16 +379,16 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 	success(c, "heartbeat received", nil)
 }
 
-func (h *ServerHandler) RegisterRoutes(r *gin.RouterGroup) {
-	admin := r.Group("/admin")
-	admin.POST("/servers", h.RegisterServer)
-	admin.GET("/servers", h.ListServers)
-	admin.GET("/servers/:id", h.GetServer)
-	admin.PUT("/servers/:id", h.UpdateServer)
-	admin.DELETE("/servers/:id", h.DeleteServer)
-	admin.GET("/servers/:id/domains", h.ListServerDomains)
-	admin.POST("/servers/:id/domains", h.AddServerDomain)
-	admin.DELETE("/servers/:id/domains/:domain_id", h.RemoveServerDomain)
+// RegisterAdminRoutes registers all server admin API routes on the given (already auth-protected) group.
+func (h *ServerHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
+	r.POST("/servers", h.RegisterServer)
+	r.GET("/servers", h.ListServers)
+	r.GET("/servers/:id", h.GetServer)
+	r.PUT("/servers/:id", h.UpdateServer)
+	r.DELETE("/servers/:id", h.DeleteServer)
+	r.GET("/servers/:id/domains", h.ListServerDomains)
+	r.POST("/servers/:id/domains", h.AddServerDomain)
+	r.DELETE("/servers/:id/domains/:domain_id", h.RemoveServerDomain)
 }
 
 func dnsRecordsForMXHost(records []DNSRecord, domain, mxHost, apiHost string) []DNSRecord {
@@ -451,7 +452,7 @@ func (h *ServerHandler) callNodeAddDomain(apiHost, domain string) (*RemoteDomain
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", "internal-proxy-token")
+	req.Header.Set("X-Internal-Token", h.sharedSecret)
 	resp, err := h.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -476,7 +477,7 @@ func (h *ServerHandler) callNodeRemoveDomain(apiHost, domain string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Internal-Token", "internal-proxy-token")
+	req.Header.Set("X-Internal-Token", h.sharedSecret)
 	resp, err := h.client.Do(req)
 	if err != nil {
 		return err

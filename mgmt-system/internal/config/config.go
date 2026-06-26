@@ -28,7 +28,10 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	Tokens []TokenConfig `yaml:"tokens"`
+	Tokens       []TokenConfig `yaml:"tokens"`
+	SharedSecret string        `yaml:"shared_secret"`
+	AdminUser    string        `yaml:"admin_user"`
+	AdminPass    string        `yaml:"admin_pass"`
 }
 
 type TokenConfig struct {

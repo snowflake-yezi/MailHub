@@ -39,16 +39,18 @@ type MailboxCreateResult struct {
 }
 
 type MailboxCreator struct {
-	store  *store.Store
-	config *config.Config
-	client *http.Client
+	store        *store.Store
+	config       *config.Config
+	client       *http.Client
+	sharedSecret string
 }
 
-func NewMailboxCreator(s *store.Store, cfg *config.Config) *MailboxCreator {
+func NewMailboxCreator(s *store.Store, cfg *config.Config, sharedSecret string) *MailboxCreator {
 	return &MailboxCreator{
-		store:  s,
-		config: cfg,
-		client: &http.Client{Timeout: 10 * time.Second},
+		store:        s,
+		config:       cfg,
+		client:       &http.Client{Timeout: 10 * time.Second},
+		sharedSecret: sharedSecret,
 	}
 }
 
@@ -201,7 +203,7 @@ func (m *MailboxCreator) createRemote(apiHost, email, password string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", "internal-proxy-token")
+	req.Header.Set("X-Internal-Token", m.sharedSecret)
 
 	resp, err := m.client.Do(req)
 	if err != nil {

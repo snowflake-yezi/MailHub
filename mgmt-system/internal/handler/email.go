@@ -10,11 +10,12 @@ import (
 )
 
 type EmailHandler struct {
-	store *store.Store
+	store        *store.Store
+	sharedSecret string
 }
 
-func NewEmailHandler(s *store.Store) *EmailHandler {
-	return &EmailHandler{store: s}
+func NewEmailHandler(s *store.Store, sharedSecret string) *EmailHandler {
+	return &EmailHandler{store: s, sharedSecret: sharedSecret}
 }
 
 // GetOrderEmails 按订单查询邮件列表（大模型系统调用）
@@ -41,7 +42,7 @@ func (h *EmailHandler) GetOrderEmails(c *gin.Context) {
 		c.DefaultQuery("size", "20"),
 	)
 
-	data, err := proxyToServer(srv.APIHost, "GET", path, nil)
+	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
 	if err != nil {
 		serverError(c, ErrCodeExternalFail, "failed to fetch emails: "+err.Error())
 		return
@@ -83,7 +84,7 @@ func (h *EmailHandler) GetEmailBody(c *gin.Context) {
 	}
 
 	path := fmt.Sprintf("/internal/messages/%s?mailbox=%s", messageID, mb.EmailAddress)
-	data, err := proxyToServer(srv.APIHost, "GET", path, bytes.NewReader(nil))
+	data, err := proxyToServer(srv.APIHost, "GET", path, bytes.NewReader(nil), h.sharedSecret)
 	if err != nil {
 		serverError(c, ErrCodeExternalFail, "failed to fetch email body: "+err.Error())
 		return

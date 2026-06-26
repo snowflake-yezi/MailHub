@@ -118,11 +118,11 @@ func (h *AdminHandler) ServerDomainsPage(c *gin.Context) {
 	})
 }
 
-func (h *AdminHandler) RegisterRoutes(r *gin.Engine) {
-	admin := r.Group("/admin")
-	admin.GET("/", h.Dashboard)
-	admin.GET("/servers", h.ServersPage)
-	admin.GET("/servers/:id/domains", h.ServerDomainsPage)
-	admin.GET("/filters", h.FiltersPage)
-	admin.GET("/mailboxes", h.MailboxesPage)
+// RegisterProtectedRoutes registers admin page routes on the given (already auth-protected) group.
+func (h *AdminHandler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
+	rg.GET("/", h.Dashboard)
+	rg.GET("/servers", h.ServersPage)
+	rg.GET("/servers/:id/domains", h.ServerDomainsPage)
+	rg.GET("/filters", h.FiltersPage)
+	rg.GET("/mailboxes", h.MailboxesPage)
 }

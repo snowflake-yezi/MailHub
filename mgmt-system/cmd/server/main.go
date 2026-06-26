@@ -54,18 +54,22 @@ func main() {
 	}
 
 	// 初始化服务
-	allocator := service.NewAllocator(db, cfg)
+	allocator := service.NewAllocator(db, cfg, cfg.Auth.SharedSecret)
 	importRealAccounts(db, cfg)
 	if err := db.SeedServerDomainsFromAccounts(); err != nil {
 		log.Printf("[WARN] seed server_domains failed: %v", err)
 	}
 
 	// 初始化 handler
-	mailboxH := handler.NewMailboxHandler(db, allocator)
-	emailH := handler.NewEmailHandler(db)
-	serverH := handler.NewServerHandler(db)
+	mailboxH := handler.NewMailboxHandler(db, allocator, cfg.Auth.SharedSecret)
+	emailH := handler.NewEmailHandler(db, cfg.Auth.SharedSecret)
+	serverH := handler.NewServerHandler(db, cfg.Auth.SharedSecret)
 	filterH := handler.NewFilterHandler(db)
 	adminH := handler.NewAdminHandler(db)
+
+	// Session 管理器
+	sessionMgr := middleware.NewSessionManager()
+	authH := handler.NewAuthHandler(cfg.Auth.AdminUser, cfg.Auth.AdminPass, sessionMgr)
 
 	// 设置 Gin
 	if cfg.Server.Mode == "release" {
@@ -78,27 +82,43 @@ func main() {
 	r.LoadHTMLGlob("template/admin/*.html")
 	r.Static("/static", "template/static")
 
-	// ---- 管理后台页面（无需鉴权，或使用 session 鉴权） ----
-	adminH.RegisterRoutes(r)
+	// ---- 公开登录/登出（无需鉴权） ----
+	authGroup := r.Group("/admin")
+	authGroup.GET("/login", authH.LoginPage)
+	authGroup.POST("/login", authH.LoginAction)
+	authGroup.GET("/logout", authH.LogoutAction)
+	authGroup.POST("/logout", authH.LogoutAction)
 
-	// ---- API v1（Token 鉴权） ----
+	// ---- 管理后台页面（Session 鉴权） ----
+	adminAuth := middleware.AdminAuthRequired(sessionMgr)
+	protectedPages := r.Group("/admin")
+	protectedPages.Use(adminAuth)
+	adminH.RegisterProtectedRoutes(protectedPages)
+
+	// ---- 管理后台 API（Session 鉴权） ----
+	apiAdmin := r.Group("/api/v1/admin")
+	apiAdmin.Use(adminAuth)
+	serverH.RegisterAdminRoutes(apiAdmin)
+	filterH.RegisterAdminRoutes(apiAdmin)
+	mailboxH.RegisterAdminRoutes(apiAdmin)
+
+	// ---- 外部 API v1（Bearer Token 鉴权 + Scope） ----
 	api := r.Group("/api/v1")
 	api.Use(middleware.AuthRequired(db))
 
-	// 邮箱生成 & 查询（出票中心）
-	mailboxH.RegisterRoutes(api)
+	// 邮箱生成 & 查询（出票中心 / 大模型系统）
+	api.POST("/mailboxes", middleware.RequireScope("mailbox:create"), mailboxH.CreateMailbox)
+	api.GET("/mailboxes/:order_id", middleware.RequireScope("mailbox:read"), mailboxH.GetMailbox)
+	api.POST("/mailboxes/:order_id/disable", middleware.RequireScope("mailbox:create"), mailboxH.DisableMailbox)
 
 	// 邮件查询（大模型系统）
-	emailH.RegisterRoutes(api)
+	emailGroup := api.Group("")
+	emailGroup.Use(middleware.RequireScope("email:read"))
+	emailH.RegisterRoutes(emailGroup)
 
-	// 服务器管理（管理后台 API）
-	serverH.RegisterRoutes(api)
-
-	// 过滤规则管理（管理后台 API）
-	filterH.RegisterRoutes(api)
-
-	// ---- 内部接口（邮箱服务器调用，不做 Token 鉴权，用固定密钥） ----
+	// ---- 内部接口（邮箱服务器调用，Shared-Secret 鉴权） ----
 	internal := r.Group("/api/v1/internal")
+	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.GET("/filters", filterH.GetActiveRules)
 

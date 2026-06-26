@@ -117,10 +117,10 @@ func (h *FilterHandler) GetActiveRules(c *gin.Context) {
 	success(c, "success", list)
 }
 
-func (h *FilterHandler) RegisterRoutes(r *gin.RouterGroup) {
-	admin := r.Group("/admin")
-	admin.POST("/filters", h.CreateRule)
-	admin.GET("/filters", h.ListRules)
-	admin.PUT("/filters/:id", h.UpdateRule)
-	admin.DELETE("/filters/:id", h.DeleteRule)
+// RegisterAdminRoutes registers all filter admin API routes on the given (already auth-protected) group.
+func (h *FilterHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
+	r.POST("/filters", h.CreateRule)
+	r.GET("/filters", h.ListRules)
+	r.PUT("/filters/:id", h.UpdateRule)
+	r.DELETE("/filters/:id", h.DeleteRule)
 }

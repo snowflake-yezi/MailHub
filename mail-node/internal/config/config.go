@@ -10,15 +10,16 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Maildir    MaildirConfig    `yaml:"maildir"`
-	Management ManagementConfig `yaml:"management"`
-	Forward    ForwardConfig    `yaml:"forward"`
-	Filter     FilterConfig     `yaml:"filter"`
-	Node       NodeConfig       `yaml:"node"`
-	PublicHost string           `yaml:"public_host"`
-	Postfix    PostfixConfig    `yaml:"postfix"`
-	DKIM       DKIMConfig       `yaml:"dkim"`
+	Server       ServerConfig     `yaml:"server"`
+	Maildir      MaildirConfig    `yaml:"maildir"`
+	Management   ManagementConfig `yaml:"management"`
+	Forward      ForwardConfig    `yaml:"forward"`
+	Filter       FilterConfig     `yaml:"filter"`
+	Node         NodeConfig       `yaml:"node"`
+	PublicHost   string           `yaml:"public_host"`
+	Postfix      PostfixConfig    `yaml:"postfix"`
+	DKIM         DKIMConfig       `yaml:"dkim"`
+	SharedSecret string           `yaml:"shared_secret"`
 }
 
 type ServerConfig struct {

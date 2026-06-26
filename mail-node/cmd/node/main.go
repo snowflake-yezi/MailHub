@@ -16,6 +16,7 @@ import (
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/handler"
 	"github.com/ticket/email-mail-node/internal/mailbox"
+	"github.com/ticket/email-mail-node/internal/middleware"
 )
 
 func main() {
@@ -98,8 +99,14 @@ func main() {
 
 	r := gin.Default()
 
-	// 注册路由
-	nodeH.RegisterRoutes(r)
+	// 注册内部路由（Shared-Secret 鉴权）
+	internalGroup := r.Group("/internal")
+	internalGroup.Use(middleware.InternalAuthRequired(cfg.SharedSecret))
+	nodeH.RegisterInternalRoutes(internalGroup)
+
+	// Deprecated: /smtp/filter is 方案 A (Postfix content_filter)。
+	// 当前架构已决策方案 B（Maildir 异步扫描 → forward.Service）。
+	r.POST("/smtp/filter", nodeH.SMTPFilter)
 
 	// 启动心跳上报
 	go startHeartbeat(cfg, engine)

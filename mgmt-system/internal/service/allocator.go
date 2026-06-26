@@ -16,8 +16,8 @@ type Allocator struct {
 	creator *MailboxCreator
 }
 
-func NewAllocator(s *store.Store, cfg *config.Config) *Allocator {
-	return &Allocator{creator: NewMailboxCreator(s, cfg)}
+func NewAllocator(s *store.Store, cfg *config.Config, sharedSecret string) *Allocator {
+	return &Allocator{creator: NewMailboxCreator(s, cfg, sharedSecret)}
 }
 
 func (a *Allocator) Creator() *MailboxCreator {

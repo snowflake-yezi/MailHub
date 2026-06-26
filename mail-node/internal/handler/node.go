@@ -82,6 +82,39 @@ func (h *NodeHandler) DeleteMailbox(c *gin.Context) {
 	})
 }
 
+// UpdateMailboxPassword updates a mailbox password in Dovecot users.conf.
+// PUT /internal/mailboxes/:email/password
+func (h *NodeHandler) UpdateMailboxPassword(c *gin.Context) {
+	email := c.Param("email")
+
+	var req struct {
+		EmailAddress string `json:"email_address"`
+		Password     string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 1001, "message": "password required"})
+		return
+	}
+	if req.EmailAddress != "" {
+		email = req.EmailAddress
+	}
+	if email == "" {
+		c.JSON(400, gin.H{"code": 1001, "message": "email address required"})
+		return
+	}
+	if len(req.Password) < 6 {
+		c.JSON(400, gin.H{"code": 1002, "message": "password must be at least 6 characters"})
+		return
+	}
+
+	if err := h.mailboxMgr.UpdatePassword(email, req.Password); err != nil {
+		c.JSON(500, gin.H{"code": 5000, "message": "failed to update password: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 0, "message": "password updated"})
+}
+
 // ===== 域名管理（管理系统调用） =====
 
 // AddDomain 让本 mail-node 开始服务一个虚拟邮箱域。
@@ -339,31 +372,27 @@ func generatePassword() string {
 	return fmt.Sprintf("%x", time.Now().UnixNano())[:16]
 }
 
-// RegisterRoutes 注册路由
-func (h *NodeHandler) RegisterRoutes(r *gin.Engine) {
-	internal := r.Group("/internal")
-
+// RegisterInternalRoutes registers all /internal/* routes on the given router group.
+// The caller is responsible for applying auth middleware to the group.
+// /smtp/filter (deprecated) is registered separately on the engine.
+func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮箱管理
-	internal.POST("/mailboxes", h.CreateMailbox)
-	internal.DELETE("/mailboxes/:email", h.DeleteMailbox)
+	rg.POST("/mailboxes", h.CreateMailbox)
+	rg.DELETE("/mailboxes/:email", h.DeleteMailbox)
+	rg.PUT("/mailboxes/:email/password", h.UpdateMailboxPassword)
 
 	// 域名管理
-	internal.POST("/domains", h.AddDomain)
-	internal.GET("/domains", h.ListDomains)
-	internal.DELETE("/domains/:domain", h.RemoveDomain)
+	rg.POST("/domains", h.AddDomain)
+	rg.GET("/domains", h.ListDomains)
+	rg.DELETE("/domains/:domain", h.RemoveDomain)
 
 	// 邮件查询
-	internal.GET("/mailboxes/:email/messages", h.GetMessages)
-	internal.GET("/messages/:message_id", h.GetMessageBody)
+	rg.GET("/mailboxes/:email/messages", h.GetMessages)
+	rg.GET("/messages/:message_id", h.GetMessageBody)
 
 	// 健康 & 维护
-	internal.GET("/health", h.Health)
-	internal.POST("/filters/reload", h.ReloadFilters)
-
-	// Deprecated: /smtp/filter is方案 A (Postfix content_filter)。
-	// 当前架构已决策方案 B（Maildir 异步扫描 → forward.Service），此端点保留
-	// 仅为向后兼容，不会接入 Postfix。后续迭代可移除。
-	r.POST("/smtp/filter", h.SMTPFilter)
+	rg.GET("/health", h.Health)
+	rg.POST("/filters/reload", h.ReloadFilters)
 }
 
 // SMTPFilter is DEPRECATED.

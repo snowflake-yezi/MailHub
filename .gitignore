@@ -8,6 +8,8 @@ context.md
 *.exe.bak-*
 mgmt-system/mgmt-server
 mail-node/mail-node
+mgmt-server.linux
+mail-node.linux
 
 # === 日志 ===
 *.log

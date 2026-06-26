@@ -8,6 +8,9 @@ database:
   dsn: "root:YOUR_PASSWORD@tcp(127.0.0.1:3306)/email_mgmt?charset=utf8mb4&parseTime=true&loc=Local"
 
 auth:
+  shared_secret: "CHANGE-ME-USE-LONG-RANDOM-STRING"
+  admin_user: "admin"
+  admin_pass: "CHANGE-ME-ADMIN-PASSWORD"
   tokens:
     - name: "出票中心"
       token: "sk-ticket-CHANGE-ME"
