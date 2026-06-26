@@ -10,8 +10,10 @@ maildir:
 
 management:
   api_url: "http://127.0.0.1:8080"
-  heartbeat_interval: 60
+  heartbeat_interval: 30
   filter_sync_interval: 3600
+
+shared_secret: "CHANGE-ME-SAME-AS-MGMT"
 
 forward:
   smtp_host: "mail.example.com:587"

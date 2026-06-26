@@ -297,11 +297,13 @@ func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
 
 	// Update password on remote mail-node first.
 	srv, err := h.store.GetServer(existing.ServerID)
-	if err == nil {
-		if err := h.callNodeUpdatePassword(srv.APIHost, existing.EmailAddress, req.Password); err != nil {
-			serverError(c, ErrCodeExternalFail, "failed to update password on mail node: "+err.Error())
-			return
-		}
+	if err != nil {
+		serverError(c, ErrCodeInternal, "failed to load mailbox server: "+err.Error())
+		return
+	}
+	if err := h.callNodeUpdatePassword(srv.APIHost, existing.EmailAddress, req.Password); err != nil {
+		serverError(c, ErrCodeExternalFail, "failed to update password on mail node: "+err.Error())
+		return
 	}
 
 	// Update in local database.

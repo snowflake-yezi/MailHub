@@ -32,13 +32,13 @@ const (
 
 // Rule 一条过滤规则
 type Rule struct {
-	ID       uint64   `json:"id"`
-	Name     string   `json:"name"`
-	RuleType RuleType `json:"rule_type"`
-	Pattern  string   `json:"pattern"`
-	Action   Action   `json:"action"`
-	Priority int      `json:"priority"`
-	Enabled  bool     `json:"enabled"`
+	ID       uint64         `json:"id"`
+	Name     string         `json:"name"`
+	RuleType RuleType       `json:"rule_type"`
+	Pattern  string         `json:"pattern"`
+	Action   Action         `json:"action"`
+	Priority int            `json:"priority"`
+	Enabled  bool           `json:"enabled"`
 	compiled *regexp.Regexp `json:"-"` // 预编译的正则（Regex 类型用）
 }
 
@@ -52,9 +52,9 @@ type EmailMessage struct {
 
 // Result 过滤结果
 type Result struct {
-	Action  Action `json:"action"`
-	Reason  string `json:"reason"`
-	RuleID  uint64 `json:"rule_id,omitempty"`
+	Action Action `json:"action"`
+	Reason string `json:"reason"`
+	RuleID uint64 `json:"rule_id,omitempty"`
 }
 
 // Engine 过滤引擎（线程安全）
@@ -134,9 +134,15 @@ func (e *Engine) GetFlagPrefix() string {
 }
 
 // SyncFromManager 从管理系统拉取最新规则
-func (e *Engine) SyncFromManager(managerURL string) error {
+func (e *Engine) SyncFromManager(managerURL, sharedSecret string) error {
 	url := fmt.Sprintf("%s/api/v1/internal/filters", managerURL)
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("X-Internal-Token", sharedSecret)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("fetch rules: %w", err)
 	}
@@ -160,20 +166,20 @@ func (e *Engine) SyncFromManager(managerURL string) error {
 }
 
 // StartAutoSync 启动定时同步
-func (e *Engine) StartAutoSync(managerURL string, intervalSec int) {
+func (e *Engine) StartAutoSync(managerURL string, intervalSec int, sharedSecret string) {
 	go func() {
 		ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 		defer ticker.Stop()
 
 		// 启动时立即同步一次
-		if err := e.SyncFromManager(managerURL); err != nil {
+		if err := e.SyncFromManager(managerURL, sharedSecret); err != nil {
 			fmt.Printf("filter sync failed: %v\n", err)
 		} else {
 			fmt.Printf("filter synced: %d rules loaded\n", len(e.rules))
 		}
 
 		for range ticker.C {
-			if err := e.SyncFromManager(managerURL); err != nil {
+			if err := e.SyncFromManager(managerURL, sharedSecret); err != nil {
 				fmt.Printf("filter sync failed: %v\n", err)
 			}
 		}

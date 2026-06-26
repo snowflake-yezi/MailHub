@@ -23,6 +23,24 @@ func (m *Manager) MaildirBase() string {
 	return m.maildirBase
 }
 
+// ActiveCount 返回本节点当前活跃邮箱账号数（Dovecot users.conf 中的有效行数）。
+// 供心跳上报为 load，供 mgmt 周期性校准 mail_servers.current_load。
+func (m *Manager) ActiveCount() int {
+	data, err := os.ReadFile(m.usersFile)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		// 有效行形如 "user@domain:{PLAIN}pass::::::"
+		if line != "" && strings.Contains(line, ":") {
+			n++
+		}
+	}
+	return n
+}
+
 // NewManager 创建邮箱管理器
 func NewManager(maildirBase string, vmailUID, vmailGID int) *Manager {
 	return &Manager{

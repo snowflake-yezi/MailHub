@@ -137,12 +137,29 @@ func (s *Store) CountMailboxesOnServer(serverID uint64) (int64, error) {
 	err := s.db.Model(&model.MailboxAccount{}).Where("server_id = ?", serverID).Count(&count).Error
 	return count, err
 }
-func (s *Store) UpdateServerHeartbeat(serverID uint64, status string) error {
+
+// UpdateServerHeartbeat 更新被动心跳：刷新 last_heartbeat，可选校准 current_load。
+// 不写 status——status 由 mgmt 主动探测维护，避免 node 上报与探测结论打架。
+// 见 docs/design/t7-healthcheck-design.md §5.3 / §6。
+func (s *Store) UpdateServerHeartbeat(serverID uint64, load int) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"last_heartbeat": &now,
+		"current_load":   load,
+	}
+	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
+		Updates(updates).Error
+}
+
+// UpdateServerProbe records one active health probe result and advances the
+// server status chosen by the healthcheck scheduler.
+func (s *Store) UpdateServerProbe(serverID uint64, failCount int, status string) error {
 	now := time.Now()
 	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
 		Updates(map[string]interface{}{
-			"last_heartbeat": &now,
-			"status":         status,
+			"last_probe_at":    &now,
+			"probe_fail_count": failCount,
+			"status":           status,
 		}).Error
 }
 
@@ -418,6 +435,7 @@ func (s *Store) ListMailboxesWithFilter(page, size int, filter MailboxListFilter
 		Order("id DESC").Offset((page - 1) * size).Limit(size).Find(&list).Error
 	return list, total, err
 }
+
 // GetMailboxByID returns a mailbox account by ID with Domain and Server preloaded.
 func (s *Store) GetMailboxByID(id uint64) (*model.MailboxAccount, error) {
 	var mb model.MailboxAccount
@@ -428,12 +446,16 @@ func (s *Store) GetMailboxByID(id uint64) (*model.MailboxAccount, error) {
 	return &mb, nil
 }
 
-// UpdateMailboxPassword updates the password for a mailbox account and marks sync as pending.
+// UpdateMailboxPassword updates the local password after the remote mail-node
+// has already accepted the same password.
 func (s *Store) UpdateMailboxPassword(id uint64, password string) error {
+	now := time.Now()
 	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", id).
 		Updates(map[string]interface{}{
 			"password":    password,
-			"sync_status": "pending",
+			"sync_status": "synced",
+			"sync_error":  "",
+			"synced_at":   &now,
 		}).Error
 }
 

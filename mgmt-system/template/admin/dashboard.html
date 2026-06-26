@@ -24,7 +24,10 @@
         th { font-weight: 600; color: #666; }
         .status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
         .status.healthy { background: #4caf50; }
+        .status.degraded { background: #ff9800; }
         .status.down { background: #f44336; }
+        .status.draining { background: #2196f3; }
+        .fail-count { color: #c62828; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -54,7 +57,7 @@
             <h3>服务器状态</h3>
             <table>
                 <thead>
-                    <tr><th>名称</th><th>API 地址</th><th>负载</th><th>状态</th></tr>
+                    <tr><th>名称</th><th>API 地址</th><th>负载</th><th>状态</th><th>最近探测</th><th>失败次数</th></tr>
                 </thead>
                 <tbody>
                     {{range .servers}}
@@ -63,6 +66,8 @@
                         <td>{{.APIHost}}</td>
                         <td>{{.CurrentLoad}} / {{.Capacity}}</td>
                         <td><span class="status {{.Status}}"></span>{{.Status}}</td>
+                        <td>{{if .LastProbeAt}}{{.LastProbeAt.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td>{{if gt .ProbeFailCount 0}}<span class="fail-count">{{.ProbeFailCount}}</span>{{else}}0{{end}}</td>
                     </tr>
                     {{end}}
                 </tbody>

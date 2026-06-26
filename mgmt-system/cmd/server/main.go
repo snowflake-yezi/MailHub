@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/config"
 	"github.com/ticket/email-mgmt-system/internal/handler"
+	"github.com/ticket/email-mgmt-system/internal/healthcheck"
 	"github.com/ticket/email-mgmt-system/internal/middleware"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
@@ -122,12 +125,18 @@ func main() {
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.GET("/filters", filterH.GetActiveRules)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	healthScheduler := healthcheck.NewScheduler(db, cfg.Auth.SharedSecret, 30*time.Second, 5*time.Second)
+	go healthScheduler.Start(ctx)
+
 	// 优雅退出
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("Shutting down server...")
+		cancel()
 		// 这里可以加 DB 关闭逻辑
 		os.Exit(0)
 	}()

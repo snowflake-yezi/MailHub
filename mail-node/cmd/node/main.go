@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,6 +45,7 @@ func main() {
 	engine.StartAutoSync(
 		cfg.Management.APIURL,
 		cfg.Management.FilterSyncInterval,
+		cfg.SharedSecret,
 	)
 
 	// 初始化邮箱管理器（Maildir 属主 UID/GID 可配置，适配宝塔共存机或独立虚拟用户）
@@ -108,8 +113,8 @@ func main() {
 	// 当前架构已决策方案 B（Maildir 异步扫描 → forward.Service）。
 	r.POST("/smtp/filter", nodeH.SMTPFilter)
 
-	// 启动心跳上报
-	go startHeartbeat(cfg, engine)
+	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
+	go startHeartbeat(cfg, mailboxMgr)
 
 	// 优雅退出
 	go func() {
@@ -127,18 +132,53 @@ func main() {
 	}
 }
 
-// startHeartbeat 定时向管理系统上报心跳
-func startHeartbeat(cfg *config.Config, engine *filter.Engine) {
-	ticker := time.NewTicker(time.Duration(cfg.Management.HeartbeatInterval) * time.Second)
+// startHeartbeat 定时向管理系统上报心跳（被动心跳）。
+//
+// 证明 node 进程存活 + node→mgmt 方向可达，刷新 mgmt 的 last_heartbeat 与 current_load。
+// 注意：mgmt 的 status 完全由其主动探测决定，本心跳不参与 status 升降，
+// 避免与探测结论打架（见 docs/design/t7-healthcheck-design.md §4.1 / §6）。
+func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
+	interval := cfg.Management.HeartbeatInterval
+	if interval <= 0 {
+		interval = 60
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	url := strings.TrimRight(cfg.Management.APIURL, "/") + "/api/v1/internal/servers/heartbeat"
+
+	beat := func() {
+		load := 0
+		if mailboxMgr != nil {
+			load = mailboxMgr.ActiveCount()
+		}
+		body, _ := json.Marshal(map[string]interface{}{
+			"server_id": cfg.Node.ID,
+			"status":    "alive", // 仅表示本地进程自检 OK；mgmt 不据此覆盖 status
+			"load":      load,
+			"node_name": cfg.Node.Name,
+		})
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			log.Printf("heartbeat: build request failed: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Internal-Token", cfg.SharedSecret)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Printf("heartbeat: POST mgmt failed (node=%s): %v", cfg.Node.Name, err)
+			return
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("heartbeat: mgmt returned %d for node=%s", resp.StatusCode, cfg.Node.Name)
+		}
+	}
+
+	beat() // 启动后立即上报一次，缩短冷启动空白期
+	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
-
-	client := &gin.DefaultWriter // 复用 http client 简化
-	_ = client
-
 	for range ticker.C {
-		// POST /api/v1/internal/servers/heartbeat
-		// 简单实现，Phase 1 用 net/http
-		// TODO: 完善心跳上报
-		log.Printf("heartbeat: node=%s status=ok", cfg.Node.Name)
+		beat()
 	}
 }

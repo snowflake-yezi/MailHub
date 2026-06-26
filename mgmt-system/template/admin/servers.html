@@ -98,7 +98,7 @@
         <div class="section">
             <table>
                 <thead>
-                    <tr><th>ID</th><th>名称</th><th>API</th><th>SMTP</th><th>IMAP</th><th>负载</th><th>状态</th><th>心跳</th><th>操作</th></tr>
+                    <tr><th>ID</th><th>名称</th><th>API</th><th>SMTP</th><th>IMAP</th><th>负载</th><th>状态</th><th>心跳</th><th>探测</th><th>失败</th><th>操作</th></tr>
                 </thead>
                 <tbody>
                     {{range .servers}}
@@ -111,6 +111,8 @@
                         <td>{{.CurrentLoad}} / {{.Capacity}}</td>
                         <td><span class="status {{.Status}}">{{.Status}}</span></td>
                         <td>{{if .LastHeartbeat}}{{.LastHeartbeat.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td>{{if .LastProbeAt}}{{.LastProbeAt.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
+                        <td>{{.ProbeFailCount}}</td>
                         <td>
                             <button class="btn btn-sm btn-primary" onclick="openEdit({{.ID}})">编辑</button>
                             <a class="btn btn-sm btn-success" href="/admin/servers/{{.ID}}/domains" style="margin-left:4px;">域名池</a>
@@ -119,7 +121,7 @@
                     </tr>
                     {{end}}
                     {{if not .servers}}
-                    <tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>
+                    <tr><td colspan="11" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>
                     {{end}}
                 </tbody>
             </table>
@@ -206,13 +208,14 @@
         function renderServerTable(servers) {
             var tbody = document.querySelector('table tbody');
             if (!servers || servers.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="11" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>';
                 return;
             }
             var html = '';
             for (var i = 0; i < servers.length; i++) {
                 var s = servers[i];
                 var hb = s.last_heartbeat ? new Date(s.last_heartbeat).toLocaleString('zh-CN', {hour12: false}) : '-';
+                var probe = s.last_probe_at ? new Date(s.last_probe_at).toLocaleString('zh-CN', {hour12: false}) : '-';
                 html += '<tr>' +
                     '<td>' + s.id + '</td>' +
                     '<td><strong>' + escHtml(s.name) + '</strong></td>' +
@@ -222,6 +225,8 @@
                     '<td>' + s.current_load + ' / ' + s.capacity + '</td>' +
                     '<td><span class="status ' + s.status + '">' + s.status + '</span></td>' +
                     '<td>' + hb + '</td>' +
+                    '<td>' + probe + '</td>' +
+                    '<td>' + (s.probe_fail_count || 0) + '</td>' +
                     '<td>' +
                         '<button class="btn btn-sm btn-primary" onclick="openEdit(' + s.id + ')">编辑</button> ' +
                         '<a class="btn btn-sm btn-success" href="/admin/servers/' + s.id + '/domains" style="margin-left:4px;">域名池</a>' +
@@ -381,4 +386,3 @@
     </script>
 </body>
 </html>
-

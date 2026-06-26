@@ -351,6 +351,7 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 		Status    string `json:"status"`
 		Load      int    `json:"load"`
 		DiskUsage string `json:"disk_usage"`
+		NodeName  string `json:"node_name"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -358,22 +359,14 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 		return
 	}
 
-	if req.Status == "" {
-		req.Status = "healthy"
-	}
-
-	if err := h.store.UpdateServerHeartbeat(req.ServerID, req.Status); err != nil {
-		serverError(c, ErrCodeInternal, "failed to update heartbeat")
+	if req.ServerID == 0 {
+		badRequest(c, ErrCodeParamMissing, "server_id required")
 		return
 	}
 
-	// 如果上报了负载，更新负载
-	if req.Load > 0 {
-		srv, err := h.store.GetServer(req.ServerID)
-		if err == nil {
-			srv.CurrentLoad = req.Load
-			h.store.UpdateServer(srv)
-		}
+	if err := h.store.UpdateServerHeartbeat(req.ServerID, req.Load); err != nil {
+		serverError(c, ErrCodeInternal, "failed to update heartbeat")
+		return
 	}
 
 	success(c, "heartbeat received", nil)
