@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/model"
@@ -53,6 +54,9 @@ func New(dsn string, mode string) (*Store, error) {
 	}
 
 	s := &Store{db: db}
+	if err := s.migrateLifecycleSchema(); err != nil {
+		return nil, fmt.Errorf("migrate lifecycle schema: %w", err)
+	}
 	if err := s.MigrateLegacyOrderMailboxes(); err != nil {
 		return nil, fmt.Errorf("migrate legacy order_mailboxes: %w", err)
 	}
@@ -496,6 +500,62 @@ func (s *Store) FindExpiredMailboxes() ([]model.MailboxAccount, error) {
 	return list, err
 }
 
+// ===== 生命周期 Store 方法（T9） =====
+
+// ListDeletingByServer 查找某服务器上所有 deleting 状态的邮箱（供 /internal/sync/deleting）。
+func (s *Store) ListDeletingByServer(serverID uint64) ([]model.MailboxAccount, error) {
+	var list []model.MailboxAccount
+	err := s.db.Where("server_id = ? AND status = ?", serverID, "deleting").
+		Order("id ASC").Find(&list).Error
+	return list, err
+}
+
+// RequestDeletion 将邮箱置为 deleting 状态，记录删除请求时间（Watchdog 超时判定基准）。
+func (s *Store) RequestDeletion(mailboxID uint64) error {
+	now := time.Now()
+	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", mailboxID).
+		Updates(map[string]interface{}{
+			"status":              "deleting",
+			"delete_requested_at": &now,
+		}).Error
+}
+
+// ConfirmDeletion mail-node MoveToTrash 成功后回调，将邮箱从 deleting 转为 soft_deleted。
+func (s *Store) ConfirmDeletion(mailboxID uint64) error {
+	now := time.Now()
+	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", mailboxID).
+		Updates(map[string]interface{}{
+			"status":      "soft_deleted",
+			"recycled_at": &now,
+		}).Error
+}
+
+// MarkPurged 将邮箱标记为 purged（GC 最终态）。
+func (s *Store) MarkPurged(mailboxID uint64) error {
+	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", mailboxID).
+		Update("status", "purged").Error
+}
+
+// FindStuckDeleting 查找 delete_requested_at 超过给定超时的 deleting 任务（Watchdog 用）。
+func (s *Store) FindStuckDeleting(timeout time.Duration) ([]model.MailboxAccount, error) {
+	var list []model.MailboxAccount
+	cutoff := time.Now().Add(-timeout)
+	err := s.db.Where("status = ? AND delete_requested_at <= ?", "deleting", cutoff).
+		Order("id ASC").Find(&list).Error
+	return list, err
+}
+
+// FindExpiredSoftDeleted 查找 soft_deleted 且已过保留期的邮箱（GC 用）。
+func (s *Store) FindExpiredSoftDeleted() ([]model.MailboxAccount, error) {
+	var list []model.MailboxAccount
+	// 使用 recycled_at 判定软删除时间；retention_days 为 0 时默认 30 天
+	err := s.db.Where("status = ?", "soft_deleted").
+		Where("recycled_at IS NOT NULL").
+		Where("DATE_ADD(recycled_at, INTERVAL COALESCE(retention_days, 30) DAY) <= ?", time.Now()).
+		Order("id ASC").Find(&list).Error
+	return list, err
+}
+
 func (s *Store) CreateMailbox(mb *model.OrderMailbox) error {
 	return s.CreateMailboxAccountWithOrder(legacyToAccount(mb), mb.OrderID)
 }
@@ -506,6 +566,32 @@ func (s *Store) GetMailboxByOrderID(orderID string) (*model.MailboxAccount, erro
 
 func (s *Store) GetMailboxByEmail(email string) (*model.MailboxAccount, error) {
 	return s.GetMailboxAccountByEmail(email)
+}
+
+// migrateLifecycleSchema 将 mailbox_accounts 生命周期状态机从旧三态迁移至四态，
+// 并添加 delete_requested_at 列。GORM AutoMigrate 无法修改已有表的 enum 值，
+// 故用原生 SQL。幂等：重复执行不报错。
+func (s *Store) migrateLifecycleSchema() error {
+	// 1. 扩展 status enum（幂等：Modify Column 不丢数据）
+	if err := s.db.Exec("ALTER TABLE mailbox_accounts MODIFY COLUMN status ENUM('active','disabled','recycled','deleting','soft_deleted','purged') NOT NULL DEFAULT 'active'").Error; err != nil {
+		return fmt.Errorf("migrate status enum: %w", err)
+	}
+
+	// 2. 新增 delete_requested_at 列（幂等：先查 information_schema 是否已存在）
+	var colCount int64
+	s.db.Raw("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'mailbox_accounts' AND COLUMN_NAME = 'delete_requested_at'").Scan(&colCount)
+	if colCount == 0 {
+		if err := s.db.Exec("ALTER TABLE mailbox_accounts ADD COLUMN delete_requested_at DATETIME NULL").Error; err != nil {
+			return fmt.Errorf("migrate add column: %w", err)
+		}
+	}
+
+	// 3. 数据迁移：旧 disabled → deleting, 旧 recycled → soft_deleted
+	s.db.Exec("UPDATE mailbox_accounts SET status = 'deleting' WHERE status = 'disabled'")
+	s.db.Exec("UPDATE mailbox_accounts SET status = 'soft_deleted' WHERE status = 'recycled'")
+
+	log.Printf("[schema] lifecycle migration applied successfully")
+	return nil
 }
 
 func (s *Store) MigrateLegacyOrderMailboxes() error {

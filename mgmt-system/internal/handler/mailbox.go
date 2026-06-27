@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
@@ -223,12 +224,83 @@ func (h *MailboxHandler) DisableMailbox(c *gin.Context) {
 		return
 	}
 
-	if err := h.store.DisableMailbox(mb.ID); err != nil {
-		serverError(c, ErrCodeInternal, "failed to disable mailbox")
+	h.executeDeletion(c, mb)
+}
+
+// RequestDelete 管理后台触发的邮箱删除（四态流转入口）。
+// POST /api/v1/admin/mailboxes/:id/delete
+func (h *MailboxHandler) RequestDelete(c *gin.Context) {
+	id := parseUint64(c.Param("id"))
+	if id == 0 {
+		badRequest(c, ErrCodeParamMissing, "invalid mailbox id")
 		return
 	}
 
-	success(c, "disabled", nil)
+	mb, err := h.store.GetMailboxByID(id)
+	if err != nil {
+		notFound(c, "mailbox not found")
+		return
+	}
+
+	h.executeDeletion(c, mb)
+}
+
+// executeDeletion 执行完整的删除下发流程：
+// ① RequestDeletion → deleting + delete_requested_at
+// ② proxy mail-node DELETE /internal/mailboxes/{email}
+// ③ 成功 → ConfirmDeletion → soft_deleted；失败 → 保持 deleting（Watchdog 重试）
+func (h *MailboxHandler) executeDeletion(c *gin.Context, mb *model.MailboxAccount) {
+	// ① 标记 deleting
+	if err := h.store.RequestDeletion(mb.ID); err != nil {
+		serverError(c, ErrCodeInternal, "failed to request deletion: "+err.Error())
+		return
+	}
+
+	// ② 下发 mail-node 安全销毁
+	srv, err := h.store.GetServer(mb.ServerID)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "mail server not found")
+		return
+	}
+	if err := h.callNodeDeleteMailbox(srv.APIHost, mb.EmailAddress); err != nil {
+		// 保持 deleting 状态，Watchdog 会重试
+		serverError(c, ErrCodeExternalFail, "failed to delete on mail node (will retry): "+err.Error())
+		return
+	}
+
+	// ③ 成功，标记 soft_deleted
+	if err := h.store.ConfirmDeletion(mb.ID); err != nil {
+		serverError(c, ErrCodeInternal, "failed to confirm deletion: "+err.Error())
+		return
+	}
+
+	success(c, "deleted", gin.H{
+		"id":            mb.ID,
+		"email_address": mb.EmailAddress,
+		"status":        "soft_deleted",
+	})
+}
+
+// callNodeDeleteMailbox 向 mail-node 发送 DELETE 请求，触发 MoveToTrash。
+func (h *MailboxHandler) callNodeDeleteMailbox(apiHost, email string) error {
+	url := fmt.Sprintf("http://%s/internal/mailboxes/%s", apiHost, email)
+	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("X-Internal-Token", h.sharedSecret)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+	}
+	return nil
 }
 
 func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
@@ -352,12 +424,33 @@ func (h *MailboxHandler) RegisterRoutes(r *gin.RouterGroup) {
 	r.POST("/mailboxes/:order_id/disable", h.DisableMailbox)
 }
 
+// SyncDeleting 返回指定服务器上所有 deleting 状态的邮箱列表。
+// GET /api/v1/internal/sync/deleting?server_id=<id>
+// 由 mail-node 重启时 PullDeletingTasks 调用，用于恢复崩溃/重启前未完成的删除任务。
+func (h *MailboxHandler) SyncDeleting(c *gin.Context) {
+	serverID := parseUint64(c.Query("server_id"))
+	if serverID == 0 {
+		badRequest(c, ErrCodeParamMissing, "server_id is required")
+		return
+	}
+	list, err := h.store.ListDeletingByServer(serverID)
+	if err != nil {
+		serverError(c, ErrCodeInternal, "failed to list deleting tasks")
+		return
+	}
+	if list == nil {
+		list = []model.MailboxAccount{}
+	}
+	success(c, "success", list)
+}
+
 // RegisterAdminRoutes registers admin API routes on the given (already auth-protected) group.
 func (h *MailboxHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/mailboxes", h.ListMailboxes)
 	r.POST("/mailboxes/batch", h.CreateMailboxBatch)
 	r.POST("/mailboxes/upload", h.UploadMailboxCSV)
 	r.PUT("/mailboxes/:id", h.UpdateMailboxPassword)
+	r.POST("/mailboxes/:id/delete", h.RequestDelete)
 }
 
 var _ = http.Handler(nil)

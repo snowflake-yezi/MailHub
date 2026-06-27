@@ -14,6 +14,7 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/config"
 	"github.com/ticket/email-mgmt-system/internal/handler"
 	"github.com/ticket/email-mgmt-system/internal/healthcheck"
+	"github.com/ticket/email-mgmt-system/internal/lifecycle"
 	"github.com/ticket/email-mgmt-system/internal/middleware"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
@@ -125,11 +126,15 @@ func main() {
 	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.GET("/filters", filterH.GetActiveRules)
+	internal.GET("/sync/deleting", mailboxH.SyncDeleting)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	healthScheduler := healthcheck.NewScheduler(db, cfg.Auth.SharedSecret, 30*time.Second, 5*time.Second)
 	go healthScheduler.Start(ctx)
+
+	lifecycleScheduler := lifecycle.NewScheduler(db, cfg.Auth.SharedSecret, 5*time.Minute)
+	go lifecycleScheduler.Start(ctx)
 
 	// 优雅退出
 	go func() {

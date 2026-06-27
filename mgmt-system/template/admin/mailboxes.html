@@ -215,6 +215,9 @@
         .tag.active, .tag.synced { background: var(--success-bg); color: var(--success-text); }
         .tag.pending { background: var(--warn-bg); color: var(--warn-text); }
         .tag.disabled, .tag.recycled, .tag.sync_failed { background: var(--danger-bg); color: var(--danger-text); }
+        .tag.deleting { background: #fef3c7; color: #92400e; }
+        .tag.soft_deleted { background: #f3e8ff; color: #6b21a8; }
+        .tag.purged { background: #f3f4f6; color: #6b7280; }
         .muted { color: var(--muted); font-size: 13px; }
         .empty { text-align: center; color: var(--muted); padding: 28px !important; }
         .create-grid {
@@ -363,8 +366,9 @@
                         <select name="status">
                             <option value="">全部状态</option>
                             <option value="active" {{if eq .status "active"}}selected{{end}}>active</option>
-                            <option value="disabled" {{if eq .status "disabled"}}selected{{end}}>disabled</option>
-                            <option value="recycled" {{if eq .status "recycled"}}selected{{end}}>recycled</option>
+                            <option value="deleting" {{if eq .status "deleting"}}selected{{end}}>deleting</option>
+                            <option value="soft_deleted" {{if eq .status "soft_deleted"}}selected{{end}}>soft_deleted</option>
+                            <option value="purged" {{if eq .status "purged"}}selected{{end}}>purged</option>
                         </select>
                         <button type="submit" class="btn btn-primary">筛选</button>
                         <a href="/admin/mailboxes" class="btn btn-secondary">重置</a>
@@ -410,6 +414,9 @@
                                     <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
                                     <td>
                                         <button class="btn btn-primary" style="height:28px;font-size:12px;padding:0 10px;" onclick="openPasswordEdit({{.ID}}, '{{.EmailAddress}}')">改密</button>
+                                        {{if or (eq .Status "active") (eq .Status "deleting")}}
+                                        <button class="btn btn-secondary" style="height:28px;font-size:12px;padding:0 10px;margin-left:4px;" onclick="requestDelete({{.ID}}, '{{.EmailAddress}}')">删除</button>
+                                        {{end}}
                                     </td>
                                 </tr>
                                 {{end}}
@@ -647,6 +654,25 @@
                 box.innerHTML = html;
             } catch (e) {}
         });
+
+        async function requestDelete(id, email) {
+            if (!confirm('确认删除邮箱 ' + email + '？\n\n这将摘除 Postfix 收信、等待转发排空后将 Maildir 移入回收站。')) return;
+            try {
+                const resp = await fetch('/api/v1/admin/mailboxes/' + id + '/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const json = await resp.json();
+                if (!resp.ok || json.code !== 0) {
+                    alert('删除失败：' + (json.message || '未知错误'));
+                    return;
+                }
+                alert('已提交删除：' + email + '\n状态：' + (json.data && json.data.status || 'deleting'));
+                location.reload();
+            } catch (err) {
+                alert('请求失败：' + err.message);
+            }
+        }
     </script>
 </body>
 </html>

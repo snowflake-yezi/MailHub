@@ -38,7 +38,7 @@ type MailboxAccount struct {
 	Password      string     `gorm:"size:255" json:"password"`
 	DomainID      uint64     `gorm:"not null" json:"domain_id"`
 	ServerID      uint64     `gorm:"not null;index:idx_server" json:"server_id"`
-	Status        string     `gorm:"type:enum('active','disabled','recycled');default:active;index:idx_status" json:"status"`
+	Status        string     `gorm:"type:enum('active','disabled','recycled','deleting','soft_deleted','purged');default:active;index:idx_status" json:"status"`
 	SyncStatus    string     `gorm:"type:enum('pending','synced','sync_failed');default:pending;index:idx_sync_status" json:"sync_status"`
 	SyncError     string     `gorm:"type:text" json:"sync_error,omitempty"`
 	RetentionDays int        `gorm:"not null;default:30" json:"retention_days"`
@@ -48,6 +48,8 @@ type MailboxAccount struct {
 	ExpiresAt     *time.Time `json:"expires_at"`
 	DisabledAt    *time.Time `json:"disabled_at"`
 	RecycledAt    *time.Time `json:"recycled_at"`
+	// DeleteRequestedAt 删除请求发起时间，Watchdog 据此判定超时（>15min）重新下发 DELETE。
+	DeleteRequestedAt *time.Time `json:"delete_requested_at,omitempty"`
 
 	// 关联
 	Domain Domain     `gorm:"foreignKey:DomainID" json:"domain,omitempty"`
