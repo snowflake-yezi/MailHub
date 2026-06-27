@@ -94,6 +94,14 @@ func (h *AdminHandler) MailboxesPage(c *gin.Context) {
 	})
 }
 
+func (h *AdminHandler) EmailsPage(c *gin.Context) {
+	mailbox := c.Query("mailbox")
+	c.HTML(http.StatusOK, "emails.html", gin.H{
+		"title":   "邮件查询",
+		"mailbox": mailbox,
+	})
+}
+
 // ServerDomainsPage 某服务器的「域名池」页面（宝塔式：服务器 → 域名 → 邮箱）。
 // T4A 为只读列表（展示绑定与远端同步状态）；添加域名 / 域名下创建邮箱见 T4B/T5。
 func (h *AdminHandler) ServerDomainsPage(c *gin.Context) {
@@ -125,4 +133,5 @@ func (h *AdminHandler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/servers/:id/domains", h.ServerDomainsPage)
 	rg.GET("/filters", h.FiltersPage)
 	rg.GET("/mailboxes", h.MailboxesPage)
+	rg.GET("/emails", h.EmailsPage)
 }

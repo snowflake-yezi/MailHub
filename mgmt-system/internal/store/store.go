@@ -234,6 +234,23 @@ func (s *Store) ListDomainsByServer(serverID uint64) ([]model.ServerDomain, erro
 	return list, err
 }
 
+// FindServerByEmailDomain 根据邮箱域名查找所属服务器（优先 healthy，其次任意在线）。
+// 用于管理后台邮件查询的降级路径——即使邮箱未录入 mailbox_accounts 也能查到邮件。
+func (s *Store) FindServerByEmailDomain(emailDomain string) (*model.MailServer, error) {
+	var srv model.MailServer
+	err := s.db.Joins("JOIN server_domains ON server_domains.server_id = mail_servers.id").
+		Joins("JOIN domains ON domains.id = server_domains.domain_id").
+		Where("domains.name = ?", emailDomain).
+		Where("server_domains.status = ?", "active").
+		Where("mail_servers.status != ?", "down").
+		Order("CASE mail_servers.status WHEN 'healthy' THEN 0 ELSE 1 END ASC").
+		First(&srv).Error
+	if err != nil {
+		return nil, err
+	}
+	return &srv, nil
+}
+
 // ListServersByDomain 列出服务某域名的服务器（preload Server）
 func (s *Store) ListServersByDomain(domainID uint64) ([]model.ServerDomain, error) {
 	var list []model.ServerDomain

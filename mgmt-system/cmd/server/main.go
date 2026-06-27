@@ -104,6 +104,7 @@ func main() {
 	serverH.RegisterAdminRoutes(apiAdmin)
 	filterH.RegisterAdminRoutes(apiAdmin)
 	mailboxH.RegisterAdminRoutes(apiAdmin)
+	emailH.RegisterAdminRoutes(apiAdmin)
 
 	// ---- 外部 API v1（Bearer Token 鉴权 + Scope） ----
 	api := r.Group("/api/v1")

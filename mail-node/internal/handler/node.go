@@ -3,8 +3,12 @@ package handler
 import (
 	"fmt"
 	"io"
+	"mime"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -182,6 +186,49 @@ func (h *NodeHandler) scanMailboxFiles(email string) []string {
 	return files
 }
 
+func sortMailFilesByModTimeDesc(files []string) []string {
+	sorted := append([]string(nil), files...)
+	sort.Slice(sorted, func(i, j int) bool {
+		iStat, iErr := os.Stat(sorted[i])
+		jStat, jErr := os.Stat(sorted[j])
+		if iErr != nil || jErr != nil {
+			return sorted[i] > sorted[j]
+		}
+		if !iStat.ModTime().Equal(jStat.ModTime()) {
+			return iStat.ModTime().After(jStat.ModTime())
+		}
+		return sorted[i] > sorted[j]
+	})
+	return sorted
+}
+
+func parsePageSize(c *gin.Context) (int, int) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+	return page, size
+}
+
+func splitPage(files []string, page, size int) []string {
+	if len(files) == 0 {
+		return nil
+	}
+	start := (page - 1) * size
+	if start >= len(files) {
+		return nil
+	}
+	end := start + size
+	if end > len(files) {
+		end = len(files)
+	}
+	return files[start:end]
+}
+
 // GetMessages 获取邮箱的邮件列表
 // GET /internal/mailboxes/:email/messages
 func (h *NodeHandler) GetMessages(c *gin.Context) {
@@ -191,9 +238,12 @@ func (h *NodeHandler) GetMessages(c *gin.Context) {
 		return
 	}
 
-	messages := []gin.H{}
-	for _, filePath := range h.scanMailboxFiles(email) {
-		if msg, err := parseMaildirMessage(filePath); err == nil {
+	page, size := parsePageSize(c)
+	allFiles := sortMailFilesByModTimeDesc(h.scanMailboxFiles(email))
+	pageFiles := splitPage(allFiles, page, size)
+	messages := make([]*parsedMessage, 0, len(pageFiles))
+	for _, filePath := range pageFiles {
+		if msg, err := parseMaildirMessage(filePath, email, h.mailboxMgr.MaildirBase()); err == nil {
 			messages = append(messages, msg)
 		}
 	}
@@ -202,7 +252,9 @@ func (h *NodeHandler) GetMessages(c *gin.Context) {
 		"code": 0,
 		"data": gin.H{
 			"email_address": email,
-			"total":         len(messages),
+			"page":          page,
+			"size":          size,
+			"total":         len(allFiles),
 			"messages":      messages,
 		},
 	})
@@ -211,7 +263,10 @@ func (h *NodeHandler) GetMessages(c *gin.Context) {
 // GetMessageBody 获取单封邮件完整内容
 // GET /internal/messages/:message_id?mailbox=xxx@domain
 func (h *NodeHandler) GetMessageBody(c *gin.Context) {
-	messageID := c.Param("message_id")
+	messageID, err := url.PathUnescape(c.Param("message_id"))
+	if err != nil {
+		messageID = c.Param("message_id")
+	}
 	email := c.Query("mailbox")
 
 	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
@@ -220,12 +275,12 @@ func (h *NodeHandler) GetMessageBody(c *gin.Context) {
 	}
 
 	// 在 new/ + cur/ 中找匹配 message_id 的邮件
-	for _, filePath := range h.scanMailboxFiles(email) {
-		msg, err := parseFullMessage(filePath)
+	for _, filePath := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
+		msg, err := parseFullMessage(filePath, email, h.mailboxMgr.MaildirBase())
 		if err != nil {
 			continue
 		}
-		if msg["message_id"] == messageID {
+		if msg.MessageID == messageID {
 			c.JSON(200, gin.H{"code": 0, "data": msg})
 			return
 		}
@@ -296,73 +351,18 @@ func countAllMessages(base string) int {
 	return n
 }
 
-// ===== 邮件解析辅助函数 =====
-
-func parseMaildirMessage(filePath string) (gin.H, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	content := string(data)
-	msg := gin.H{
-		"message_id": extractHeader(content, "message-id"),
-		"from":       extractHeader(content, "from"),
-		"subject":    extractHeader(content, "subject"),
-		"date":       extractHeader(content, "date"),
-		"has_attachments": strings.Contains(content, "Content-Disposition: attachment"),
-	}
-
-	return msg, nil
-}
-
-func parseFullMessage(filePath string) (gin.H, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-
-	content := string(data)
-	// 分离 headers 和 body
-	parts := strings.SplitN(content, "\r\n\r\n", 2)
-
-	headers := map[string]string{}
-	if len(parts) > 0 {
-		for _, line := range strings.Split(parts[0], "\r\n") {
-			if strings.Contains(line, ":") {
-				kv := strings.SplitN(line, ":", 2)
-				headers[strings.TrimSpace(strings.ToLower(kv[0]))] = strings.TrimSpace(kv[1])
-			}
-		}
-	}
-
-	body := ""
-	if len(parts) > 1 {
-		body = parts[1]
-	}
-
-	// 解码 quoted-printable / base64（简化版，Phase 1 先用明文）
-	if strings.Contains(content, "Content-Transfer-Encoding: base64") {
-		// TODO: 完整 MIME 解析
-	}
-
-	return gin.H{
-		"message_id": extractHeader(content, "message-id"),
-		"from":       extractHeader(content, "from"),
-		"subject":    extractHeader(content, "subject"),
-		"date":       extractHeader(content, "date"),
-		"text_body":  body,
-		"html_body":  "",
-		"headers":    headers,
-	}, nil
-}
-
 func extractHeader(content, header string) string {
 	lines := strings.Split(content, "\n")
 	prefix := strings.ToLower(header) + ":"
 	for _, line := range lines {
-		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), prefix) {
-			return strings.TrimSpace(line[len(prefix):])
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(trimmed), prefix) {
+			value := strings.TrimSpace(trimmed[len(prefix):])
+			decoded, err := new(mime.WordDecoder).DecodeHeader(value)
+			if err == nil {
+				return decoded
+			}
+			return value
 		}
 	}
 	return ""
@@ -425,9 +425,9 @@ func (h *NodeHandler) SMTPFilter(c *gin.Context) {
 	case filter.ActionFlag:
 		// 修改 subject 添加前缀，放行
 		c.JSON(200, gin.H{
-			"action":       "modify",
-			"reason":       result.Reason,
-			"new_subject":  h.engine.GetFlagPrefix() + " " + msg.Subject,
+			"action":      "modify",
+			"reason":      result.Reason,
+			"new_subject": h.engine.GetFlagPrefix() + " " + msg.Subject,
 		})
 	default:
 		// pass
