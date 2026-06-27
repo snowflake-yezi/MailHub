@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -33,6 +34,17 @@ func main() {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// 自动发现/注册 server_id：若未配置 node.id，向 mgmt 查询或自动注册。
+	if cfg.Node.ID == 0 {
+		discoveredID, err := discoverServerID(cfg)
+		if err != nil {
+			log.Printf("[discovery] WARNING: failed to discover server_id: %v — heartbeats & PullDeletingTasks will be skipped", err)
+		} else {
+			cfg.Node.ID = discoveredID
+			log.Printf("[discovery] server_id discovered: %d", discoveredID)
+		}
 	}
 
 	// 初始化过滤引擎
@@ -85,7 +97,9 @@ func main() {
 	lifecycle.StartGC(ctx)
 
 	// 重启自愈：向 mgmt 拉取属于本节点的 DELETING 状态任务并恢复执行
-	go lifecycle.PullDeletingTasks(cfg.Management.APIURL, cfg.Node.ID)
+	if cfg.Node.ID != 0 {
+		go lifecycle.PullDeletingTasks(cfg.Management.APIURL, cfg.Node.ID)
+	}
 
 	// 初始化 handler（注入 lifecycle 以支持安全删除协议）
 	nodeH := handler.NewNodeHandler(
@@ -132,6 +146,64 @@ func main() {
 	}
 }
 
+// discoverServerID 向 mgmt 查询或自动注册本节点的 server_id。
+// 使用 server.advertise_host 作为唯一标识。
+func discoverServerID(cfg *config.Config) (uint64, error) {
+	advertiseHost := cfg.Server.AdvertiseHost
+	if advertiseHost == "" {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			return 0, fmt.Errorf("server.advertise_host not configured and hostname detection failed")
+		}
+		advertiseHost = fmt.Sprintf("%s:%d", hostname, cfg.Server.Port)
+		log.Printf("[discovery] advertise_host not set, derived from hostname: %s", advertiseHost)
+	}
+
+	mgmtURL := strings.TrimRight(cfg.Management.APIURL, "/") + "/api/v1/internal/servers/discover"
+	body, _ := json.Marshal(map[string]string{
+		"api_host":  advertiseHost,
+		"node_name": cfg.Node.Name,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, mgmtURL, bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", cfg.SharedSecret)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("POST mgmt discover: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("mgmt returned %d: %s", resp.StatusCode, string(data))
+	}
+
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			ServerID uint64 `json:"server_id"`
+			Created  bool   `json:"created"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("parse response: %w", err)
+	}
+	if result.Code != 0 {
+		return 0, fmt.Errorf("mgmt error code %d", result.Code)
+	}
+
+	if result.Data.Created {
+		log.Printf("[discovery] auto-registered as new server: %s (id=%d)", advertiseHost, result.Data.ServerID)
+	}
+	return result.Data.ServerID, nil
+}
+
 // startHeartbeat 定时向管理系统上报心跳（被动心跳）。
 //
 // 证明 node 进程存活 + node→mgmt 方向可达，刷新 mgmt 的 last_heartbeat 与 current_load。
@@ -146,6 +218,9 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
 	url := strings.TrimRight(cfg.Management.APIURL, "/") + "/api/v1/internal/servers/heartbeat"
 
 	beat := func() {
+		if cfg.Node.ID == 0 {
+			return // discovery failed, skip heartbeat
+		}
 		load := 0
 		if mailboxMgr != nil {
 			load = mailboxMgr.ActiveCount()

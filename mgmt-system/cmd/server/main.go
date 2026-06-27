@@ -125,6 +125,7 @@ func main() {
 	internal := r.Group("/api/v1/internal")
 	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
+	internal.POST("/servers/discover", serverH.DiscoverServer)
 	internal.GET("/filters", filterH.GetActiveRules)
 	internal.GET("/sync/deleting", mailboxH.SyncDeleting)
 
@@ -148,7 +149,7 @@ func main() {
 	}()
 
 	// 启动
-	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Server.Port)
+	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Server.Port)
 	log.Printf("Starting management system on %s (mode: %s)", addr, cfg.Server.Mode)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start server: %v", err)

@@ -107,6 +107,16 @@ func (s *Store) GetServer(id uint64) (*model.MailServer, error) {
 	}
 	return &srv, nil
 }
+
+// GetServerByAPIHost 按 api_host 查找服务器（供 node 启动自主发现）。
+func (s *Store) GetServerByAPIHost(apiHost string) (*model.MailServer, error) {
+	var srv model.MailServer
+	err := s.db.Where("api_host = ?", apiHost).First(&srv).Error
+	if err != nil {
+		return nil, err
+	}
+	return &srv, nil
+}
 func (s *Store) ListServers() ([]model.MailServer, error) {
 	var list []model.MailServer
 	err := s.db.Order("id ASC").Find(&list).Error

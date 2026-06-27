@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -343,6 +344,48 @@ func (h *ServerHandler) DeleteServer(c *gin.Context) {
 	success(c, "server deleted", nil)
 }
 
+// DiscoverServer mail-node 启动时自动发现/注册自己的 server_id。
+// POST /api/v1/internal/servers/discover
+// Body: {"api_host": "157.254.193.174:8081", "node_name": "mail-node-01"}
+// 按 api_host 匹配已有服务器；未匹配时自动创建（name=node_name, 容量默认 5000）。
+func (h *ServerHandler) DiscoverServer(c *gin.Context) {
+	var req struct {
+		APIHost  string `json:"api_host" binding:"required"`
+		NodeName string `json:"node_name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, ErrCodeParamMissing, "api_host is required")
+		return
+	}
+
+	// 查找已有服务器
+	existing, err := h.store.GetServerByAPIHost(req.APIHost)
+	if err == nil {
+		success(c, "found", gin.H{"server_id": existing.ID, "created": false})
+		return
+	}
+
+	// 未找到 → 自动注册
+	name := req.NodeName
+	if name == "" {
+		name = req.APIHost
+	}
+	srv := &model.MailServer{
+		Name:     name,
+		APIHost:  req.APIHost,
+		SMTPHost: extractHost(req.APIHost),
+		IMAPHost: extractHost(req.APIHost),
+		Capacity: 5000,
+		Status:   "healthy",
+	}
+	if err := h.store.CreateServer(srv); err != nil {
+		serverError(c, ErrCodeInternal, "failed to auto-register server: "+err.Error())
+		return
+	}
+	log.Printf("[discovery] auto-registered server: %s (id=%d, api_host=%s)", name, srv.ID, req.APIHost)
+	success(c, "created", gin.H{"server_id": srv.ID, "created": true})
+}
+
 // Heartbeat 服务器心跳上报
 // POST /api/v1/internal/servers/heartbeat
 func (h *ServerHandler) Heartbeat(c *gin.Context) {
@@ -481,4 +524,13 @@ func (h *ServerHandler) callNodeRemoveDomain(apiHost, domain string) error {
 		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
 	}
 	return nil
+}
+
+// extractHost extracts host from "host:port" addr for auto-registration.
+func extractHost(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return host
 }

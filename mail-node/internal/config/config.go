@@ -23,8 +23,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port int    `yaml:"port"`
-	Mode string `yaml:"mode"`
+	Port          int    `yaml:"port"`
+	Mode          string `yaml:"mode"`
+	AdvertiseHost string `yaml:"advertise_host"` // 对外通告地址（ip:port），用于向 mgmt 自动发现/注册
 }
 
 type MaildirConfig struct {
