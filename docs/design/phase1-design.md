@@ -299,29 +299,29 @@ GET /admin/mailboxes/{id}/emails    # 某订单的邮件列表
 
 #### 邮箱生成流程
 
-```
-出票中心 → POST /api/v1/mailboxes {order_id: "xxx"}
-  │
-  ├─[1] 校验 Token
-  ├─[2] 查 order_mailboxes 表，order_id 是否存在
-  │     └─ 存在 → 直接返回已有地址（幂等）
-  │
-  ├─[3] 查询 mail_servers WHERE status='healthy'，选 current_load 最小的
-  │     └─ 无可用服务器 → 返回 2001 错误
-  │
-  ├─[4] 选一个 active 域名（Phase 1 只有一个）
-  │
-  ├─[5] 生成 local_part = 规范化(order_id)
-  │     email_address = local_part + "@" + domain.name
-  │
-  ├─[6] 调用邮箱服务器内部 API：POST {server.api_host}/internal/mailboxes
-  │     {email_address: "...", password: "自动生成"}
-  │     └─ 失败 → 返回 2002 错误
-  │
-  ├─[7] INSERT INTO order_mailboxes (...)
-  ├─[8] UPDATE mail_servers SET current_load = current_load + 1
-  │
-  └─[9] 返回 {order_id, email_address, created_at, expires_at}
+```mermaid
+flowchart TB
+    req["出票中心<br/>POST /api/v1/mailboxes<br/>{order_id: xxx}"]
+    token["1. 校验 Token"]
+    exists{"2. order_id 是否已存在？"}
+    existing["直接返回已有地址<br/>幂等"]
+    server["3. 查询 healthy 邮箱服务器<br/>按 current_load 最小选择"]
+    noServer["无可用服务器<br/>返回 2001 错误"]
+    domain["4. 选择 active 域名<br/>Phase 1 只有一个"]
+    local["5. 生成 local_part<br/>email_address = local_part + @domain"]
+    remote["6. 调用邮箱服务器内部 API<br/>POST {server.api_host}/internal/mailboxes<br/>{email_address, password}"]
+    remoteFail["创建失败<br/>返回 2002 错误"]
+    insert["7. INSERT INTO order_mailboxes"]
+    load["8. UPDATE mail_servers<br/>current_load + 1"]
+    resp["9. 返回<br/>{order_id, email_address, created_at, expires_at}"]
+
+    req --> token --> exists
+    exists -->|"是"| existing
+    exists -->|"否"| server
+    server -->|"无"| noServer
+    server -->|"有"| domain --> local --> remote
+    remote -->|"失败"| remoteFail
+    remote -->|"成功"| insert --> load --> resp
 ```
 
 ---
@@ -340,29 +340,22 @@ GET /admin/mailboxes/{id}/emails    # 某订单的邮件列表
 
 ### 3.2 邮件处理流水线
 
-```
-外部邮件 → SMTP(25) → Postfix
-                         │
-                    ┌────▼────┐
-                    │ 过滤引擎  │  ← Go 程序，Postfix before-queue content_filter
-                    │          │
-                    │ 规则匹配  │  白名单 → PASS
-                    │          │  黑名单 → DISCARD
-                    │          │  关键词  → 打分
-                    │          │  无匹配  → PASS (默认放行，打 flag)
-                    └────┬────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-            PASS       FLAG       BLOCK
-              │          │          │
-              ▼          ▼          ▼
-          Dovecot     Dovecot    归档(可选)
-          收件箱      收件箱      不转发
-              │          │
-              ▼          ▼
-         转发到union  转发到union
-         (标题正常)   (标题加 [疑似])
+```mermaid
+flowchart TB
+    inbound["外部邮件"] --> smtp["SMTP :25"] --> postfix["Postfix"]
+    postfix --> filter["过滤引擎<br/>Go 程序<br/>Postfix before-queue content_filter"]
+
+    filter --> rules["规则匹配<br/>白名单 → PASS<br/>黑名单 → DISCARD<br/>关键词 → 打分<br/>无匹配 → PASS（默认放行，打 flag）"]
+    rules --> pass["PASS"]
+    rules --> flag["FLAG"]
+    rules --> block["BLOCK"]
+
+    pass --> inbox1["Dovecot 收件箱"]
+    flag --> inbox2["Dovecot 收件箱"]
+    block --> archive["归档（可选）<br/>不转发"]
+
+    inbox1 --> union1["转发到 union<br/>标题正常"]
+    inbox2 --> union2["转发到 union<br/>标题加 [疑似]"]
 ```
 
 ### 3.3 过滤引擎设计
@@ -501,30 +494,28 @@ userdb {
 
 ## 4. 部署拓扑（Phase 1）
 
-```
-┌──────────────────────────────────────────────────┐
-│  云服务器 A（管理系统）           2C2G10M         │
-│                                                  │
-│  mgmt-system (Go binary, :8080)                  │
-│  MySQL 8.0 (或 SQLite，如果只有一台)              │
-│  Nginx (反向代理 + HTTPS)                        │
-│  域名：mgmt.internal.xxx.com                     │
-└──────────────┬───────────────────────────────────┘
-               │ 内网 HTTP
-               ▼
-┌──────────────────────────────────────────────────┐
-│  云服务器 B（邮箱服务器 #1）      2C2G10M         │
-│                                                  │
-│  Postfix (SMTP :25)                              │
-│  Dovecot (IMAP :143)                             │
-│  mail-node (Go binary, :8081)  ← 过滤引擎+对内API │
-│  域名 MX：ticket.xxx.com                         │
-│  需要开放端口：25（SMTP，收信）                   │
-└──────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph mgmt["云服务器 A：管理系统（2C2G10M）"]
+        mgmtBin["mgmt-system<br/>Go binary :8080"]
+        db[("MySQL 8.0<br/>或单机 SQLite")]
+        nginx["Nginx<br/>反向代理 + HTTPS"]
+        mgmtDomain["域名<br/>mgmt.internal.xxx.com"]
+    end
 
-外部依赖：
-  union@xxx.com  ← 阿里云企业邮的一个账号（或自建）
-  阿里云 DNS      ← MX 记录指向服务器 B
+    subgraph mail["云服务器 B：邮箱服务器 #1（2C2G10M）"]
+        postfix["Postfix<br/>SMTP :25"]
+        dovecot["Dovecot<br/>IMAP :143"]
+        node["mail-node<br/>Go binary :8081<br/>过滤引擎 + 对内 API"]
+        mx["域名 MX<br/>ticket.xxx.com"]
+        port["开放端口<br/>25 SMTP 收信"]
+    end
+
+    mgmtBin -->|"内网 HTTP"| node
+    nginx --> mgmtBin
+    mgmtBin --> db
+    postfix --> dovecot
+    node --> postfix
 ```
 
 ---

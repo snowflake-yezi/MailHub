@@ -1,4 +1,4 @@
-# T6 鉴权体系设计文档
+﻿# T6 鉴权体系设计文档
 
 > 状态：已实现 | 日期：2026-06-26 | 分支：feature/t6-auth
 
@@ -33,31 +33,23 @@ T6 实施前，mgmt-system 存在严重的鉴权缺口：
 
 ## 2. 架构概览
 
-```
-                    ┌──────────────────────────────────────────┐
-                    │              Nginx :443                   │
-                    │  /admin /api /static → 127.0.0.1:8080   │
-                    └──────────────┬───────────────────────────┘
-                                   │
-                    ┌──────────────▼───────────────────────────┐
-                    │           mgmt-system :8080               │
-                    │                                          │
-                    │  /admin/login  ─────── 无鉴权             │
-                    │  /admin/logout ─────── 无鉴权             │
-                    │  /admin/*       ─────── Admin Session     │
-                    │  /api/v1/admin/* ────── Admin Session     │
-                    │  /api/v1/mailboxes ──── Bearer + Scope    │
-                    │  /api/v1/emails/*  ──── Bearer + Scope    │
-                    │  /api/v1/internal/* ─── Shared-Secret     │
-                    │                                          │
-                    └──────────┬───────────────────────────────┘
-                               │ X-Internal-Token
-                    ┌──────────▼───────────────────────────────┐
-                    │          mail-node :8081                  │
-                    │                                          │
-                    │  /internal/* ───────── Shared-Secret      │
-                    │  /smtp/filter ──────── 无鉴权(deprecated) │
-                    └──────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    nginx["Nginx :443<br/>/admin,/api → 127.0.0.1:8080"]
+
+    subgraph mgmt["mgmt-system :8080"]
+        login["/admin/login<br/>无鉴权"]
+        adminPage["/admin/*<br/>Session"]
+        adminAPI["/api/v1/admin/*<br/>Session"]
+        mailboxAPI["/api/v1/mailboxes<br/>Bearer + Scope"]
+        emailAPI["/api/v1/emails/*<br/>Bearer + Scope"]
+        internalAPI["/api/v1/internal/*<br/>Shared-Secret"]
+    end
+
+    node["mail-node :8081<br/>/internal/* Shared-Secret"]
+
+    nginx --> mgmt
+    internalAPI -->|"X-Internal-Token"| node
 ```
 
 ---

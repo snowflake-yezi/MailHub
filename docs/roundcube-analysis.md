@@ -12,9 +12,11 @@
 - 许可证：GPL-3.0
 - 技术栈：PHP + MySQL/PgSQL + IMAP + SMTP
 
-```
-用户浏览器 → Roundcube (PHP Web) → IMAP Server (收件)
-                                  → SMTP Server (发件)
+```mermaid
+flowchart LR
+    browser["用户浏览器"] --> roundcube["Roundcube<br/>PHP Web"]
+    roundcube -->|"收件"| imap["IMAP Server"]
+    roundcube -->|"发件"| smtp["SMTP Server"]
 ```
 
 它不存储邮件——邮件始终在 IMAP 服务器上。自己只存用户配置、会话、缓存、通讯录。
@@ -131,13 +133,15 @@ LLM 需要的是**清洗后的纯文本**——这一层我们绕不开。
 
 我们的邮件处理管道：
 
-```
-新邮件到达 → 垃圾过滤 → 关键邮件分类 → 转发 → AI解析
+```mermaid
+flowchart LR
+    received["新邮件到达"] --> spam["垃圾过滤"] --> important["关键邮件分类"] --> forward["转发"] --> ai["AI 解析"]
 ```
 
 可以建模为一串 Hook：
-```
-message_received → filter_spam → filter_important → forward → ai_parse
+```mermaid
+flowchart LR
+    received["message_received"] --> spam["filter_spam"] --> important["filter_important"] --> forward["forward"] --> ai["ai_parse"]
 ```
 
 每一步都是可配置、可替换的处理器，和 Roundcube 插件系统同构。

@@ -1,6 +1,6 @@
-# 技术实现方案
+﻿# 技术实现方案
 
-> 版本: v1.0 | 日期: 2026-06-17 | 状态: 待评审
+> 版本: v1.1 | 日期: 2026-06-17 | 状态: Phase 1A 已实现，本稿为历史设计参考。当前架构见 `docs/architecture-overview.md`
 
 ---
 
@@ -12,32 +12,18 @@
 
 ## 2. 数据分布
 
-```
-┌─ 管理系统 ────────────────────────────────────────┐
-│  MySQL (元数据):                                   │
-│  ├ domains         — 域名池                        │
-│  ├ mail_servers    — 邮箱服务器池（IP、端口、容量）  │
-│  ├ order_mailboxes — 邮箱账号 + 订单绑定关系        │
-│  ├ filter_rules    — 过滤规则（逻辑主本）           │
-│  └ api_tokens      — API 鉴权                     │
-│                                                    │
-│  不存邮件内容，不存附件                             │
-└────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph mgmt["管理系统"]
+        mysql[("MySQL 元数据<br/>domains：域名池<br/>mail_servers：服务器池<br/>order_mailboxes：邮箱 + 订单<br/>filter_rules：过滤规则<br/>api_tokens：API 鉴权")]
+        noMail["不存邮件内容<br/>不存附件"]
+    end
 
-┌─ 邮箱服务器 × N ──────────────────────────────────┐
-│  磁盘 (/var/mail/vhosts/):                         │
-│  ├ {domain}/{user}/cur/    ← 邮件文件 (.eml)       │
-│  ├ {domain}/{user}/new/    ← 新邮件暂存            │
-│  └ {domain}/{user}/tmp/    ← 处理中               │
-│                                                    │
-│  配置文件:                                         │
-│  ├ /etc/dovecot/users.conf  — 账号/密码            │
-│  └ /etc/postfix/vmailbox    — virtual mailbox 映射  │
-│                                                    │
-│  Postfix (SMTP :25)    — 收信                      │
-│  Dovecot (IMAP :143)   — 存信/取信                  │
-│  mail-node (Go :8081)  — 过滤引擎 + 对内 API       │
-└────────────────────────────────────────────────────┘
+    subgraph nodes["邮箱服务器 × N"]
+        maildir[("磁盘 /var/mail/vhosts<br/>{domain}/{user}/cur：已读<br/>{domain}/{user}/new：新邮件<br/>{domain}/{user}/tmp：处理中")]
+        conf["配置文件<br/>/etc/dovecot/users.conf：账号<br/>/etc/postfix/vmailbox：映射"]
+        svc["Postfix :25：收信<br/>Dovecot：存信/取信<br/>mail-node：过滤 + 对内 API"]
+    end
 ```
 
 ---
@@ -46,10 +32,16 @@
 
 ### 3.1 通信模型
 
-```
-管理系统 (1 台) ──HTTP 内网──→ 邮箱服务器-01 (:8081)
-                 ──HTTP 内网──→ 邮箱服务器-02 (:8081)
-                 ──HTTP 内网──→ 邮箱服务器-N  (:8081)
+```mermaid
+flowchart LR
+    mgmt["管理系统<br/>1 台"]
+    s1["邮箱服务器-01<br/>:8081"]
+    s2["邮箱服务器-02<br/>:8081"]
+    sN["邮箱服务器-N<br/>:8081"]
+
+    mgmt -->|"HTTP 内网"| s1
+    mgmt -->|"HTTP 内网"| s2
+    mgmt -->|"HTTP 内网"| sN
 ```
 
 ### 3.2 短信协议
@@ -120,53 +112,19 @@ Response 200:
 
 ### 4.1 单账号创建
 
-```
-运营在 Web 后台提交:
-┌─────────────────────────────────┐
-│  邮箱前缀: airline-cz-001       │
-│  域名:     mail.xxx.com         │  (从域名池下拉)
-│  密码:     (留空自动生成)        │
-│  目标服务器: auto (负载最小的)    │
-└─────────────────────────────────┘
-          │
-          ▼
-Step 1 — 管理系统校验
-  ├ 检查前缀 + 域名是否已存在于 order_mailboxes 表
-  ├ 检查域名是否 active
-  └ 选服务器: 如果"auto"，查 mail_servers WHERE status='healthy'
-     ORDER BY current_load ASC LIMIT 1
+```mermaid
+flowchart TB
+    form["运营在 Web 后台提交<br/>邮箱前缀：airline-cz-001<br/>域名：mail.xxx.com<br/>密码：留空自动生成<br/>目标服务器：auto"]
+    validate["Step 1：管理系统校验<br/>检查前缀 + 域名是否已存在<br/>检查域名是否 active<br/>auto 时选择健康且负载最小服务器"]
+    call["Step 2：调用邮箱服务器<br/>POST http://{server.api_host}/internal/mailboxes<br/>X-Internal-Token<br/>Body: email_address + password"]
+    remote["Step 3：邮箱服务器本地操作<br/>创建 Maildir<br/>chown vmail:vmail<br/>追加 Dovecot users.conf<br/>追加 Postfix vmailbox<br/>postmap + postfix reload"]
+    db["Step 4：管理系统写本地记录<br/>INSERT order_mailboxes<br/>UPDATE mail_servers current_load + 1"]
+    resp["Step 5：返回结果<br/>{code: 0, data: email_address, created_at}"]
+    fail["失败：返回错误<br/>不写入本地 DB"]
 
-Step 2 — 管理系统调用邮箱服务器
-  POST http://{server.api_host}/internal/mailboxes
-  Headers: X-Internal-Token: internal-proxy-token
-  Body: {email_address, password}
-  
-  ├ 成功 → Step 3
-  └ 失败 → 返回错误，不写入本地 DB
-
-Step 3 — 邮箱服务器本地操作
-  mail-node HandleCreateMailbox():
-  ├ 创建 Maildir 目录结构
-  │   /var/mail/vhosts/{domain}/{user}/
-  │   ├ cur/      ← 已读邮件
-  │   ├ new/      ← 未读/新邮件
-  │   └ tmp/      ← 处理中
-  ├ 设置权限: chown -R vmail:vmail {maildir}
-  ├ 追加 Dovecot 用户: /etc/dovecot/users.conf
-  │   {email}:{PLAIN}{password}::::::
-  └ 追加 Postfix vmailbox: /etc/postfix/vmailbox
-      {email} {domain}/{user}/
-      → 执行 postmap 刷新 + postfix reload
-
-Step 4 — 管理系统写入本地记录
-  INSERT INTO order_mailboxes (
-    email_address, local_part, domain_id, server_id,
-    status='active', created_at=now()
-  )
-  UPDATE mail_servers SET current_load = current_load + 1
-
-Step 5 — 返回结果
-  {code: 0, data: {email_address, created_at}}
+    form --> validate --> call
+    call -->|"成功"| remote --> db --> resp
+    call -->|"失败"| fail
 ```
 
 ### 4.2 批量创建
@@ -202,51 +160,23 @@ Step 5 — 返回结果
 
 ### 5.1 收信（航司 → 邮箱服务器）
 
-```
-                  DNS 查 MX 记录
-                  mail.xxx.com → 1.2.3.4
-                          │
-航司 SMTP ────→ mail.xxx.com:25 ────→ Postfix (smtpd)
-                                         │
-                                    before-queue
-                                    content_filter
-                                         │
-                                         ▼
-                              ┌────────────────────┐
-                              │  mail-node 过滤引擎  │
-                              │  (Go 程序 :8081)   │
-                              │                    │
-                              │  规则匹配:          │
-                              │  ① 白名单发件人 → pass│
-                              │  ② 黑名单发件人 → block│
-                              │  ③ 关键词匹配 → 打分│
-                              │  ④ 无匹配 → pass+flag│
-                              └────────┬───────────┘
-                                       │
-                         ┌─────────────┼─────────────┐
-                         ▼             ▼             ▼
-                       PASS          FLAG          BLOCK
-                         │             │              │
-                         ▼             ▼              ▼
-                  Dovecot 入库    Dovecot 入库   归档/DISCARD
-                  Maildir/cur     Maildir/cur    (不转发)
-                         │             │
-                         └──────┬──────┘
-                                ▼
-                    ┌─────────────────────────┐
-                    │  SMTP 转发到集成邮箱      │
-                    │  目标: union@xxx.com     │
-                    │                         │
-                    │  PASS: 标题保持原样      │
-                    │  FLAG: 标题加 [疑似] 前缀 │
-                    │  标题格式:               │
-                    │  [源: {mailbox_addr}]   │
-                    │  {原始标题}              │
-                    └─────────────────────────┘
-                                │
-                                ▼
-                    union@xxx.com 收件箱
-                    (运营统一查看)
+```mermaid
+flowchart TB
+    dns["DNS 查 MX 记录<br/>mail.xxx.com → 1.2.3.4"]
+    airline["航司 SMTP"] --> mx["mail.xxx.com:25"] --> postfix["Postfix smtpd"]
+    dns --> mx
+    postfix --> filter["mail-node 过滤引擎<br/>Go 程序 :8081<br/>规则匹配：白名单 pass / 黑名单 block / 关键词打分 / 无匹配 pass"]
+
+    filter --> pass["PASS"]
+    filter --> flag["FLAG"]
+    filter --> block["BLOCK"]
+
+    pass --> inbox["Dovecot 入库<br/>Maildir/cur"]
+    flag --> inbox
+    block --> archive["归档 / DISCARD<br/>不转发"]
+
+    inbox --> forward["SMTP 转发到集成邮箱<br/>目标：union@xxx.com<br/>PASS：原标题<br/>FLAG：加 [疑似] 前缀<br/>标题格式：[源: {mailbox_addr}] {原始标题}"]
+    forward --> union["union@xxx.com 收件箱<br/>运营统一查看"]
 ```
 
 ### 5.2 Postfix content_filter 配置
@@ -272,15 +202,18 @@ Phase 1 仅收信 + 转发。如需邮件服务器主动发信（如自动回复
 
 ## 6. 过滤规则热更新
 
-```
-┌──────────────────────┐         每 30 秒
-│  管理系统 (规则主本)  │ ──GET /internal/filters──→ ┌─────────────┐
-│  filter_rules 表     │ ←────返回规则 JSON─────── │  mail-node  │
-└──────────────────────┘                            │             │
-                                                    │ 更新内存    │
-                                                    │ sync.RWMutex│
-                                                    │ 规则生效    │
-                                                    └─────────────┘
+```mermaid
+sequenceDiagram
+    participant M as 管理系统<br/>规则主本 filter_rules
+    participant N as mail-node
+
+    loop 每 30 秒
+        N->>M: GET /internal/filters
+        M-->>N: 返回规则 JSON
+        N->>N: 更新内存规则<br/>sync.RWMutex<br/>规则生效
+    end
+
+    M->>N: 可选：POST /internal/filters/reload<br/>规则变更后立即通知
 ```
 
 或者规则变更后，管理系统主动 POST `/internal/filters/reload` 通知立即更新。
@@ -301,39 +234,28 @@ Phase 1 仅收信 + 转发。如需邮件服务器主动发信（如自动回复
 
 ## 8. Phase 1 部署形态
 
-```
-                    ┌─────────────────────────────────────┐
-                    │  云服务器 × 1 (建议 4C8G 100G)       │
-                    │  IP: 1.2.3.4                        │
-                    │  OS: Ubuntu 20.04+ / CentOS 7+      │
-                    │                                     │
-                    │  ┌─────────────────────────────┐    │
-                    │  │  MySQL 8.0 (:3306)          │    │
-                    │  │  元数据存储                   │    │
-                    │  └─────────────────────────────┘    │
-                    │                                     │
-                    │  ┌─────────────────────────────┐    │
-                    │  │  mgmt-system (Go, :8080)     │    │
-                    │  │  Web 后台 + API              │    │
-                    │  │  Nginx 反代 (:443) → :8080    │    │
-                    │  └─────────────────────────────┘    │
-                    │                                     │
-                    │  ┌─────────────────────────────┐    │
-                    │  │  mail-node (Go, :8081)       │    │
-                    │  │  过滤引擎 + 对内 API          │    │
-                    │  └─────────────────────────────┘    │
-                    │                                     │
-                    │  ┌─────────────────────────────┐    │
-                    │  │  Postfix (:25)               │    │
-                    │  │  Dovecot (:143)              │    │
-                    │  │  Maildir: /var/mail/vhosts/  │    │
-                    │  └─────────────────────────────┘    │
-                    │                                     │
-                    │  DNS: mail.xxx.com A+MX → 1.2.3.4  │
-                    └─────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph vm["云服务器（Phase 1 单机部署）"]
+        mysql[("MySQL 8.0<br/>元数据存储")]
+        mgmt["mgmt-system :8080<br/>Web 后台 + API"]
+        nginx["Nginx :443<br/>TLS + 反代"]
+        node["mail-node :8081<br/>过滤 + 对内 API"]
+        postfix["Postfix :25<br/>SMTP 收信"]
+        dovecot["Dovecot<br/>Maildir 存储"]
+        maildir[("/var/mail/vhosts/<br/>邮件目录")]
+        dns["DNS<br/>mail.xxx.com A + MX → 服务器 IP"]
+    end
 
-                    集成邮箱: union@xxx.com
-                     (阿里企业邮 / 腾讯企业邮 / 自建 Dovecot+Roundcube)
+    union["集成邮箱<br/>union@xxx.com<br/>自建 Dovecot + Roundcube"]
+
+    nginx --> mgmt
+    mgmt --> mysql
+    mgmt --> node
+    postfix --> dovecot --> maildir
+    node --> maildir
+    node -->|"SMTP 转发"| union
+    dns --> postfix
 ```
 
 Phase 2 扩容时只需新增云服务器，装上 Postfix + Dovecot + mail-node，在后台注册即可纳入管理。
