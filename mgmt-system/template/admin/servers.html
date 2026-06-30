@@ -32,6 +32,7 @@
         .status.degraded { background: #fff3e0; color: #e65100; }
         .status.down { background: #ffebee; color: #c62828; }
         .status.draining { background: #e3f2fd; color: #1565c0; }
+        .tag { display: inline-block; background: #e8eaf6; color: #303f9f; padding: 1px 7px; border-radius: 3px; font-size: 11px; margin: 1px 2px; white-space: nowrap; }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
         .modal-overlay.active { display: flex; }
         .modal { background: #fff; padding: 24px; border-radius: 8px; width: 500px; max-width: 90%; }
@@ -74,16 +75,7 @@
                         <input type="text" name="api_host" placeholder="例如: 10.0.0.2:8081" required>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>SMTP 地址</label>
-                        <input type="text" name="smtp_host" placeholder="例如: mail-node-01">
-                    </div>
-                    <div class="form-group">
-                        <label>IMAP 地址</label>
-                        <input type="text" name="imap_host" placeholder="例如: mail-node-01">
-                    </div>
-                </div>
+                <p style="font-size:12px;color:#888;margin:-4px 0 14px;">SMTP / IMAP 地址将根据 API 地址自动推导，如需单独指定请在注册后编辑。</p>
                 <div class="form-group">
                     <label>容量上限</label>
                     <input type="number" name="capacity" value="5000" min="1">
@@ -99,7 +91,7 @@
         <div class="section">
             <table>
                 <thead>
-                    <tr><th>ID</th><th>名称</th><th>API</th><th>SMTP</th><th>IMAP</th><th>负载</th><th>状态</th><th>心跳</th><th>探测</th><th>失败</th><th>操作</th></tr>
+                    <tr><th>ID</th><th>名称</th><th>API</th><th>关联域名</th><th>负载</th><th>状态</th><th>心跳</th><th>探测</th><th>失败</th><th>操作</th></tr>
                 </thead>
                 <tbody>
                     {{range .servers}}
@@ -107,8 +99,7 @@
                         <td>{{.ID}}</td>
                         <td><strong>{{.Name}}</strong></td>
                         <td><code>{{.APIHost}}</code></td>
-                        <td>{{if .SMTPHost}}{{.SMTPHost}}{{else}}-{{end}}</td>
-                        <td>{{if .IMAPHost}}{{.IMAPHost}}{{else}}-{{end}}</td>
+                        <td>{{range .Domains}}<span class="tag">{{.Name}}</span>{{end}}{{if not .Domains}}-{{end}}</td>
                         <td>{{.CurrentLoad}} / {{.Capacity}}</td>
                         <td><span class="status {{.Status}}">{{.Status}}</span></td>
                         <td>{{if .LastHeartbeat}}{{.LastHeartbeat.Format "2006-01-02 15:04:05"}}{{else}}-{{end}}</td>
@@ -122,7 +113,7 @@
                     </tr>
                     {{end}}
                     {{if not .servers}}
-                    <tr><td colspan="11" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>
+                    <tr><td colspan="10" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>
                     {{end}}
                 </tbody>
             </table>
@@ -147,11 +138,11 @@
                 <div class="form-row">
                     <div class="form-group">
                         <label>SMTP 地址</label>
-                        <input type="text" name="smtp_host" id="edit-smtphost">
+                        <input type="text" name="smtp_host" id="edit-smtphost" placeholder="留空则从 API 地址推导">
                     </div>
                     <div class="form-group">
                         <label>IMAP 地址</label>
-                        <input type="text" name="imap_host" id="edit-imaphost">
+                        <input type="text" name="imap_host" id="edit-imaphost" placeholder="留空则从 API 地址推导">
                     </div>
                 </div>
                 <div class="form-row">
@@ -160,14 +151,18 @@
                         <input type="number" name="capacity" id="edit-capacity">
                     </div>
                     <div class="form-group">
-                        <label>状态</label>
-                        <select name="status" id="edit-status">
-                            <option value="healthy">healthy</option>
-                            <option value="degraded">degraded</option>
-                            <option value="draining">draining</option>
-                            <option value="down">down</option>
-                        </select>
+                        <label>心跳间隔 (秒, 5-600)</label>
+                        <input type="number" name="heartbeat_interval" id="edit-heartbeat" min="5" max="600">
                     </div>
+                </div>
+                <div class="form-group">
+                    <label>状态</label>
+                    <select name="status" id="edit-status">
+                        <option value="healthy">healthy</option>
+                        <option value="degraded">degraded</option>
+                        <option value="draining">draining</option>
+                        <option value="down">down</option>
+                    </select>
                 </div>
                 <button type="submit" class="btn btn-primary">保存</button>
                 <button type="button" class="btn btn-danger" onclick="deleteServer(currentEditId)" style="margin-left:8px;">删除</button>
@@ -209,7 +204,7 @@
         function renderServerTable(servers) {
             var tbody = document.querySelector('table tbody');
             if (!servers || servers.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="11" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" style="color:#888;text-align:center;padding:20px;">暂无服务器，请先注册</td></tr>';
                 return;
             }
             var html = '';
@@ -221,8 +216,7 @@
                     '<td>' + s.id + '</td>' +
                     '<td><strong>' + escHtml(s.name) + '</strong></td>' +
                     '<td><code>' + escHtml(s.api_host) + '</code></td>' +
-                    '<td>' + (s.smtp_host || '-') + '</td>' +
-                    '<td>' + (s.imap_host || '-') + '</td>' +
+                    '<td>' + renderDomainTags(s.domains) + '</td>' +
                     '<td>' + s.current_load + ' / ' + s.capacity + '</td>' +
                     '<td><span class="status ' + s.status + '">' + s.status + '</span></td>' +
                     '<td>' + hb + '</td>' +
@@ -242,6 +236,15 @@
             var div = document.createElement('div');
             div.appendChild(document.createTextNode(s));
             return div.innerHTML;
+        }
+
+        function renderDomainTags(domains) {
+            if (!domains || domains.length === 0) return '-';
+            var html = '';
+            for (var i = 0; i < domains.length; i++) {
+                html += '<span class="tag">' + escHtml(domains[i].name || '') + '</span>';
+            }
+            return html;
         }
 
         // ---- 刷新列表（从 API 拉最新数据） ----
@@ -275,8 +278,6 @@
             var data = {
                 name: form.querySelector('[name="name"]').value,
                 api_host: form.querySelector('[name="api_host"]').value,
-                smtp_host: form.querySelector('[name="smtp_host"]').value || '',
-                imap_host: form.querySelector('[name="imap_host"]').value || '',
                 capacity: parseInt(form.querySelector('[name="capacity"]').value) || 5000
             };
             var spinnerEl = document.getElementById('add-spinner');
@@ -316,6 +317,7 @@
             document.getElementById('edit-smtphost').value = s.smtp_host || '';
             document.getElementById('edit-imaphost').value = s.imap_host || '';
             document.getElementById('edit-capacity').value = s.capacity || 5000;
+            document.getElementById('edit-heartbeat').value = s.heartbeat_interval || 30;
             document.getElementById('edit-status').value = s.status || 'healthy';
             document.getElementById('edit-form').setAttribute('data-put-url', '/api/v1/admin/servers/' + s.id);
             document.getElementById('edit-result').innerHTML = '';
@@ -338,6 +340,7 @@
                 smtp_host: document.getElementById('edit-smtphost').value,
                 imap_host: document.getElementById('edit-imaphost').value,
                 capacity: parseInt(document.getElementById('edit-capacity').value) || 5000,
+                heartbeat_interval: parseInt(document.getElementById('edit-heartbeat').value) || 0,
                 status: document.getElementById('edit-status').value
             };
             var spinnerEl = document.getElementById('edit-spinner');

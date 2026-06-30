@@ -204,22 +204,29 @@ func discoverServerID(cfg *config.Config) (uint64, error) {
 	return result.Data.ServerID, nil
 }
 
+// clampHeartbeat 把心跳间隔约束到合法区间 [5,600] 秒；区间外（含 0/负）返回 fallback（SP-7）。
+func clampHeartbeat(v, fallback int) int {
+	if v < 5 || v > 600 {
+		return fallback
+	}
+	return v
+}
+
 // startHeartbeat 定时向管理系统上报心跳（被动心跳）。
 //
 // 证明 node 进程存活 + node→mgmt 方向可达，刷新 mgmt 的 last_heartbeat 与 current_load。
-// 注意：mgmt 的 status 完全由其主动探测决定，本心跳不参与 status 升降，
-// 避免与探测结论打架（见 docs/design/t7-healthcheck-design.md §4.1 / §6）。
+// 心跳间隔由 mgmt 在响应里下发（SP-6'），本循环每轮据此动态调整；本地 config 仅作
+// 冷启动首次与 mgmt 不可达时的兜底。注意：mgmt 的 status 完全由其主动探测决定，
+// 本心跳不参与 status 升降，避免与探测结论打架（见 docs/design/t7-healthcheck-design.md §4.1 / §6）。
 func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
-	interval := cfg.Management.HeartbeatInterval
-	if interval <= 0 {
-		interval = 60
-	}
+	interval := clampHeartbeat(cfg.Management.HeartbeatInterval, 60)
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := strings.TrimRight(cfg.Management.APIURL, "/") + "/api/v1/internal/servers/heartbeat"
 
-	beat := func() {
+	// beat 上报一次心跳，返回 mgmt 下发的期望间隔；失败或非法时返回 0（调用方沿用当前值）。
+	beat := func() int {
 		if cfg.Node.ID == 0 {
-			return // discovery failed, skip heartbeat
+			return 0 // discovery failed, skip heartbeat
 		}
 		load := 0
 		if mailboxMgr != nil {
@@ -234,7 +241,7 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			log.Printf("heartbeat: build request failed: %v", err)
-			return
+			return 0
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Internal-Token", cfg.SharedSecret)
@@ -242,18 +249,35 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("heartbeat: POST mgmt failed (node=%s): %v", cfg.Node.Name, err)
-			return
+			return 0
 		}
-		resp.Body.Close()
+		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			log.Printf("heartbeat: mgmt returned %d for node=%s", resp.StatusCode, cfg.Node.Name)
+			return 0
 		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return 0
+		}
+		var hr struct {
+			Code int `json:"code"`
+			Data struct {
+				HeartbeatInterval int `json:"heartbeat_interval"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(data, &hr); err != nil {
+			return 0
+		}
+		return hr.Data.HeartbeatInterval
 	}
 
 	beat() // 启动后立即上报一次，缩短冷启动空白期
-	ticker := time.NewTicker(time.Duration(interval) * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		beat()
+	for {
+		timer := time.NewTimer(time.Duration(interval) * time.Second)
+		<-timer.C
+		if got := beat(); got != 0 {
+			interval = clampHeartbeat(got, interval)
+		}
 	}
 }

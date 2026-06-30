@@ -1,6 +1,10 @@
 package handler
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ticket/email-mgmt-system/internal/model"
+)
 
 func TestDNSRecordsForMXHostPrependsARecordAndRewritesMX(t *testing.T) {
 	records := []DNSRecord{
@@ -58,5 +62,50 @@ func TestNormalizeMXHost(t *testing.T) {
 func TestNormalizeMXHostRejectsExternalHost(t *testing.T) {
 	if _, err := normalizeMXHost("mail.other.com", "example.com"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestDeriveHostDefaults(t *testing.T) {
+	// 空 SMTP/IMAP 从 api_host 推导
+	srv := &model.MailServer{APIHost: "10.0.0.2:8081"}
+	deriveHostDefaults(srv)
+	if srv.SMTPHost != "10.0.0.2" {
+		t.Fatalf("SMTPHost = %q, want 10.0.0.2", srv.SMTPHost)
+	}
+	if srv.IMAPHost != "10.0.0.2" {
+		t.Fatalf("IMAPHost = %q, want 10.0.0.2", srv.IMAPHost)
+	}
+
+	// 已有值不被覆盖
+	srv2 := &model.MailServer{APIHost: "10.0.0.2:8081", SMTPHost: "mail.example.com"}
+	deriveHostDefaults(srv2)
+	if srv2.SMTPHost != "mail.example.com" {
+		t.Fatalf("SMTPHost overwritten = %q, want mail.example.com", srv2.SMTPHost)
+	}
+	if srv2.IMAPHost != "10.0.0.2" {
+		t.Fatalf("IMAPHost = %q, want 10.0.0.2", srv2.IMAPHost)
+	}
+}
+
+func TestAttachDomains(t *testing.T) {
+	servers := []model.MailServer{{ID: 1}, {ID: 2}, {ID: 3}}
+	bindings := []model.ServerDomain{
+		{ServerID: 1, Domain: model.Domain{Name: "a.example.com"}},
+		{ServerID: 1, Domain: model.Domain{Name: "b.example.com"}},
+		{ServerID: 2, Domain: model.Domain{Name: "c.example.com"}},
+		// server 3 无绑定
+	}
+	attachDomains(servers, bindings)
+	if len(servers[0].Domains) != 2 {
+		t.Fatalf("server 1 domains = %d, want 2", len(servers[0].Domains))
+	}
+	if servers[0].Domains[0].Name != "a.example.com" {
+		t.Fatalf("server 1 first domain = %q", servers[0].Domains[0].Name)
+	}
+	if len(servers[1].Domains) != 1 {
+		t.Fatalf("server 2 domains = %d, want 1", len(servers[1].Domains))
+	}
+	if servers[2].Domains != nil {
+		t.Fatalf("server 3 domains = %v, want nil", servers[2].Domains)
 	}
 }

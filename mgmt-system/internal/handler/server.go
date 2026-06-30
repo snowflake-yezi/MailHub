@@ -66,6 +66,7 @@ func (h *ServerHandler) RegisterServer(c *gin.Context) {
 		srv.Capacity = 5000
 	}
 	srv.Status = "healthy"
+	deriveHostDefaults(&srv)
 
 	if err := h.store.CreateServer(&srv); err != nil {
 		serverError(c, ErrCodeInternal, "failed to register server: "+err.Error())
@@ -82,6 +83,9 @@ func (h *ServerHandler) ListServers(c *gin.Context) {
 	if err != nil {
 		serverError(c, ErrCodeInternal, "failed to list servers")
 		return
+	}
+	if bindings, berr := h.store.ListActiveServerDomains(); berr == nil {
+		attachDomains(list, bindings)
 	}
 	success(c, "success", list)
 }
@@ -302,6 +306,9 @@ func (h *ServerHandler) UpdateServer(c *gin.Context) {
 	if update.Status != "" {
 		existing.Status = update.Status
 	}
+	if update.HeartbeatInterval >= 5 && update.HeartbeatInterval <= 600 {
+		existing.HeartbeatInterval = update.HeartbeatInterval
+	}
 
 	if err := h.store.UpdateServer(existing); err != nil {
 		serverError(c, ErrCodeInternal, "failed to update server")
@@ -373,11 +380,10 @@ func (h *ServerHandler) DiscoverServer(c *gin.Context) {
 	srv := &model.MailServer{
 		Name:     name,
 		APIHost:  req.APIHost,
-		SMTPHost: extractHost(req.APIHost),
-		IMAPHost: extractHost(req.APIHost),
 		Capacity: 5000,
 		Status:   "healthy",
 	}
+	deriveHostDefaults(srv)
 	if err := h.store.CreateServer(srv); err != nil {
 		serverError(c, ErrCodeInternal, "failed to auto-register server: "+err.Error())
 		return
@@ -412,7 +418,12 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 		return
 	}
 
-	success(c, "heartbeat received", nil)
+	// 下发期望心跳间隔，mail-node 据此动态调整节拍（SP-6'）。server 不存在或字段缺失时回退 30。
+	interval := 30
+	if srv, serr := h.store.GetServer(req.ServerID); serr == nil && srv.HeartbeatInterval >= 5 {
+		interval = srv.HeartbeatInterval
+	}
+	success(c, "heartbeat received", gin.H{"heartbeat_interval": interval})
 }
 
 // RegisterAdminRoutes registers all server admin API routes on the given (already auth-protected) group.
@@ -533,4 +544,27 @@ func extractHost(addr string) string {
 		return addr
 	}
 	return host
+}
+
+// deriveHostDefaults 在 SMTP/IMAP 为空时从 api_host 推导，统一 RegisterServer 与
+// DiscoverServer 两条注册路径的 host 处理（SP-1）。
+func deriveHostDefaults(srv *model.MailServer) {
+	if srv.SMTPHost == "" {
+		srv.SMTPHost = extractHost(srv.APIHost)
+	}
+	if srv.IMAPHost == "" {
+		srv.IMAPHost = extractHost(srv.APIHost)
+	}
+}
+
+// attachDomains 把 active 绑定按 server_id 分组装入各 server 的 Domains（SP-5），
+// 供服务器列表「关联域名」列展示。
+func attachDomains(servers []model.MailServer, bindings []model.ServerDomain) {
+	bucket := make(map[uint64][]model.Domain, len(servers))
+	for _, b := range bindings {
+		bucket[b.ServerID] = append(bucket[b.ServerID], b.Domain)
+	}
+	for i := range servers {
+		servers[i].Domains = bucket[servers[i].ID]
+	}
 }

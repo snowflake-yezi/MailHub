@@ -14,20 +14,24 @@ type Domain struct {
 
 // MailServer 邮箱服务器
 type MailServer struct {
-	ID             uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name           string     `gorm:"size:128;not null" json:"name"`
-	APIHost        string     `gorm:"size:255;not null" json:"api_host"`
-	SMTPHost       string     `gorm:"size:255;not null" json:"smtp_host"`
-	IMAPHost       string     `gorm:"size:255;not null" json:"imap_host"`
-	PublicHost     string     `gorm:"size:255" json:"public_host"`
-	Capacity       int        `gorm:"not null;default:5000" json:"capacity"`
-	CurrentLoad    int        `gorm:"not null;default:0" json:"current_load"`
-	Status         string     `gorm:"type:enum('healthy','degraded','down','draining');default:healthy" json:"status"`
-	LastHeartbeat  *time.Time `json:"last_heartbeat"`
-	LastProbeAt    *time.Time `json:"last_probe_at"`
-	ProbeFailCount int        `gorm:"not null;default:0" json:"probe_fail_count"`
-	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt      time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name              string     `gorm:"size:128;not null" json:"name"`
+	APIHost           string     `gorm:"size:255;not null" json:"api_host"`
+	SMTPHost          string     `gorm:"size:255;not null" json:"smtp_host"`
+	IMAPHost          string     `gorm:"size:255;not null" json:"imap_host"`
+	PublicHost        string     `gorm:"size:255" json:"public_host"`
+	Capacity          int        `gorm:"not null;default:5000" json:"capacity"`
+	CurrentLoad       int        `gorm:"not null;default:0" json:"current_load"`
+	Status            string     `gorm:"type:enum('healthy','degraded','down','draining');default:healthy" json:"status"`
+	LastHeartbeat     *time.Time `json:"last_heartbeat"`
+	LastProbeAt       *time.Time `json:"last_probe_at"`
+	ProbeFailCount    int        `gorm:"not null;default:0" json:"probe_fail_count"`
+	HeartbeatInterval int        `gorm:"not null;default:30" json:"heartbeat_interval"`
+	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+
+	// Domains 该服务器绑定的 active 域名，仅用于列表展示，不落库（transient）。
+	Domains []Domain `gorm:"-" json:"domains,omitempty"`
 }
 
 // MailboxAccount 邮箱账号资产，维度为 server + domain + mailbox + credential。

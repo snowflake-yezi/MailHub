@@ -248,6 +248,16 @@ func (s *Store) ListDomainsByServer(serverID uint64) ([]model.ServerDomain, erro
 	return list, err
 }
 
+// ListActiveServerDomains 一次查出所有 active 绑定（preload Domain），供服务器列表
+// 组装「关联域名」列，避免逐服务器查询的 N+1。
+func (s *Store) ListActiveServerDomains() ([]model.ServerDomain, error) {
+	var list []model.ServerDomain
+	err := s.db.Preload("Domain").
+		Where("status = ?", "active").
+		Order("server_id ASC, id ASC").Find(&list).Error
+	return list, err
+}
+
 // FindServerByEmailDomain 根据邮箱域名查找所属服务器（优先 healthy，其次任意在线）。
 // 用于管理后台邮件查询的降级路径——即使邮箱未录入 mailbox_accounts 也能查到邮件。
 func (s *Store) FindServerByEmailDomain(emailDomain string) (*model.MailServer, error) {
