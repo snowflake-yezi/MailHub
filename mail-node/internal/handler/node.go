@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -83,6 +84,40 @@ func (h *NodeHandler) DeleteMailbox(c *gin.Context) {
 		"code":    0,
 		"message": "moved to trash",
 		"data":    gin.H{"trash_path": trashPath},
+	})
+}
+
+// RestoreMailbox 从 .trash 恢复邮箱（MoveToTrash 的逆操作，restore 协议）
+// POST /internal/mailboxes/:email/restore
+//
+// body: {"password": "..."}（mgmt 下发原密码，用于重建 Dovecot 行）
+// 409: .trash 无可恢复目录（已被 GC 物理清除/从未删除）或目标路径已存在。
+func (h *NodeHandler) RestoreMailbox(c *gin.Context) {
+	email := c.Param("email")
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	_ = c.ShouldBindJSON(&req) // body 可选；password 由 mgmt 下发
+
+	maildirPath, err := h.lifecycle.RestoreFromTrash(email, req.Password)
+	if err != nil {
+		if errors.Is(err, forward.ErrNotInTrash) {
+			c.JSON(409, gin.H{"code": 2301, "message": "not in trash or already purged"})
+			return
+		}
+		if strings.Contains(err.Error(), "already exists") {
+			c.JSON(409, gin.H{"code": 2302, "message": err.Error()})
+			return
+		}
+		c.JSON(500, gin.H{"code": 5000, "message": "failed to restore: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"code":    0,
+		"message": "restored",
+		"data":    gin.H{"maildir_path": maildirPath},
 	})
 }
 
@@ -379,6 +414,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮箱管理
 	rg.POST("/mailboxes", h.CreateMailbox)
 	rg.DELETE("/mailboxes/:email", h.DeleteMailbox)
+	rg.POST("/mailboxes/:email/restore", h.RestoreMailbox)
 	rg.PUT("/mailboxes/:email/password", h.UpdateMailboxPassword)
 
 	// 域名管理

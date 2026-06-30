@@ -417,6 +417,9 @@
                                         {{if or (eq .Status "active") (eq .Status "deleting")}}
                                         <button class="btn btn-secondary" style="height:28px;font-size:12px;padding:0 10px;margin-left:4px;" onclick="requestDelete({{.ID}}, '{{.EmailAddress}}')">删除</button>
                                         {{end}}
+                                        {{if eq .Status "soft_deleted"}}
+                                        <button class="btn btn-primary" style="height:28px;font-size:12px;padding:0 10px;margin-left:4px;" onclick="requestRestore({{.ID}}, '{{.EmailAddress}}')">恢复</button>
+                                        {{end}}
                                     </td>
                                 </tr>
                                 {{end}}
@@ -654,6 +657,29 @@
                 box.innerHTML = html;
             } catch (e) {}
         });
+
+        async function requestRestore(id, email) {
+            if (!confirm('确认恢复邮箱 ' + email + '？\n\n将从回收站(.trash)回迁 Maildir，重建 Dovecot/Postfix 配置，恢复收信与登录。\n仅删除后 24h 内可恢复，过期不可逆。')) return;
+            try {
+                const resp = await fetch('/api/v1/admin/mailboxes/' + id + '/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const json = await resp.json();
+                if (!resp.ok || json.code !== 0) {
+                    alert('恢复失败：' + (json.message || '未知错误'));
+                    return;
+                }
+                let msg = '已恢复：' + email + '\n状态：' + (json.data && json.data.status || 'active');
+                if (json.data && json.data.password) {
+                    msg += '\n\n⚠️ 原密码未知，已生成临时密码：' + json.data.password + '\n请立即保存。';
+                }
+                alert(msg);
+                location.reload();
+            } catch (err) {
+                alert('请求失败：' + err.message);
+            }
+        }
 
         async function requestDelete(id, email) {
             if (!confirm('确认删除邮箱 ' + email + '？\n\n这将摘除 Postfix 收信、等待转发排空后将 Maildir 移入回收站。')) return;

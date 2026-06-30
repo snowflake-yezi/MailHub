@@ -556,6 +556,29 @@ func (s *Store) MarkPurged(mailboxID uint64) error {
 		Update("status", "purged").Error
 }
 
+var ErrInvalidMailboxRestoreState = fmt.Errorf("mailbox is not soft_deleted")
+
+// RestoreMailbox 将 soft_deleted 邮箱恢复为 active，清空删除相关时间戳。
+// 仅对 status=soft_deleted 生效（WHERE 双保险）；非法迁移（deleting/purged/active）
+// 返回 ErrInvalidMailboxRestoreState。
+func (s *Store) RestoreMailbox(mailboxID uint64) error {
+	result := s.db.Model(&model.MailboxAccount{}).
+		Where("id = ? AND status = ?", mailboxID, "soft_deleted").
+		Updates(map[string]interface{}{
+			"status":              "active",
+			"recycled_at":         nil,
+			"delete_requested_at": nil,
+			"sync_status":         "synced",
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrInvalidMailboxRestoreState
+	}
+	return nil
+}
+
 // FindStuckDeleting 查找 delete_requested_at 超过给定超时的 deleting 任务（Watchdog 用）。
 func (s *Store) FindStuckDeleting(timeout time.Duration) ([]model.MailboxAccount, error) {
 	var list []model.MailboxAccount

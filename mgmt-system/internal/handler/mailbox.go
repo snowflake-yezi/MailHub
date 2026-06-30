@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -303,6 +304,117 @@ func (h *MailboxHandler) callNodeDeleteMailbox(apiHost, email string) error {
 	return nil
 }
 
+// errRestoreWindowExpired 表示 mail-node 的 .trash 已无可恢复目录（被 24h GC 物理清除）。
+// handler 据此返回明确业务错误，DB 状态保持 soft_deleted 不变。
+var errRestoreWindowExpired = errors.New("restore window expired or mailbox already purged")
+
+// RestoreMailbox 管理后台触发的邮箱恢复（soft_deleted → active）。
+// POST /api/v1/admin/mailboxes/:id/restore
+//
+// 流程：校验 soft_deleted → 下发 mail-node restore（.trash 回迁 + 配置重建）→ 落 active。
+// .trash 已被 GC 时 mail-node 返回 409 → 本接口返回业务错误，状态不变。
+// 原密码为空（历史账号）时降级生成临时密码（RS-2），恢复后更新 DB 并返回新密码。
+func (h *MailboxHandler) RestoreMailbox(c *gin.Context) {
+	id := parseUint64(c.Param("id"))
+	if id == 0 {
+		badRequest(c, ErrCodeParamMissing, "invalid mailbox id")
+		return
+	}
+
+	mb, err := h.store.GetMailboxByID(id)
+	if err != nil {
+		notFound(c, "mailbox not found")
+		return
+	}
+	if mb.Status != "soft_deleted" {
+		badRequest(c, ErrCodeBusiness, "only soft_deleted mailbox can be restored, current status: "+mb.Status)
+		return
+	}
+
+	srv, err := h.store.GetServer(mb.ServerID)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "mail server not found")
+		return
+	}
+
+	// RS-2: 原密码为空的历史账号降级生成临时密码
+	password := mb.Password
+	generated := false
+	if password == "" {
+		password = generatePassword()
+		generated = true
+	}
+
+	if err := h.callNodeRestoreMailbox(srv.APIHost, mb.EmailAddress, password); err != nil {
+		if errors.Is(err, errRestoreWindowExpired) {
+			badRequest(c, ErrCodeBusiness, "restore window expired (already purged on mail node)")
+			return
+		}
+		serverError(c, ErrCodeExternalFail, "failed to restore on mail node: "+err.Error())
+		return
+	}
+
+	// 远端恢复成功后落本地：active + 清时间戳
+	if err := h.store.RestoreMailbox(mb.ID); err != nil {
+		if errors.Is(err, store.ErrInvalidMailboxRestoreState) {
+			badRequest(c, ErrCodeBusiness, "only soft_deleted mailbox can be restored")
+			return
+		}
+		serverError(c, ErrCodeInternal, "failed to restore mailbox: "+err.Error())
+		return
+	}
+
+	// 空密码账号：把生成的临时密码写回 DB
+	if generated {
+		if err := h.store.UpdateMailboxPassword(mb.ID, password); err != nil {
+			serverError(c, ErrCodeInternal, "restored but failed to persist generated password: "+err.Error())
+			return
+		}
+	}
+
+	resp := gin.H{
+		"id":            mb.ID,
+		"email_address": mb.EmailAddress,
+		"status":        "active",
+	}
+	if generated {
+		resp["password"] = password
+		resp["password_note"] = "original password unknown; temporary password generated"
+	}
+	success(c, "restored", resp)
+}
+
+// callNodeRestoreMailbox 向 mail-node 发送 restore 请求，从 .trash 回迁邮箱并重建配置。
+// mail-node 返回 409（.trash 无可恢复目录）时返回 errRestoreWindowExpired。
+func (h *MailboxHandler) callNodeRestoreMailbox(apiHost, email, password string) error {
+	body, _ := json.Marshal(map[string]string{
+		"email_address": email,
+		"password":      password,
+	})
+	url := fmt.Sprintf("http://%s/internal/mailboxes/%s/restore", apiHost, email)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", h.sharedSecret)
+
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusConflict {
+		return errRestoreWindowExpired
+	}
+	if resp.StatusCode >= 400 {
+		data, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+	}
+	return nil
+}
+
 func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
@@ -451,6 +563,7 @@ func (h *MailboxHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.POST("/mailboxes/upload", h.UploadMailboxCSV)
 	r.PUT("/mailboxes/:id", h.UpdateMailboxPassword)
 	r.POST("/mailboxes/:id/delete", h.RequestDelete)
+	r.POST("/mailboxes/:id/restore", h.RestoreMailbox)
 }
 
 var _ = http.Handler(nil)

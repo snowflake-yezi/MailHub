@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -52,6 +53,14 @@ func NewManager(maildirBase string, vmailUID, vmailGID int) *Manager {
 	}
 }
 
+// NewManagerWithFiles 创建邮箱管理器，并允许测试注入配置文件路径。
+func NewManagerWithFiles(maildirBase string, vmailUID, vmailGID int, usersFile, vmailboxFile string) *Manager {
+	m := NewManager(maildirBase, vmailUID, vmailGID)
+	m.usersFile = usersFile
+	m.vmailboxFile = vmailboxFile
+	return m
+}
+
 // mailboxExists 检查邮箱是否已存在（Dovecot users.conf 里有记录）
 func (m *Manager) mailboxExists(email string) bool {
 	data, err := os.ReadFile(m.usersFile)
@@ -59,6 +68,21 @@ func (m *Manager) mailboxExists(email string) bool {
 		return false
 	}
 	prefix := email + ":"
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// vmailboxExists 检查邮箱是否已在 Postfix vmailbox 中有记录。
+func (m *Manager) vmailboxExists(email string) bool {
+	data, err := os.ReadFile(m.vmailboxFile)
+	if err != nil {
+		return false
+	}
+	prefix := email + " "
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.HasPrefix(line, prefix) {
 			return true
@@ -247,6 +271,55 @@ func (m *Manager) RemoveFromConfigs(email string) error {
 	}
 
 	return nil
+}
+
+// ReinstallConfigs 把邮箱重新写回 Dovecot users.conf + Postfix vmailbox 并 reload，
+// 是 RemoveFromConfigs 的逆操作。restore 把 Maildir 从 .trash 回迁后调用，
+// 恢复邮箱的收信/登录能力。前提：配置行已在 MoveToTrash 阶段被 RemoveFromConfigs 摘除。
+// 幂等：若 Dovecot/Postfix 行异常残留则不重复追加。
+func (m *Manager) ReinstallConfigs(email, password string) error {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid email: %s", email)
+	}
+	localPart := parts[0]
+	domain := parts[1]
+
+	// Dovecot users.conf：幂等，异常残留时不重复追加
+	if !m.mailboxExists(email) {
+		entry := fmt.Sprintf("%s:{PLAIN}%s::::::\n", email, password)
+		if err := m.appendToFile(m.usersFile, entry); err != nil {
+			return fmt.Errorf("add dovecot user: %w", err)
+		}
+	}
+
+	// Postfix virtual mailbox maps：幂等，异常残留时不重复追加
+	if !m.vmailboxExists(email) {
+		vmailEntry := fmt.Sprintf("%s %s/\n", email, domain+"/"+localPart)
+		if err := m.appendToFile(m.vmailboxFile, vmailEntry); err != nil {
+			return fmt.Errorf("add postfix vmailbox: %w", err)
+		}
+	}
+
+	exec.Command("postmap", m.vmailboxFile).Run()
+	exec.Command("postfix", "reload").Run()
+	exec.Command("doveadm", "reload").Run()
+	return nil
+}
+
+// ChownMaildirTree recursively sets ownership on the domain directory that contains
+// the mailbox, matching Create's ownership repair for domain + mailbox layers.
+func (m *Manager) ChownMaildirTree(domain string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	domainDir := filepath.Join(m.maildirBase, domain)
+	return filepath.Walk(domainDir, func(p string, _ os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Chown(p, m.vmailUID, m.vmailGID)
+	})
 }
 
 // removeLineFromFile rewrites a file without lines containing the given substring.

@@ -3,6 +3,7 @@ package forward
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -76,7 +77,7 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 	}
 
 	timestamp := time.Now().Unix()
-	trashName := fmt.Sprintf("%s-%d", localPart, timestamp)
+	trashName := trashDirName(domain, localPart, timestamp)
 	trashPath := filepath.Join(l.trashBase, trashName)
 
 	if err := os.Rename(maildirPath, trashPath); err != nil {
@@ -86,6 +87,131 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 	log.Printf("[lifecycle] moved to trash: %s → %s", maildirPath, trashPath)
 	return trashPath, nil
 }
+
+// ErrNotInTrash 表示 .trash/ 中没有该邮箱的可恢复目录
+// （已被 24h GC 物理清除，或从未删除）。restore 据此判定恢复窗口已过。
+var ErrNotInTrash = errors.New("mailbox not in trash or already purged")
+
+// RestoreFromTrash 把误删邮箱从 .trash/ 回迁到原 Maildir 路径，并重建
+// Dovecot/Postfix 配置。是 MoveToTrash 的逆操作，供 restore 接口调用。
+//
+//	① 扫 .trash/ 找 <domain>__<localpart>-<unix_ts>，取 ts 最大者（最近一次删除）
+//	② 目标路径已存在（删后又新建同名）则拒绝，不覆盖
+//	③ os.Rename 回原路径并修复属主
+//	④ ReinstallConfigs 重建 Dovecot users.conf + Postfix vmailbox
+//
+// 无可恢复目录时返回 ErrNotInTrash。
+func (l *Lifecycle) RestoreFromTrash(email, password string) (string, error) {
+	parts := strings.SplitN(email, "@", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid email: %s", email)
+	}
+	localPart := parts[0]
+	domain := parts[1]
+
+	maildirPath := filepath.Join(l.mgr.MaildirBase(), domain, localPart)
+
+	// ① 找最近一次删除的 trash 目录
+	trashDir, err := l.findNewestTrashDir(domain, localPart)
+	if err != nil {
+		return "", err
+	}
+
+	// ② 目标已存在则拒绝（避免覆盖删后新建的同名邮箱）
+	if _, err := os.Stat(maildirPath); err == nil {
+		return "", fmt.Errorf("restore target already exists: %s", maildirPath)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat target %s: %w", maildirPath, err)
+	}
+
+	// ③ 回迁（同文件系统 rename 原子）
+	if err := os.MkdirAll(filepath.Dir(maildirPath), 0700); err != nil {
+		return "", fmt.Errorf("mkdir target domain: %w", err)
+	}
+	if err := os.Rename(trashDir, maildirPath); err != nil {
+		return "", fmt.Errorf("rename from trash: %w", err)
+	}
+
+	// 若配置重建失败，尽量把 Maildir 回滚回 .trash，避免 DB 仍 soft_deleted
+	// 但正式路径已被占用导致后续 restore 只能冲突。
+	rollback := func(cause error) (string, error) {
+		if err := os.Rename(maildirPath, trashDir); err != nil {
+			return "", fmt.Errorf("%w; rollback rename %s -> %s failed: %v", cause, maildirPath, trashDir, err)
+		}
+		return "", cause
+	}
+
+	// ④ 修复属主，确保 domain 层与 mailbox 子树均可被 vmail 用户访问。
+	if err := l.mgr.ChownMaildirTree(domain); err != nil {
+		return rollback(fmt.Errorf("chown restored maildir: %w", err))
+	}
+
+	// ⑤ 重建 Dovecot/Postfix 配置（RemoveFromConfigs 的逆操作）
+	if err := l.mgr.ReinstallConfigs(email, password); err != nil {
+		return rollback(fmt.Errorf("reinstall configs: %w", err))
+	}
+
+	log.Printf("[lifecycle] restored from trash: %s → %s", trashDir, maildirPath)
+	return maildirPath, nil
+}
+
+// findNewestTrashDir 扫描 .trash/ 找 name == "<domain>__<localpart>-<unix_ts>" 的目录，
+// 返回时间戳最大者（最近一次删除）。无可匹配目录返回 ErrNotInTrash。
+func (l *Lifecycle) findNewestTrashDir(domain, localPart string) (string, error) {
+	entries, err := os.ReadDir(l.trashBase)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", ErrNotInTrash
+		}
+		return "", fmt.Errorf("read .trash: %w", err)
+	}
+
+	newest, found := newestMatchingTrashDir(entries, l.trashBase, func(name string) bool {
+		return trashDirNameMatches(name, domain, localPart)
+	})
+	if !found {
+		return "", ErrNotInTrash
+	}
+	return newest, nil
+}
+
+func newestMatchingTrashDir(entries []os.DirEntry, trashBase string, match func(string) bool) (string, bool) {
+	var newest string
+	var newestTs int64
+	found := false
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !match(name) {
+			continue
+		}
+		ts := parseTrashTimestamp(name)
+		if ts.IsZero() {
+			continue
+		}
+		found = true
+		if ts.Unix() > newestTs {
+			newestTs = ts.Unix()
+			newest = filepath.Join(trashBase, name)
+		}
+	}
+	return newest, found
+}
+
+func trashDirName(domain, localPart string, timestamp int64) string {
+	return fmt.Sprintf("%s__%s-%d", domain, localPart, timestamp)
+}
+
+func trashDirNameMatches(name, domain, localPart string) bool {
+	idx := strings.LastIndex(name, "-")
+	if idx < 0 || parseTrashTimestamp(name).IsZero() {
+		return false
+	}
+	return name[:idx] == fmt.Sprintf("%s__%s", domain, localPart)
+}
+
 
 // waitForActiveJobs blocks until fwdSvc.ActiveJobs() reaches 0 or timeout expires.
 func (l *Lifecycle) waitForActiveJobs(timeout time.Duration) {
@@ -142,7 +268,8 @@ func (l *Lifecycle) purgeExpiredTrash() {
 
 		trashDir := filepath.Join(l.trashBase, entry.Name())
 
-		// Parse timestamp from directory name: <localpart>-<unix_ts>
+		// Parse timestamp from directory name: <domain>__<localpart>-<unix_ts>
+		// (or legacy <localpart>-<unix_ts>).
 		ts := parseTrashTimestamp(entry.Name())
 		if ts.IsZero() || ts.After(cutoff) {
 			continue
@@ -162,7 +289,7 @@ func (l *Lifecycle) purgeExpiredTrash() {
 }
 
 // parseTrashTimestamp extracts the unix timestamp from a trash directory name.
-// Format: <localpart>-<unix_ts>
+// Format: <domain>__<localpart>-<unix_ts> (or legacy <localpart>-<unix_ts>).
 func parseTrashTimestamp(name string) time.Time {
 	idx := strings.LastIndex(name, "-")
 	if idx < 0 {
@@ -184,7 +311,7 @@ type DeletingTask struct {
 
 // syncResponse is the mgmt-system sync endpoint response envelope.
 type syncResponse struct {
-	Code int    `json:"code"`
+	Code int            `json:"code"`
 	Data []DeletingTask `json:"data"`
 }
 
