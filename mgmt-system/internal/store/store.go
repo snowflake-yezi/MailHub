@@ -16,6 +16,15 @@ type Store struct {
 	db *gorm.DB
 }
 
+// Ping 检查底层数据库连接是否可用，供 /health/ready readiness 探活使用。
+func (s *Store) Ping() error {
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+
 // New 创建数据库连接并自动迁移
 func New(dsn string, mode string) (*Store, error) {
 	logLevel := logger.Warn
@@ -308,6 +317,15 @@ func (s *Store) CountMailboxesOnServerDomain(serverID, domainID uint64) (int64, 
 	var count int64
 	err := s.db.Model(&model.MailboxAccount{}).
 		Where("server_id = ? AND domain_id = ?", serverID, domainID).Count(&count).Error
+	return count, err
+}
+
+// CountMailboxesCreatedToday 统计今日创建的邮箱数量（按本地时间，不含状态过滤）。
+func (s *Store) CountMailboxesCreatedToday() (int64, error) {
+	var count int64
+	today := time.Now().Truncate(24 * time.Hour)
+	err := s.db.Model(&model.MailboxAccount{}).
+		Where("created_at >= ?", today).Count(&count).Error
 	return count, err
 }
 

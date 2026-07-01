@@ -109,6 +109,8 @@ func main() {
 		lifecycle,
 		cfg.Node.ID,
 		cfg.Node.Name,
+		cfg.Management.APIURL,
+		cfg.SharedSecret,
 	)
 
 	// 设置 Gin

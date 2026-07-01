@@ -321,7 +321,149 @@ echo "test" | mail -s "test" test@example.com
 
 ---
 
-## 7. 部署踩坑汇总
+## 7. TLS 证书（Let's Encrypt）
+
+### 7.1 安装 certbot
+
+```bash
+# CentOS 7
+yum install -y epel-release
+yum install -y certbot
+
+# Ubuntu 20.04+
+apt-get update
+apt-get install -y certbot
+```
+
+### 7.2 申请证书
+
+使用 webroot 方式（Nginx 需已监听 80 端口做验证）：
+
+```bash
+# 先确保 Nginx 有 80 端口的 server 块
+certbot certonly --webroot -w /var/www/html -d mail.example.com
+```
+
+证书生成后位于：
+- 证书：`/etc/letsencrypt/live/mail.example.com/fullchain.pem`
+- 私钥：`/etc/letsencrypt/live/mail.example.com/privkey.pem`
+
+### 7.3 Nginx 配置 TLS
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name mail.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/mail.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mail.example.com/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # mgmt-system 后台 + API
+    location /admin  { proxy_pass http://127.0.0.1:8080; }
+    location /api    { proxy_pass http://127.0.0.1:8080; }
+    location /static { proxy_pass http://127.0.0.1:8080; }
+
+    # Roundcube（同机部署时）
+    location / {
+        root /var/www/roundcube;
+        index index.php;
+    }
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+
+# HTTP → HTTPS 重定向
+server {
+    listen 80;
+    server_name mail.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+```bash
+nginx -t && systemctl reload nginx
+```
+
+### 7.4 Postfix TLS
+
+```bash
+# 编辑 /etc/postfix/main.cf
+postconf -e 'smtpd_tls_cert_file = /etc/letsencrypt/live/mail.example.com/fullchain.pem'
+postconf -e 'smtpd_tls_key_file = /etc/letsencrypt/live/mail.example.com/privkey.pem'
+postconf -e 'smtpd_tls_security_level = may'
+postconf -e 'smtpd_tls_loglevel = 1'
+
+# submission 也要证书（master.cf 中 -o 参数或用 postconf -P，Postfix 2.11+）
+# Postfix 2.10.1：在 /etc/postfix/master.cf 的 submission 行下确保已配：
+#   -o smtpd_tls_security_level=may
+#   -o smtpd_tls_auth_only=no
+
+postfix reload
+```
+
+验证 STARTTLS：
+```bash
+openssl s_client -connect mail.example.com:25 -starttls smtp </dev/null 2>/dev/null | grep -E 'subject=|issuer='
+# 预期看到 Let's Encrypt 签发的证书信息
+```
+
+### 7.5 Dovecot SSL
+
+```bash
+# /etc/dovecot/conf.d/10-ssl.conf
+ssl = required
+ssl_cert = </etc/letsencrypt/live/mail.example.com/fullchain.pem
+ssl_key = </etc/letsencrypt/live/mail.example.com/privkey.pem
+ssl_protocols = !SSLv2 !SSLv3 !TLSv1 !TLSv1.1
+```
+
+```bash
+dovecot reload
+```
+
+验证 IMAP SSL：
+```bash
+openssl s_client -connect mail.example.com:993 </dev/null 2>/dev/null | grep -E 'subject=|issuer='
+```
+
+### 7.6 证书自动续期
+
+Let's Encrypt 证书有效期 90 天，需定期续期：
+
+```bash
+# 添加 cron 任务（root 用户）
+crontab -e
+
+# 每天凌晨 3:27 检查续期，成功后 reload 相关服务
+27 3 * * * certbot renew --quiet --post-hook "systemctl reload nginx postfix dovecot"
+```
+
+验证自动续期配置：
+```bash
+certbot renew --dry-run
+```
+
+### 7.7 证书文件权限
+
+```bash
+# Let's Encrypt 私钥仅 root 可读
+chmod 640 /etc/letsencrypt/live/mail.example.com/privkey.pem
+chmod 640 /etc/letsencrypt/archive/mail.example.com/privkey*.pem
+
+# Nginx/Dovecot 以 root 启动（读私钥），worker 降权
+# 如果 Nginx 以非 root 运行，需将 nginx 用户加入私钥组或使用 ACL
+```
+
+---
+
+## 8. 部署踩坑汇总
 
 | 坑 | 现象 | 修复 |
 |----|------|------|
@@ -336,9 +478,10 @@ echo "test" | mail -s "test" test@example.com
 
 ---
 
-## 8. 版本记录
+## 9. 版本记录
 
 | 日期 | 变更 |
 |------|------|
 | 2026-06-17 | 初版：DNS 配置 + 服务器部署步骤 |
 | 2026-06-26 | 更新至当前架构：OpenDKIM、DNS 五件套、Postfix 2.10 兼容、踩坑汇总 |
+| 2026-06-30 | T10 收尾：新增 §7 TLS 证书（Let's Encrypt 获取/部署/续期、Postfix/Dovecot/Nginx） |

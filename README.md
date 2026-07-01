@@ -177,7 +177,7 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 
 ## 项目状态
 
-**当前进度：Phase 3 控制面补全 — T4/T5/T6/T7 已闭环。**
+**当前进度：Phase 3 全部闭环，T1–T10 全部完成。**
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -187,8 +187,8 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 | Phase 3 T4/T5 | 服务器域名池 + Postfix 虚拟域 + DKIM | ✅ |
 | Phase 3 T6 | 三层鉴权体系 | ✅ |
 | Phase 3 T7 | 健康检查与心跳 | ✅ |
-| Phase 3 T8 | MIME 预处理（结构化邮件） | 🔜 待实施 |
-| Phase 3 T9 | 邮箱生命周期对接 | 🔜 待实施 |
-| Phase 3 T10 | 收尾（filter 推送、证书、临时机清理） | 🔜 待实施 |
+| Phase 3 T8 | MIME 预处理（结构化邮件） | ✅ |
+| Phase 3 T9 | 邮箱生命周期与恢复闭环 | ✅ |
+| Phase 3 T10 | 收尾（filter 主动推送、今日创建数、message_id 兼容、TLS 部署文档） | ✅ |
 
-已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查。MIME 结构化预处理等控制面能力持续完善中。
+已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查、结构化邮件查询、邮箱生命周期恢复、filter 主动推送、TLS 部署文档。后续运维：IPv4 配置、Let's Encrypt 证书实际申请、临时机清理。

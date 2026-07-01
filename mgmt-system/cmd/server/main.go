@@ -68,8 +68,9 @@ func main() {
 	mailboxH := handler.NewMailboxHandler(db, allocator, cfg.Auth.SharedSecret)
 	emailH := handler.NewEmailHandler(db, cfg.Auth.SharedSecret)
 	serverH := handler.NewServerHandler(db, cfg.Auth.SharedSecret)
-	filterH := handler.NewFilterHandler(db)
+	filterH := handler.NewFilterHandler(db, cfg.Auth.SharedSecret)
 	adminH := handler.NewAdminHandler(db)
+	healthH := handler.NewHealthHandler(db)
 
 	// Session 管理器
 	sessionMgr := middleware.NewSessionManager()
@@ -85,6 +86,10 @@ func main() {
 	// 加载 HTML 模板 + 静态资源
 	r.LoadHTMLGlob("template/admin/*.html")
 	r.Static("/static", "template/static")
+
+	// ---- 健康检查（公开，无鉴权，systemd / 监控探活用） ----
+	r.GET("/health", healthH.Health)
+	r.GET("/health/ready", healthH.Ready)
 
 	// ---- 公开登录/登出（无需鉴权） ----
 	authGroup := r.Group("/admin")

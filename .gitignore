@@ -7,7 +7,9 @@ context.md
 *.exe~
 *.exe.bak-*
 mgmt-system/mgmt-server
+mgmt-system/mgmt-*-linux*
 mail-node/mail-node
+mail-node/mail-node-*-linux*
 mgmt-server.linux
 mail-node.linux
 

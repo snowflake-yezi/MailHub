@@ -28,12 +28,14 @@ func (h *AdminHandler) Dashboard(c *gin.Context) {
 	}
 
 	mailboxes, total, _ := h.store.ListMailboxes(1, 1, "active", "")
+	todayCreated, _ := h.store.CountMailboxesCreatedToday()
 
 	c.HTML(http.StatusOK, "dashboard.html", gin.H{
 		"title":           "邮箱管理系统",
 		"serverCount":     len(servers),
 		"healthyCount":    activeCount,
 		"activeMailboxes": total,
+		"todayCreated":    todayCreated,
 		"servers":         servers,
 		"mailboxes":       mailboxes,
 	})

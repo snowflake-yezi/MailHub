@@ -21,22 +21,26 @@ import (
 )
 
 type NodeHandler struct {
-	mailboxMgr *mailbox.Manager
-	domainMgr  *domain.Manager
-	engine     *filter.Engine
-	lifecycle  *forward.Lifecycle
-	nodeID     uint64
-	nodeName   string
+	mailboxMgr   *mailbox.Manager
+	domainMgr    *domain.Manager
+	engine       *filter.Engine
+	lifecycle    *forward.Lifecycle
+	nodeID       uint64
+	nodeName     string
+	managerURL   string
+	sharedSecret string
 }
 
-func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName string) *NodeHandler {
+func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName, managerURL, sharedSecret string) *NodeHandler {
 	return &NodeHandler{
-		mailboxMgr: mgr,
-		domainMgr:  domainMgr,
-		engine:     eng,
-		lifecycle:  lc,
-		nodeID:     nodeID,
-		nodeName:   nodeName,
+		mailboxMgr:   mgr,
+		domainMgr:    domainMgr,
+		engine:       eng,
+		lifecycle:    lc,
+		nodeID:       nodeID,
+		nodeName:     nodeName,
+		managerURL:   managerURL,
+		sharedSecret: sharedSecret,
 	}
 }
 
@@ -309,19 +313,42 @@ func (h *NodeHandler) GetMessageBody(c *gin.Context) {
 		return
 	}
 
-	// 在 new/ + cur/ 中找匹配 message_id 的邮件
+	normalized := normalizeMessageID(messageID)
+
+	// 在 new/ + cur/ 中找匹配 message_id 的邮件，兼容多格式
 	for _, filePath := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
 		msg, err := parseFullMessage(filePath, email, h.mailboxMgr.MaildirBase())
 		if err != nil {
 			continue
 		}
+		// 1. 精确匹配
 		if msg.MessageID == messageID {
 			c.JSON(200, gin.H{"code": 0, "data": msg})
 			return
 		}
+		// 2. 规范化匹配（去 <> 和引号后比较）
+		if normalizeMessageID(msg.MessageID) == normalized {
+			c.JSON(200, gin.H{"code": 0, "data": msg})
+			return
+		}
+		// 3. fallback ID 忽略大小写
+		if strings.HasPrefix(msg.MessageID, "fallback-") && strings.HasPrefix(messageID, "fallback-") {
+			if strings.EqualFold(msg.MessageID, messageID) || strings.EqualFold(normalizeMessageID(msg.MessageID), normalized) {
+				c.JSON(200, gin.H{"code": 0, "data": msg})
+				return
+			}
+		}
 	}
 
 	c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
+}
+
+// normalizeMessageID 去掉 message-id 首尾的 < > 和引号，trim 空白，用于兼容匹配。
+func normalizeMessageID(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimLeft(s, "<\"")
+	s = strings.TrimRight(s, ">\"")
+	return strings.TrimSpace(s)
 }
 
 // ===== 健康检查 =====
@@ -347,8 +374,15 @@ func (h *NodeHandler) Health(c *gin.Context) {
 // ReloadFilters 立即重载过滤规则
 // POST /internal/filters/reload
 func (h *NodeHandler) ReloadFilters(c *gin.Context) {
-	// 由管理系统 URL 从配置中传入，这里简单返回
-	c.JSON(200, gin.H{"code": 0, "message": "use GET /internal/filters to fetch latest rules"})
+	if h.managerURL == "" {
+		c.JSON(400, gin.H{"code": 5000, "message": "manager URL not configured"})
+		return
+	}
+	if err := h.engine.SyncFromManager(h.managerURL, h.sharedSecret); err != nil {
+		c.JSON(500, gin.H{"code": 5000, "message": "reload failed: " + err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "message": "filters reloaded"})
 }
 
 // countAllMessages 统计 base 下所有邮箱 new/ + cur/ 的邮件总数
