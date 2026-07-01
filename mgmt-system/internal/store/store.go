@@ -457,10 +457,12 @@ func (s *Store) GetMailboxAccountByEmail(email string) (*model.MailboxAccount, e
 }
 
 type MailboxListFilter struct {
-	Status   string
-	Search   string
-	DomainID uint64
-	ServerID uint64
+	Status          string
+	Statuses        []string // status IN (...)；为空不生效
+	ExcludeStatuses []string // status NOT IN (...)；为空不生效（回收站分离用）
+	Search          string
+	DomainID        uint64
+	ServerID        uint64
 }
 
 func (s *Store) ListMailboxes(page, size int, status, search string) ([]model.MailboxAccount, int64, error) {
@@ -477,6 +479,12 @@ func (s *Store) ListMailboxesWithFilter(page, size int, filter MailboxListFilter
 	q := s.db.Model(&model.MailboxAccount{})
 	if filter.Status != "" {
 		q = q.Where("status = ?", filter.Status)
+	}
+	if len(filter.Statuses) > 0 {
+		q = q.Where("status IN ?", filter.Statuses)
+	}
+	if len(filter.ExcludeStatuses) > 0 {
+		q = q.Where("status NOT IN ?", filter.ExcludeStatuses)
 	}
 	if filter.Search != "" {
 		like := "%" + filter.Search + "%"

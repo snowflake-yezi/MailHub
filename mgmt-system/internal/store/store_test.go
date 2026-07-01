@@ -59,3 +59,57 @@ func newMockStore(t *testing.T) (*Store, sqlmock.Sqlmock, func()) {
 	}
 	return &Store{db: db}, mock, func() { sqlDB.Close() }
 }
+
+// TestListMailboxesExcludeStatuses 验证回收站分离：normal 视图排除 soft_deleted/purged。
+// 用宽松正则只断言 WHERE 子句含 NOT IN，避免对 gorm 完整 SELECT 的脆弱依赖；
+// 空结果不触发 Preload，故只匹配 Count + Find 两条。
+func TestListMailboxesExcludeStatuses(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectQuery("status NOT IN").
+		WithArgs("soft_deleted", "purged").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("status NOT IN").
+		WithArgs("soft_deleted", "purged", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email_address"}))
+
+	list, total, err := st.ListMailboxesWithFilter(1, 20, MailboxListFilter{
+		ExcludeStatuses: []string{"soft_deleted", "purged"},
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if total != 0 || len(list) != 0 {
+		t.Fatalf("expected empty, got total=%d list=%d", total, len(list))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet: %v", err)
+	}
+}
+
+// TestListMailboxesStatuses 验证回收站视图：只查 soft_deleted + purged（IN）。
+func TestListMailboxesStatuses(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectQuery("status IN").
+		WithArgs("soft_deleted", "purged").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery("status IN").
+		WithArgs("soft_deleted", "purged", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email_address"}))
+
+	list, total, err := st.ListMailboxesWithFilter(1, 20, MailboxListFilter{
+		Statuses: []string{"soft_deleted", "purged"},
+	})
+	if err != nil {
+		t.Fatalf("error: %v", err)
+	}
+	if total != 0 || len(list) != 0 {
+		t.Fatalf("expected empty, got total=%d list=%d", total, len(list))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet: %v", err)
+	}
+}

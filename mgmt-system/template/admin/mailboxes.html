@@ -220,6 +220,17 @@
         .tag.purged { background: #f3f4f6; color: #6b7280; }
         .muted { color: var(--muted); font-size: 13px; }
         .empty { text-align: center; color: var(--muted); padding: 28px !important; }
+        .trash-notice {
+            background: var(--warn-bg);
+            color: var(--warn-text);
+            border: 1px solid #f0d8a0;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        .tabs a.tab { display: inline-flex; align-items: center; text-decoration: none; }
         .create-grid {
             display: grid;
             grid-template-columns: minmax(280px, 420px) minmax(320px, 1fr);
@@ -335,11 +346,90 @@
             </section>
 
             <div id="mailbox-tabs" class="tabs">
-                <button class="tab active" onclick="switchTab('list')">账号集合</button>
-                <button class="tab" onclick="switchTab('create')">创建邮箱</button>
+                <a class="tab {{if eq .view "trash"}}{{else}}active{{end}}" href="/admin/mailboxes?view=normal">账号集合</a>
+                <a class="tab {{if eq .view "trash"}}active{{end}}" href="/admin/mailboxes?view=trash">回收站</a>
+                <button class="tab" id="tab-btn-create" onclick="switchTab('create')">创建邮箱</button>
             </div>
 
             <section id="tab-list" class="tab-content active">
+                {{if eq .view "trash"}}
+                <div class="trash-notice">
+                    回收站保留删除后 <strong>24 小时</strong> 内可恢复的邮箱；超过 24h 远端已物理清除，恢复将失败。
+                    「彻底删除」会立即转为已清除状态，<strong>不可恢复</strong>。
+                </div>
+                <div class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <div class="panel-title">回收站</div>
+                            <div class="muted">soft_deleted 可恢复 · purged 已彻底清除</div>
+                        </div>
+                        <a href="/admin/mailboxes" class="btn btn-ghost">返回账号集合</a>
+                    </div>
+
+                    <form method="GET" action="/admin/mailboxes" class="toolbar" style="grid-template-columns: minmax(220px, 1fr) 160px 180px auto auto;">
+                        <input type="hidden" name="view" value="trash">
+                        <input type="text" name="search" value="{{.search}}" placeholder="搜索邮箱地址或前缀">
+                        <select name="domain_id">
+                            <option value="0">全部域名</option>
+                            {{range .domains}}
+                            <option value="{{.ID}}" {{if eq $.domainID .ID}}selected{{end}}>{{.Name}}</option>
+                            {{end}}
+                        </select>
+                        <select name="server_id">
+                            <option value="0">全部服务器</option>
+                            {{range .servers}}
+                            <option value="{{.ID}}" {{if eq $.serverID .ID}}selected{{end}}>{{.Name}}</option>
+                            {{end}}
+                        </select>
+                        <button type="submit" class="btn btn-primary">筛选</button>
+                        <a href="/admin/mailboxes?view=trash" class="btn btn-secondary">重置</a>
+                    </form>
+
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>账号ID</th>
+                                    <th>邮箱地址</th>
+                                    <th>域名</th>
+                                    <th>服务器</th>
+                                    <th>状态</th>
+                                    <th>删除时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .items}}
+                                <tr>
+                                    <td><span class="mono">#{{.ID}}</span></td>
+                                    <td>
+                                        <div class="mail-cell">
+                                            <span class="mono">{{.EmailAddress}}</span>
+                                            <button class="copy" type="button" onclick="copyText('{{.EmailAddress}}')">⧉</button>
+                                        </div>
+                                    </td>
+                                    <td>{{if .Domain.Name}}{{.Domain.Name}}{{else}}#{{.DomainID}}{{end}}</td>
+                                    <td>{{if .Server.Name}}{{.Server.Name}}{{else}}#{{.ServerID}}{{end}}</td>
+                                    <td><span class="tag {{.Status}}">{{.Status}}</span></td>
+                                    <td>{{if .RecycledAt}}{{.RecycledAt.Format "2006-01-02 15:04"}}{{else}}<span class="muted">-</span>{{end}}</td>
+                                    <td>
+                                        {{if eq .Status "soft_deleted"}}
+                                        <button class="btn btn-primary" style="height:28px;font-size:12px;padding:0 10px;" onclick="requestRestore({{.ID}}, '{{.EmailAddress}}')">恢复</button>
+                                        <button class="btn btn-secondary" style="height:28px;font-size:12px;padding:0 10px;margin-left:4px;" onclick="requestPurge({{.ID}}, '{{.EmailAddress}}')">彻底删除</button>
+                                        {{else if eq .Status "purged"}}
+                                        <span class="muted">已彻底清除</span>
+                                        {{end}}
+                                    </td>
+                                </tr>
+                                {{end}}
+                                {{if not .items}}
+                                <tr><td colspan="7" class="empty">回收站为空</td></tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {{else}}
                 <div class="panel">
                     <div class="panel-head">
                         <div>
@@ -367,8 +457,6 @@
                             <option value="">全部状态</option>
                             <option value="active" {{if eq .status "active"}}selected{{end}}>active</option>
                             <option value="deleting" {{if eq .status "deleting"}}selected{{end}}>deleting</option>
-                            <option value="soft_deleted" {{if eq .status "soft_deleted"}}selected{{end}}>soft_deleted</option>
-                            <option value="purged" {{if eq .status "purged"}}selected{{end}}>purged</option>
                         </select>
                         <button type="submit" class="btn btn-primary">筛选</button>
                         <a href="/admin/mailboxes" class="btn btn-secondary">重置</a>
@@ -430,6 +518,7 @@
                         </table>
                     </div>
                 </div>
+                {{end}}
             </section>
 
             <section id="tab-create" class="tab-content">
@@ -581,11 +670,12 @@
 
         // ---- Tab 切换 ----
         function switchTab(name) {
-            document.querySelectorAll('#tab-list, #tab-create').forEach(function(el) { el.classList.remove('active'); });
-            document.getElementById('tab-' + name).classList.add('active');
-            document.querySelectorAll('#mailbox-tabs .tab').forEach(function(t, i) {
-                t.classList.toggle('active', i === (name === 'list' ? 0 : 1));
-            });
+            if (name !== 'create') return; // 账号集合 / 回收站由顶部 <a> 链接跳转驱动
+            document.getElementById('tab-list').classList.remove('active');
+            document.getElementById('tab-create').classList.add('active');
+            document.querySelectorAll('#mailbox-tabs .tab').forEach(function(t) { t.classList.remove('active'); });
+            var btn = document.getElementById('tab-btn-create');
+            if (btn) btn.classList.add('active');
         }
 
         function switchCreateTab(name) {
@@ -675,6 +765,25 @@
                     msg += '\n\n⚠️ 原密码未知，已生成临时密码：' + json.data.password + '\n请立即保存。';
                 }
                 alert(msg);
+                location.reload();
+            } catch (err) {
+                alert('请求失败：' + err.message);
+            }
+        }
+
+        async function requestPurge(id, email) {
+            if (!confirm('确认彻底删除邮箱 ' + email + '？\n\n此操作不可恢复：将立即从回收站永久清除（转为「已清除」状态）。\n远端邮件数据由系统在 24h 内自然物理清除。')) return;
+            try {
+                const resp = await fetch('/api/v1/admin/mailboxes/' + id + '/purge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const json = await resp.json();
+                if (!resp.ok || json.code !== 0) {
+                    alert('彻底删除失败：' + (json.message || '未知错误'));
+                    return;
+                }
+                alert('已彻底删除：' + email + '\n状态：purged（不可恢复）');
                 location.reload();
             } catch (err) {
                 alert('请求失败：' + err.message);

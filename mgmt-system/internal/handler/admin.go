@@ -68,17 +68,31 @@ func (h *AdminHandler) MailboxesPage(c *gin.Context) {
 	if page < 1 {
 		page = 1
 	}
+	view := c.DefaultQuery("view", "normal")
+	if view != "trash" {
+		view = "normal"
+	}
 	status := c.Query("status")
 	search := c.Query("search")
 	domainID := parseUint64(c.Query("domain_id"))
 	serverID := parseUint64(c.Query("server_id"))
 
-	list, total, _ := h.store.ListMailboxesWithFilter(page, 20, store.MailboxListFilter{
-		Status:   status,
+	filter := store.MailboxListFilter{
 		Search:   search,
 		DomainID: domainID,
 		ServerID: serverID,
-	})
+		Status:   status,
+	}
+	if view == "trash" {
+		// 回收站：只看 soft_deleted(可恢复) + purged(已彻底清除)；忽略单 status 参数避免与 IN 冲突
+		filter.Status = ""
+		filter.Statuses = []string{"soft_deleted", "purged"}
+	} else {
+		// 账号集合：默认排除回收站态，使回收站邮箱不与正常邮箱混排
+		filter.ExcludeStatuses = []string{"soft_deleted", "purged"}
+	}
+
+	list, total, _ := h.store.ListMailboxesWithFilter(page, 20, filter)
 	domains, _ := h.store.ListDomains()
 	servers, _ := h.store.ListServers()
 
@@ -93,6 +107,7 @@ func (h *AdminHandler) MailboxesPage(c *gin.Context) {
 		"search":     search,
 		"domainID":   domainID,
 		"serverID":   serverID,
+		"view":       view,
 	})
 }
 

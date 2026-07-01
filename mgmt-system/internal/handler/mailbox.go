@@ -438,6 +438,51 @@ func (h *MailboxHandler) callNodeRestoreMailbox(apiHost, email, password string)
 	return nil
 }
 
+// PurgeMailbox 管理后台触发的邮箱彻底删除（soft_deleted → purged）。
+// POST /api/v1/admin/mailboxes/:id/purge
+//
+// 仅收敛 DB 终态：删除时 Maildir 已由 mail-node MoveToTrash 移入 .trash，远端 24h GC
+// 会自然物理清除，此处不再调远端，避免新增接口。purged 已是终态，重复请求幂等返回成功；
+// 非 soft_deleted（active/deleting 等）拒绝。
+func (h *MailboxHandler) PurgeMailbox(c *gin.Context) {
+	id := parseUint64(c.Param("id"))
+	if id == 0 {
+		badRequest(c, ErrCodeParamMissing, "invalid mailbox id")
+		return
+	}
+
+	mb, err := h.store.GetMailboxByID(id)
+	if err != nil {
+		notFound(c, "mailbox not found")
+		return
+	}
+
+	// 幂等：已是终态，直接成功（与 executeDeletion 风格一致）
+	if mb.Status == "purged" {
+		success(c, "already purged", gin.H{
+			"id":            mb.ID,
+			"email_address": mb.EmailAddress,
+			"status":        "purged",
+		})
+		return
+	}
+	if mb.Status != "soft_deleted" {
+		badRequest(c, ErrCodeBusiness, "only soft_deleted mailbox can be purged, current status: "+mb.Status)
+		return
+	}
+
+	if err := h.store.MarkPurged(mb.ID); err != nil {
+		serverError(c, ErrCodeInternal, "failed to purge mailbox: "+err.Error())
+		return
+	}
+
+	success(c, "purged", gin.H{
+		"id":            mb.ID,
+		"email_address": mb.EmailAddress,
+		"status":        "purged",
+	})
+}
+
 func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
@@ -587,6 +632,7 @@ func (h *MailboxHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.PUT("/mailboxes/:id", h.UpdateMailboxPassword)
 	r.POST("/mailboxes/:id/delete", h.RequestDelete)
 	r.POST("/mailboxes/:id/restore", h.RestoreMailbox)
+	r.POST("/mailboxes/:id/purge", h.PurgeMailbox)
 }
 
 var _ = http.Handler(nil)
