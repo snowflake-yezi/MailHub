@@ -53,22 +53,21 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 
 	maildirPath := filepath.Join(l.mgr.MaildirBase(), domain, localPart)
 
-	// Verify the mailbox directory exists
-	if _, err := os.Stat(maildirPath); os.IsNotExist(err) {
-		return "", fmt.Errorf("mailbox not found: %s", email)
-	}
-
 	// ① Remove from Postfix & Dovecot config files to reject new mail.
-	// Future mail to this address will bounce rather than land in a
-	// directory that's about to move.
+	// Do this before checking maildir existence — stale config entries
+	// should be cleaned up even when the maildir is already gone.
 	if err := l.mgr.RemoveFromConfigs(email); err != nil {
 		log.Printf("[lifecycle] remove configs warning: %v", err)
-		// Continue — the rename is the critical step
+	}
+
+	// Verify the mailbox directory exists.
+	// If it's already gone, the desired end state is achieved — idempotent success.
+	if _, err := os.Stat(maildirPath); os.IsNotExist(err) {
+		log.Printf("[lifecycle] MoveToTrash: maildir already absent for %s (idempotent)", email)
+		return "", nil
 	}
 
 	// ② Wait for active forwarding jobs to drain.
-	// Any job already mid-forward still holds an fd on the file;
-	// os.Rename won't break it, but we wait to keep the log clean.
 	l.waitForActiveJobs(5 * time.Minute)
 
 	// ③ Atomically move to .trash/

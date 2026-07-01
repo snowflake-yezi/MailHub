@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/model"
@@ -129,7 +130,13 @@ func (s *Scheduler) callNodeDelete(apiHost, email string) error {
 
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		body := string(data)
+		// 防御：maildir 已在节点上不存在时，视为已删除（幂等）。
+		// 正常路径由 mail-node MoveToTrash 幂等返回 200，此分支兜底旧版节点返回 500。
+		if strings.Contains(body, "mailbox not found") || strings.Contains(body, "already deleted") {
+			return nil
+		}
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, body)
 	}
 	return nil
 }

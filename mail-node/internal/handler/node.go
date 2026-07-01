@@ -84,9 +84,14 @@ func (h *NodeHandler) DeleteMailbox(c *gin.Context) {
 		return
 	}
 
+	msg := "moved to trash"
+	if trashPath == "" {
+		msg = "already deleted (maildir absent)"
+	}
+
 	c.JSON(200, gin.H{
 		"code":    0,
-		"message": "moved to trash",
+		"message": msg,
 		"data":    gin.H{"trash_path": trashPath},
 	})
 }
