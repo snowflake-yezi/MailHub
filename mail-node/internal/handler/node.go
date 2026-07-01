@@ -371,6 +371,26 @@ func (h *NodeHandler) Health(c *gin.Context) {
 	})
 }
 
+// Stats 节点运维统计:当前邮箱账号数、邮件总数、Maildir 所在分区的磁盘使用量。
+// GET /internal/stats
+func (h *NodeHandler) Stats(c *gin.Context) {
+	mailboxCount := 0
+	if h.mailboxMgr != nil {
+		mailboxCount = h.mailboxMgr.ActiveCount()
+	}
+	totalMessages := countAllMessages(h.mailboxMgr.MaildirBase())
+	c.JSON(200, gin.H{
+		"code": 0,
+		"data": gin.H{
+			"node_id":        h.nodeID,
+			"node_name":      h.nodeName,
+			"mailbox_count":  mailboxCount,
+			"total_messages": totalMessages,
+			"disk":           diskUsage(h.mailboxMgr.MaildirBase()),
+		},
+	})
+}
+
 // ReloadFilters 立即重载过滤规则
 // POST /internal/filters/reload
 func (h *NodeHandler) ReloadFilters(c *gin.Context) {
@@ -462,6 +482,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 
 	// 健康 & 维护
 	rg.GET("/health", h.Health)
+	rg.GET("/stats", h.Stats)
 	rg.POST("/filters/reload", h.ReloadFilters)
 }
 

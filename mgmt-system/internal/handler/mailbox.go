@@ -251,6 +251,29 @@ func (h *MailboxHandler) RequestDelete(c *gin.Context) {
 // ② proxy mail-node DELETE /internal/mailboxes/{email}
 // ③ 成功 → ConfirmDeletion → soft_deleted；失败 → 保持 deleting（Watchdog 重试）
 func (h *MailboxHandler) executeDeletion(c *gin.Context, mb *model.MailboxAccount) {
+	// 幂等守卫(§2.1.5「DELETE 接口保证绝对幂等」):
+	// 已处于删除终态或进行中的邮箱,重复 DELETE 必须无副作用地返回成功,绝不把状态打回
+	// deleting——否则 mail-node 侧 Maildir 已被 MoveToTrash 移入 .trash/ 或被 24h GC 清除,
+	// 重复下发会返回 "mailbox not found",状态永久卡死 deleting,且被 Watchdog 反复重试放大。
+	// (Watchdog 走独立路径 FindStuckDeleting→callNodeDelete,不经此守卫,不受影响。)
+	switch mb.Status {
+	case "soft_deleted", "purged":
+		success(c, "already deleted", gin.H{
+			"id":            mb.ID,
+			"email_address": mb.EmailAddress,
+			"status":        mb.Status,
+		})
+		return
+	case "deleting":
+		// 删除已在进行中,由 lifecycle.Watchdog 推进;重复请求不重新下发,幂等返回。
+		success(c, "deletion in progress", gin.H{
+			"id":            mb.ID,
+			"email_address": mb.EmailAddress,
+			"status":        "deleting",
+		})
+		return
+	}
+	// active / disabled / recycled → 正常删除流程
 	// ① 标记 deleting
 	if err := h.store.RequestDeletion(mb.ID); err != nil {
 		serverError(c, ErrCodeInternal, "failed to request deletion: "+err.Error())
