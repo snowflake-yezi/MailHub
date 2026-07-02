@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -71,4 +72,42 @@ func unmarshalProxyResp(data []byte) (map[string]interface{}, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// proxyAttachmentToServer 透传邮件服务器的二进制响应（附件下载专用）。
+//
+// 与 proxyToServer 的关键差异：附件下载例外于统一 JSON 信封——
+//   - 保留上游 Content-Type / Content-Disposition 响应头（直接复用给前端/调用方）
+//   - 流式 io.Copy 写出 body，避免把整个附件读进内存再封信封
+//   - 上游 4xx/5xx 时透传状态码与原始 body（JSON 错误信封），不吞不重封
+//
+// 仅本函数自身的请求失败（建连/请求异常）才回落到 serverError 统一信封。
+// 超时取 60s（大于 proxyToServer 的 10s），适配附件下载体积。
+func proxyAttachmentToServer(c *gin.Context, serverAPIHost, method, path, sharedSecret string) {
+	url := fmt.Sprintf("http://%s%s", serverAPIHost, path)
+	req, err := http.NewRequest(method, url, nil)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "create attachment request: "+err.Error())
+		return
+	}
+	req.Header.Set("X-Internal-Token", sharedSecret)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "fetch attachment failed: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		c.Header("Content-Type", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		c.Header("Content-Disposition", cd)
+	}
+
+	c.Status(resp.StatusCode)
+	// 状态码与响应头已写出，body 读取错误无法回滚；调用方据状态码/字节数判断。
+	_, _ = io.Copy(c.Writer, resp.Body)
 }

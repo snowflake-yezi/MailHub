@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jhillyerd/enmime"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/forward"
@@ -318,34 +320,12 @@ func (h *NodeHandler) GetMessageBody(c *gin.Context) {
 		return
 	}
 
-	normalized := normalizeMessageID(messageID)
-
-	// 在 new/ + cur/ 中找匹配 message_id 的邮件，兼容多格式
-	for _, filePath := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
-		msg, err := parseFullMessage(filePath, email, h.mailboxMgr.MaildirBase())
-		if err != nil {
-			continue
-		}
-		// 1. 精确匹配
-		if msg.MessageID == messageID {
-			c.JSON(200, gin.H{"code": 0, "data": msg})
-			return
-		}
-		// 2. 规范化匹配（去 <> 和引号后比较）
-		if normalizeMessageID(msg.MessageID) == normalized {
-			c.JSON(200, gin.H{"code": 0, "data": msg})
-			return
-		}
-		// 3. fallback ID 忽略大小写
-		if strings.HasPrefix(msg.MessageID, "fallback-") && strings.HasPrefix(messageID, "fallback-") {
-			if strings.EqualFold(msg.MessageID, messageID) || strings.EqualFold(normalizeMessageID(msg.MessageID), normalized) {
-				c.JSON(200, gin.H{"code": 0, "data": msg})
-				return
-			}
-		}
+	msg, _, ok := h.findMessage(email, messageID)
+	if !ok {
+		c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
+		return
 	}
-
-	c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
+	c.JSON(200, gin.H{"code": 0, "data": msg})
 }
 
 // normalizeMessageID 去掉 message-id 首尾的 < > 和引号，trim 空白，用于兼容匹配。
@@ -354,6 +334,128 @@ func normalizeMessageID(s string) string {
 	s = strings.TrimLeft(s, "<\"")
 	s = strings.TrimRight(s, ">\"")
 	return strings.TrimSpace(s)
+}
+
+// findMessage 在邮箱 Maildir 的 new/+cur/ 中按 message_id 定位邮件。
+// 返回解析结果 msg（GetMessageBody 直接使用）与文件路径 filePath（GetMessageAttachment 重新打开取附件字节）。
+// 匹配语义与原内联实现一致：精确 / 规范化（去 <> 与引号）/ fallback-id 忽略大小写。
+func (h *NodeHandler) findMessage(email, messageID string) (msg *parsedMessage, filePath string, ok bool) {
+	normalized := normalizeMessageID(messageID)
+	for _, fp := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
+		m, err := parseFullMessage(fp, email, h.mailboxMgr.MaildirBase())
+		if err != nil {
+			continue
+		}
+		if matchMessageID(m.MessageID, messageID, normalized) {
+			return m, fp, true
+		}
+	}
+	return nil, "", false
+}
+
+// matchMessageID 三级兼容匹配：精确 → 规范化（去 <> 与引号）→ fallback-id 忽略大小写。
+func matchMessageID(candidate, target, normalizedTarget string) bool {
+	if candidate == target {
+		return true
+	}
+	if normalizeMessageID(candidate) == normalizedTarget {
+		return true
+	}
+	if strings.HasPrefix(candidate, "fallback-") && strings.HasPrefix(target, "fallback-") {
+		if strings.EqualFold(candidate, target) || strings.EqualFold(normalizeMessageID(candidate), normalizedTarget) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetMessageAttachment 下载单封邮件的指定附件（按 index），返回原始字节流。
+// GET /internal/messages/:message_id/attachments/:index?mailbox=xxx@domain
+//
+// 例外于统一 JSON 信封——直接返回二进制：Content-Type 取附件真实类型，
+// Content-Disposition: attachment（RFC 5987 兼容中文文件名）。错误路径仍返回 JSON 信封。
+// index 与 GetMessages/GetMessageBody 返回的 attachment.index 对齐（先 attachment 后 inline）。
+func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
+	messageID, err := url.PathUnescape(c.Param("message_id"))
+	if err != nil {
+		messageID = c.Param("message_id")
+	}
+	email := c.Query("mailbox")
+	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
+		c.JSON(400, gin.H{"code": 1002, "message": "invalid mailbox param"})
+		return
+	}
+
+	index, err := strconv.Atoi(c.Param("index"))
+	if err != nil || index < 0 {
+		c.JSON(400, gin.H{"code": 1002, "message": "invalid attachment index"})
+		return
+	}
+
+	_, filePath, ok := h.findMessage(email, messageID)
+	if !ok {
+		c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
+		return
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 5000, "message": "failed to open message file"})
+		return
+	}
+	defer file.Close()
+
+	envelope, err := enmime.ReadEnvelope(file)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 5000, "message": "failed to parse message"})
+		return
+	}
+
+	parts := collectAttachmentParts(envelope)
+	if index >= len(parts) {
+		c.JSON(404, gin.H{"code": 2003, "message": "attachment index out of range"})
+		return
+	}
+	part := parts[index]
+
+	contentType := strings.TrimSpace(part.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	filename := attachmentFilename(part, index)
+	c.Header("Content-Disposition", contentDisposition(filename))
+	c.Data(http.StatusOK, contentType, part.Content)
+}
+
+// attachmentFilename 取附件文件名，空则回退为 attachment-<index>。
+func attachmentFilename(part *enmime.Part, index int) string {
+	if filename := strings.TrimSpace(part.FileName); filename != "" {
+		return filename
+	}
+	return fmt.Sprintf("attachment-%d", index)
+}
+
+// contentDisposition 生成 RFC 5987 兼容的 Content-Disposition 头，
+// 同时给出 ASCII 回退（filename=）与 UTF-8 百分号编码（filename*=），兼容中文文件名。
+func contentDisposition(filename string) string {
+	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, asciiFilenameFallback(filename), url.PathEscape(filename))
+}
+
+// asciiFilenameFallback 将非 ASCII 字符替换为下划线，并剔除会破坏响应头语法的引号/反斜杠，
+// 用作 Content-Disposition 中 filename= 的安全回退。
+func asciiFilenameFallback(filename string) string {
+	var b strings.Builder
+	for _, r := range filename {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('_')
+		case r < 0x20 || r > 0x7E:
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // ===== 健康检查 =====
@@ -484,6 +586,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮件查询
 	rg.GET("/mailboxes/:email/messages", h.GetMessages)
 	rg.GET("/messages/:message_id", h.GetMessageBody)
+	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
 
 	// 健康 & 维护
 	rg.GET("/health", h.Health)

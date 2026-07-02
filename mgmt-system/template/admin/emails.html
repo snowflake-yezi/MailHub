@@ -575,7 +575,10 @@
                                 <div class="name">${escapeHtml(a.filename || `attachment-${a.index}`)}</div>
                                 <div class="meta">${escapeHtml(a.content_type || '-')} · ${escapeHtml(String(a.size || 0))} bytes · ${escapeHtml(a.disposition || '-')}</div>
                             </div>
-                            <div class="meta">${a.inline ? 'inline' : 'attachment'}</div>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <span class="meta">${a.inline ? 'inline' : 'attachment'}</span>
+                                <a download="${escapeHtml(a.filename || `attachment-${a.index}`)}" href="/api/v1/admin/emails/${encodeURIComponent(data.message_id)}/attachments/${a.index}?mailbox=${encodeURIComponent(initialMailbox)}" style="padding:2px 10px;border:1px solid #d0d7de;border-radius:4px;text-decoration:none;color:#0969da;font-size:12px;">下载</a>
+                            </div>
                         </div>`).join('')}</div>` : '<div class="muted">无附件</div>'}
                 </div>
             `;

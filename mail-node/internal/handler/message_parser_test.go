@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jhillyerd/enmime"
 )
 
 func TestParseMessageFileMultipartWithAttachment(t *testing.T) {
@@ -92,6 +94,41 @@ func TestHTMLToPlainTextFallback(t *testing.T) {
 	got := htmlToPlainText("<html><body><p>Hello&nbsp;World</p><br><b>OK</b></body></html>")
 	if !strings.Contains(got, "Hello") || !strings.Contains(got, "World") || !strings.Contains(got, "OK") {
 		t.Fatalf("htmlToPlainText() = %q", got)
+	}
+}
+
+// TestCollectAttachmentPartsOrderAndContent 验证附件 part 展平顺序（先 attachment 后 inline）
+// 与字节保留；并断言 collectAttachments 元数据的 index 与该顺序完全对齐——
+// 这是下载端点按 index 取字节的正确性根基。
+func TestCollectAttachmentPartsOrderAndContent(t *testing.T) {
+	env := &enmime.Envelope{
+		Attachments: []*enmime.Part{
+			{FileName: "a.pdf", Content: []byte("PDF-AAA"), ContentType: "application/pdf"},
+		},
+		Inlines: []*enmime.Part{
+			{FileName: "logo.png", Content: []byte("PNG-BBB"), ContentType: "image/png"},
+		},
+	}
+	parts := collectAttachmentParts(env)
+	if len(parts) != 2 {
+		t.Fatalf("parts len = %d", len(parts))
+	}
+	if parts[0].FileName != "a.pdf" || string(parts[0].Content) != "PDF-AAA" {
+		t.Fatalf("parts[0] = %+v", parts[0])
+	}
+	if parts[1].FileName != "logo.png" || string(parts[1].Content) != "PNG-BBB" {
+		t.Fatalf("parts[1] = %+v", parts[1])
+	}
+
+	atts := collectAttachments(env)
+	if len(atts) != 2 {
+		t.Fatalf("attachments len = %d", len(atts))
+	}
+	if atts[0].Index != 0 || atts[0].Filename != "a.pdf" || atts[0].Inline {
+		t.Fatalf("atts[0] = %+v", atts[0])
+	}
+	if atts[1].Index != 1 || atts[1].Filename != "logo.png" || !atts[1].Inline {
+		t.Fatalf("atts[1] = %+v", atts[1])
 	}
 }
 

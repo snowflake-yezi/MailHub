@@ -146,13 +146,24 @@ func parseEnvelopeDate(envelope *enmime.Envelope) *time.Time {
 	return &date
 }
 
+// collectAttachmentParts 按固定顺序展平附件 part（先 envelope.Attachments 后 envelope.Inlines），
+// 保留 part.Content 字节，供下载端点按 index 取原始内容。
+// 顺序必须与 collectAttachments 完全一致——二者共用本函数，单一顺序来源，杜绝 index 错位。
+func collectAttachmentParts(envelope *enmime.Envelope) []*enmime.Part {
+	parts := make([]*enmime.Part, 0, len(envelope.Attachments)+len(envelope.Inlines))
+	parts = append(parts, envelope.Attachments...)
+	parts = append(parts, envelope.Inlines...)
+	return parts
+}
+
 func collectAttachments(envelope *enmime.Envelope) []parsedAttachment {
-	attachments := make([]parsedAttachment, 0, len(envelope.Attachments)+len(envelope.Inlines))
-	for _, part := range envelope.Attachments {
-		attachments = append(attachments, attachmentFromPart(len(attachments), part, false))
-	}
-	for _, part := range envelope.Inlines {
-		attachments = append(attachments, attachmentFromPart(len(attachments), part, true))
+	parts := collectAttachmentParts(envelope)
+	attachmentCount := len(envelope.Attachments)
+	attachments := make([]parsedAttachment, 0, len(parts))
+	for i, part := range parts {
+		// index < attachmentCount 的是 Attachment（inline=false），其余是 Inline（inline=true）
+		inline := i >= attachmentCount
+		attachments = append(attachments, attachmentFromPart(i, part, inline))
 	}
 	return attachments
 }

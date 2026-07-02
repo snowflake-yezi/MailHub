@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -84,5 +86,89 @@ func TestStatsEndpoint(t *testing.T) {
 	}
 	if resp.Data.TotalMessages != 0 {
 		t.Fatalf("total_messages = %d, want 0 on empty maildir", resp.Data.TotalMessages)
+	}
+}
+
+// TestGetMessageAttachment 验证附件下载端点：正常返回原始字节流（真实 Content-Type +
+// RFC 5987 Content-Disposition），越界 index 与不存在的 message_id 均返回 404。
+func TestGetMessageAttachment(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	usersFile := filepath.Join(tmp, "users.conf")
+	if err := os.WriteFile(usersFile, []byte("order-001@example.com:{PLAIN}p::::::\n"), 0600); err != nil {
+		t.Fatalf("write users.conf: %v", err)
+	}
+	vmailbox := filepath.Join(tmp, "vmailbox")
+	if err := os.WriteFile(vmailbox, nil, 0600); err != nil {
+		t.Fatalf("write vmailbox: %v", err)
+	}
+	mgr := mailbox.NewManagerWithFiles(tmp, 5000, 5000, usersFile, vmailbox)
+	h := &NodeHandler{mailboxMgr: mgr, nodeID: 1, nodeName: "test"}
+
+	emlPath := filepath.Join(tmp, "example.com", "order-001", "new", "msg.eml")
+	writeTestFile(t, emlPath, strings.ReplaceAll(`Message-ID: <msg-1@example.com>
+From: notice@example.com
+To: order-001@example.com
+Subject: with attachment
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-boundary"
+
+--mixed-boundary
+Content-Type: text/plain; charset="utf-8"
+
+hello body
+--mixed-boundary
+Content-Type: application/pdf; name="itinerary.pdf"
+Content-Disposition: attachment; filename="itinerary.pdf"
+Content-Transfer-Encoding: base64
+
+UERGREFUQQ==
+--mixed-boundary--
+`, "\n", "\r\n"))
+
+	const (
+		mailbox   = "order-001@example.com"
+		messageID = "<msg-1@example.com>"
+	)
+
+	// 1. 正常下载 index=0
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/0?mailbox="+url.QueryEscape(mailbox), nil)
+	c.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "0"}}
+	h.GetMessageAttachment(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("download status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/pdf") {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	cd := w.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment;") || !strings.Contains(cd, "filename*=UTF-8''itinerary.pdf") {
+		t.Fatalf("Content-Disposition = %q", cd)
+	}
+	if w.Body.String() != "PDFDATA" {
+		t.Fatalf("attachment bytes = %q", w.Body.String())
+	}
+
+	// 2. 越界 index → 404
+	w2 := httptest.NewRecorder()
+	c2, _ := gin.CreateTestContext(w2)
+	c2.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/9?mailbox="+url.QueryEscape(mailbox), nil)
+	c2.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "9"}}
+	h.GetMessageAttachment(c2)
+	if w2.Code != http.StatusNotFound {
+		t.Fatalf("out-of-range index status = %d, body = %s", w2.Code, w2.Body.String())
+	}
+
+	// 3. 邮件不存在 → 404
+	w3 := httptest.NewRecorder()
+	c3, _ := gin.CreateTestContext(w3)
+	c3.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/0?mailbox="+url.QueryEscape(mailbox), nil)
+	c3.Params = gin.Params{{Key: "message_id", Value: "<nope@nowhere>"}, {Key: "index", Value: "0"}}
+	h.GetMessageAttachment(c3)
+	if w3.Code != http.StatusNotFound {
+		t.Fatalf("missing message status = %d, body = %s", w3.Code, w3.Body.String())
 	}
 }

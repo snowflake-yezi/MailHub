@@ -140,6 +140,7 @@ func (h *EmailHandler) RegisterRoutes(r *gin.RouterGroup) {
 	r.GET("/orders/:order_id/emails", h.GetOrderEmails)
 	r.GET("/mailboxes/:order_id/messages", h.GetMailboxMessages)
 	r.GET("/emails/:message_id/body", h.GetEmailBody)
+	r.GET("/emails/:message_id/attachments/:index", h.GetEmailAttachment)
 }
 
 // AdminGetEmails 管理后台邮件查询（含域名级服务器降级查找）。
@@ -248,6 +249,67 @@ func (h *EmailHandler) proxyEmailBodyDirect(c *gin.Context, srv *model.MailServe
 	c.JSON(200, rawResp)
 }
 
+// GetEmailAttachment 下载单封邮件的指定附件（对外 API，大模型系统调用）。
+// GET /api/v1/emails/:message_id/attachments/:index?mailbox=xxx
+// 二进制流透传，例外于统一 JSON 信封。
+func (h *EmailHandler) GetEmailAttachment(c *gin.Context) {
+	h.proxyEmailAttachment(c, c.Param("message_id"), c.Query("mailbox"))
+}
+
+func (h *EmailHandler) proxyEmailAttachment(c *gin.Context, messageID, emailAddr string) {
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err != nil {
+		notFound(c, "mailbox not found: "+emailAddr)
+		return
+	}
+	srv, err := h.store.GetServer(mb.ServerID)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "mail server not found")
+		return
+	}
+	h.proxyEmailAttachmentDirect(c, srv, messageID, emailAddr)
+}
+
+// proxyEmailAttachmentDirect 直接向指定服务器代理附件下载（透传字节流）。
+func (h *EmailHandler) proxyEmailAttachmentDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
+	index := c.Param("index")
+	query := url.Values{}
+	query.Set("mailbox", emailAddr)
+	path := "/internal/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(index) + "?" + query.Encode()
+	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
+}
+
+// AdminGetEmailAttachment 管理后台附件下载（含域名级服务器降级查找，与 AdminGetEmailBody 同模式）。
+// GET /api/v1/admin/emails/:message_id/attachments/:index?mailbox=xxx
+func (h *EmailHandler) AdminGetEmailAttachment(c *gin.Context) {
+	messageID := c.Param("message_id")
+	emailAddr := c.Query("mailbox")
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err != nil {
+		_, domainName, ok := splitEmail(emailAddr)
+		if !ok {
+			notFound(c, "invalid email: "+emailAddr)
+			return
+		}
+		srv, srvErr := h.store.FindServerByEmailDomain(domainName)
+		if srvErr != nil {
+			notFound(c, "mailbox not found and no server serves domain: "+emailAddr)
+			return
+		}
+		h.proxyEmailAttachmentDirect(c, srv, messageID, emailAddr)
+		return
+	}
+	h.proxyEmailAttachment(c, messageID, mb.EmailAddress)
+}
+
 // splitEmail 将邮箱地址拆分为 local_part 和 domain。
 func splitEmail(email string) (localPart, domain string, ok bool) {
 	for i := len(email) - 1; i >= 0; i-- {
@@ -261,4 +323,5 @@ func splitEmail(email string) (localPart, domain string, ok bool) {
 func (h *EmailHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/emails", h.AdminGetEmails)
 	r.GET("/emails/:message_id/body", h.AdminGetEmailBody)
+	r.GET("/emails/:message_id/attachments/:index", h.AdminGetEmailAttachment)
 }
