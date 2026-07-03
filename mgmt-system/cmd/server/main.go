@@ -72,6 +72,7 @@ func main() {
 	adminH := handler.NewAdminHandler(db)
 	healthH := handler.NewHealthHandler(db)
 	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)
+	integratedH := handler.NewIntegratedMailboxHandler(db, cfg.Auth.SharedSecret)
 
 	// Session manager
 	sessionDuration := time.Duration(db.GetConfigInt("session.duration_hours", 24)) * time.Hour
@@ -117,6 +118,7 @@ func main() {
 	filterH.RegisterAdminRoutes(apiAdmin)
 	mailboxH.RegisterAdminRoutes(apiAdmin)
 	emailH.RegisterAdminRoutes(apiAdmin)
+	integratedH.RegisterAdminRoutes(apiAdmin)
 	// Dashboard stats API
 	apiAdmin.GET("/dashboard", adminH.DashboardAPI)
 	// Domains list (for dropdown filters)

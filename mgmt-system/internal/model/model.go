@@ -156,6 +156,17 @@ type SystemConfig struct {
 	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+// IntegratedMailbox 集成邮箱（转发目标池）——所有非垃圾邮件汇总转发的目标账号。
+// 全局唯一 is_active=true 的记录为当前生效转发目标，与 system_configs.forward.target_address 同步。
+type IntegratedMailbox struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	EmailAddress string    `gorm:"size:191;uniqueIndex;not null" json:"email_address"`
+	DisplayName  string    `gorm:"size:191" json:"display_name"`
+	IsActive     bool      `gorm:"not null;default:false;index" json:"is_active"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 // TableName 指定表名
 func (SystemConfig) TableName() string         { return "system_configs" }
 func (OrderMailbox) TableName() string        { return "order_mailboxes" }
@@ -166,3 +177,4 @@ func (FilterRule) TableName() string          { return "filter_rules" }
 func (ApiToken) TableName() string            { return "api_tokens" }
 func (Domain) TableName() string              { return "domains" }
 func (ServerDomain) TableName() string        { return "server_domains" }
+func (IntegratedMailbox) TableName() string   { return "integrated_mailboxes" }

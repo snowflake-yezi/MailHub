@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { mailboxAPI, serverAPI, domainAPI } from '../api'
+import { mailboxAPI, serverAPI, domainAPI, integratedMailboxAPI } from '../api'
 
 const STATUS_TAG = {
   active: 'tag-success',
@@ -22,7 +22,7 @@ function Toast({ message, type, onClose }) {
 }
 
 export default function MailboxesPage() {
-  const [view, setView] = useState('normal') // 'normal' | 'trash' | 'create'
+  const [view, setView] = useState('normal') // 'normal' | 'trash' | 'create' | 'integrated'
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -36,6 +36,7 @@ export default function MailboxesPage() {
   const [serverId, setServerId] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [page, setPage] = useState(1)
+  const [size, setSize] = useState(20)
 
   // Create form
   const [createPrefix, setCreatePrefix] = useState('')
@@ -50,10 +51,15 @@ export default function MailboxesPage() {
   const [pwdModal, setPwdModal] = useState(null)
   const [pwdSaving, setPwdSaving] = useState(false)
 
+  // Integrated mailboxes (forward target pool)
+  const [integrated, setIntegrated] = useState([])
+  const [integratedModal, setIntegratedModal] = useState(null) // { mode: 'add'|'edit', data }
+  const [integratedSaving, setIntegratedSaving] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const params = { page, search, domain_id: domainId, server_id: serverId }
+      const params = { page, size, search, domain_id: domainId, server_id: serverId }
       if (view === 'trash') {
         params.view = 'trash'
       } else if (statusFilter) {
@@ -67,7 +73,7 @@ export default function MailboxesPage() {
     } finally {
       setLoading(false)
     }
-  }, [view, search, domainId, serverId, statusFilter, page])
+  }, [view, search, domainId, serverId, statusFilter, page, size])
 
   useEffect(() => {
     load()
@@ -75,6 +81,16 @@ export default function MailboxesPage() {
     serverAPI.list().then(d => setServers(Array.isArray(d) ? d : [])).catch(() => {})
     domainAPI.list().then(d => setDomains(Array.isArray(d) ? d : [])).catch(() => {})
   }, [load])
+
+  const loadIntegrated = useCallback(() => {
+    integratedMailboxAPI.list()
+      .then(d => setIntegrated(Array.isArray(d) ? d : []))
+      .catch(e => setToast({ type: 'error', message: '加载集成邮箱失败: ' + e.message }))
+  }, [])
+
+  useEffect(() => {
+    if (view === 'integrated') loadIntegrated()
+  }, [view, loadIntegrated])
 
   const handleSearch = (e) => {
     e.preventDefault()
@@ -198,6 +214,7 @@ export default function MailboxesPage() {
         <button className={`btn btn-sm ${view === 'normal' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('normal'); setPage(1) }}>账号集合</button>
         <button className={`btn btn-sm ${view === 'trash' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('trash'); setPage(1) }}>回收站</button>
         <button className={`btn btn-sm ${view === 'create' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('create'); setBatchResult(null) }}>创建邮箱</button>
+        <button className={`btn btn-sm ${view === 'integrated' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('integrated'); loadIntegrated() }}>集成邮箱</button>
       </div>
 
       {/* ── List View ── */}
@@ -303,6 +320,34 @@ export default function MailboxesPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {total > 0 && (() => {
+            const totalPages = Math.max(1, Math.ceil(total / size))
+            const safePage = Math.min(page, totalPages)
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: '1px solid #eee', flexWrap: 'wrap' }}>
+                <button className="btn btn-sm btn-outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>上一页</button>
+                <span style={{ fontSize: 13, color: '#666' }}>第 <strong>{safePage}</strong> / {totalPages} 页（共 {total} 条）</span>
+                <button className="btn btn-sm btn-outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>下一页</button>
+                <span style={{ flex: 1 }} />
+                <label style={{ fontSize: 13, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  每页
+                  <select value={size} onChange={e => { setSize(parseInt(e.target.value)); setPage(1) }}>
+                    <option value={20}>20</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                  </select>
+                  条
+                </label>
+                <label style={{ fontSize: 13, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  跳至
+                  <input type="number" min={1} max={totalPages} style={{ width: 60 }} placeholder={safePage} onKeyDown={e => { if (e.key === 'Enter') { const p = parseInt(e.target.value); if (p >= 1 && p <= totalPages) setPage(p); e.target.value = '' } }} />
+                  页
+                </label>
+              </div>
+            )
+          })()}
         </div>
       )}
 
@@ -377,6 +422,87 @@ export default function MailboxesPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Integrated Mailboxes View ── */}
+      {view === 'integrated' && (
+        <div className="section">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #eee' }}>
+            <div>
+              <strong>集成邮箱（转发目标池）</strong>
+              <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>所有非垃圾邮件汇总转发到这里。标「当前生效」的是正在使用的转发目标，切换后 mail-node 自动重载生效。</div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setIntegratedModal({ mode: 'add', data: { email_address: '', display_name: '' } })}>➕ 新增</button>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr><th>ID</th><th>邮箱地址</th><th>备注</th><th>当前生效</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {integrated.map(m => (
+                  <tr key={m.id}>
+                    <td><code style={{ fontSize: 12 }}>#{m.id}</code></td>
+                    <td><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{m.email_address}</span></td>
+                    <td>{m.display_name || '-'}</td>
+                    <td>{m.is_active ? <span className="tag tag-success">当前生效</span> : <span style={{ color: '#888' }}>—</span>}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {!m.is_active && (
+                        <button className="btn btn-sm btn-success" onClick={async () => {
+                          try { await integratedMailboxAPI.activate(m.id); setToast({ type: 'success', message: '✅ 已设为当前转发目标' }); loadIntegrated() }
+                          catch (e) { setToast({ type: 'error', message: '❌ ' + e.message }) }
+                        }}>设为当前目标</button>
+                      )}
+                      <button className="btn btn-sm btn-primary" style={{ marginLeft: 4 }} onClick={() => setIntegratedModal({ mode: 'edit', data: { ...m } })}>编辑</button>
+                      <button className="btn btn-sm btn-danger" style={{ marginLeft: 4 }} disabled={m.is_active} title={m.is_active ? '当前生效项不可删除，请先切换' : ''} onClick={async () => {
+                        if (!confirm(`确认删除集成邮箱 ${m.email_address}？`)) return
+                        try { await integratedMailboxAPI.remove(m.id); setToast({ type: 'success', message: '已删除' }); loadIntegrated() }
+                        catch (e) { setToast({ type: 'error', message: '❌ ' + e.message }) }
+                      }}>删除</button>
+                    </td>
+                  </tr>
+                ))}
+                {integrated.length === 0 && (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: '#888', padding: 20 }}>暂无集成邮箱</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Integrated mailbox modal */}
+      {integratedModal && (
+        <div className="modal-overlay" onClick={() => setIntegratedModal(null)}>
+          <div className="modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
+            <h3>{integratedModal.mode === 'add' ? '新增集成邮箱' : `编辑集成邮箱 #${integratedModal.data.id}`}</h3>
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              setIntegratedSaving(true)
+              try {
+                if (integratedModal.mode === 'add') await integratedMailboxAPI.create(integratedModal.data)
+                else await integratedMailboxAPI.update(integratedModal.data.id, integratedModal.data)
+                setIntegratedModal(null)
+                setToast({ type: 'success', message: '✅ 保存成功' })
+                loadIntegrated()
+              } catch (err) { setToast({ type: 'error', message: '❌ ' + err.message }) }
+              finally { setIntegratedSaving(false) }
+            }}>
+              <div className="form-group">
+                <label>邮箱地址 *</label>
+                <input value={integratedModal.data.email_address} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, email_address: e.target.value } })} placeholder="union@asadad.bond" required />
+              </div>
+              <div className="form-group">
+                <label>备注</label>
+                <input value={integratedModal.data.display_name || ''} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, display_name: e.target.value } })} placeholder="例如: 主汇总 / 备用" />
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline" type="button" onClick={() => setIntegratedModal(null)}>取消</button>
+                <button className="btn btn-success" type="submit" disabled={integratedSaving}>{integratedSaving && <span className="spinner" />} 保存</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

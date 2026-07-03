@@ -15,7 +15,7 @@ func TestRestoreFromTrashRestoresNewestDomainScopedMailbox(t *testing.T) {
 	base := t.TempDir()
 	usersFile, vmailboxFile := setupConfigFiles(t)
 	usrMgr := mailbox.NewManagerWithFiles(base, os.Getuid(), os.Getgid(), usersFile, vmailboxFile)
-	lifecycle := NewLifecycle(usrMgr, &Service{})
+	lifecycle := NewLifecycle(usrMgr, &Service{}, 0, 0, 0, 0)
 
 	trashBase := filepath.Join(base, ".trash")
 	mustMkdir(t, filepath.Join(trashBase, trashDirName("example.com", "alice", 100), "new"))
@@ -47,7 +47,7 @@ func TestRestoreFromTrashNotInTrash(t *testing.T) {
 	base := t.TempDir()
 	usersFile, vmailboxFile := setupConfigFiles(t)
 	usrMgr := mailbox.NewManagerWithFiles(base, os.Getuid(), os.Getgid(), usersFile, vmailboxFile)
-	lifecycle := NewLifecycle(usrMgr, &Service{})
+	lifecycle := NewLifecycle(usrMgr, &Service{}, 0, 0, 0, 0)
 
 	_, err := lifecycle.RestoreFromTrash("alice@example.com", "secret")
 	if !errors.Is(err, ErrNotInTrash) {
@@ -59,7 +59,7 @@ func TestRestoreFromTrashRollsBackWhenConfigFails(t *testing.T) {
 	base := t.TempDir()
 	usersFile, vmailboxFile := setupConfigFiles(t)
 	usrMgr := mailbox.NewManagerWithFiles(base, os.Getuid(), os.Getgid(), usersFile, vmailboxFile)
-	lifecycle := NewLifecycle(usrMgr, &Service{})
+	lifecycle := NewLifecycle(usrMgr, &Service{}, 0, 0, 0, 0)
 
 	trashName := trashDirName("example.com", "alice", time.Now().Unix())
 	trashPath := filepath.Join(base, ".trash", trashName)

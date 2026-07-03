@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jhillyerd/enmime"
+	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/forward"
@@ -31,9 +32,10 @@ type NodeHandler struct {
 	nodeName     string
 	managerURL   string
 	sharedSecret string
+	remoteCfg    *config.RemoteConfig
 }
 
-func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName, managerURL, sharedSecret string) *NodeHandler {
+func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName, managerURL, sharedSecret string, remoteCfg *config.RemoteConfig) *NodeHandler {
 	return &NodeHandler{
 		mailboxMgr:   mgr,
 		domainMgr:    domainMgr,
@@ -43,6 +45,7 @@ func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter
 		nodeName:     nodeName,
 		managerURL:   managerURL,
 		sharedSecret: sharedSecret,
+		remoteCfg:    remoteCfg,
 	}
 }
 
@@ -592,6 +595,21 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	rg.GET("/health", h.Health)
 	rg.GET("/stats", h.Stats)
 	rg.POST("/filters/reload", h.ReloadFilters)
+	rg.POST("/configs/reload", h.ReloadConfigs)
+}
+
+// ReloadConfigs 热重载远程配置（由 mgmt-system 配置变更后调用）
+// POST /internal/configs/reload
+func (h *NodeHandler) ReloadConfigs(c *gin.Context) {
+	if h.remoteCfg == nil {
+		c.JSON(400, gin.H{"code": 5000, "message": "remote config not available"})
+		return
+	}
+	if err := h.remoteCfg.Reload(); err != nil {
+		c.JSON(500, gin.H{"code": 5000, "message": "reload configs failed: " + err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"code": 0, "message": "configs reloaded"})
 }
 
 // SMTPFilter is DEPRECATED.

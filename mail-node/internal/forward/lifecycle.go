@@ -18,20 +18,38 @@ import (
 
 // Lifecycle 邮箱生命周期管理：安全软删除 + 垃圾回收 + 重启对账
 type Lifecycle struct {
-	mgr            *mailbox.Manager
-	fwdSvc         *Service // for ActiveJobs() check
-	trashBase      string   // <maildirBase>/.trash
-	trashRetention time.Duration
+	mgr              *mailbox.Manager
+	fwdSvc           *Service // for ActiveJobs() check
+	trashBase        string   // <maildirBase>/.trash
+	trashRetention   time.Duration
+	drainTimeout     time.Duration
+	drainPollInterval time.Duration
+	gcInterval       time.Duration
 }
 
-// NewLifecycle 创建生命周期管理器
-func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service) *Lifecycle {
+// NewLifecycle 创建生命周期管理器。timeout/intervals 为 0 时会使用默认值。
+func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTimeout, drainPollInterval, gcInterval time.Duration) *Lifecycle {
+	if trashRetention <= 0 {
+		trashRetention = 24 * time.Hour
+	}
+	if drainTimeout <= 0 {
+		drainTimeout = 5 * time.Minute
+	}
+	if drainPollInterval <= 0 {
+		drainPollInterval = 500 * time.Millisecond
+	}
+	if gcInterval <= 0 {
+		gcInterval = 1 * time.Hour
+	}
 	trashBase := filepath.Join(mgr.MaildirBase(), ".trash")
 	return &Lifecycle{
-		mgr:            mgr,
-		fwdSvc:         fwdSvc,
-		trashBase:      trashBase,
-		trashRetention: 24 * time.Hour,
+		mgr:              mgr,
+		fwdSvc:           fwdSvc,
+		trashBase:        trashBase,
+		trashRetention:   trashRetention,
+		drainTimeout:     drainTimeout,
+		drainPollInterval: drainPollInterval,
+		gcInterval:       gcInterval,
 	}
 }
 
@@ -68,7 +86,7 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 	}
 
 	// ② Wait for active forwarding jobs to drain.
-	l.waitForActiveJobs(5 * time.Minute)
+	l.waitForActiveJobs(l.drainTimeout)
 
 	// ③ Atomically move to .trash/
 	if err := os.MkdirAll(l.trashBase, 0700); err != nil {
@@ -215,13 +233,12 @@ func trashDirNameMatches(name, domain, localPart string) bool {
 // waitForActiveJobs blocks until fwdSvc.ActiveJobs() reaches 0 or timeout expires.
 func (l *Lifecycle) waitForActiveJobs(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
-	pollInterval := 500 * time.Millisecond
 
 	for time.Now().Before(deadline) {
 		if l.fwdSvc.ActiveJobs() == 0 {
 			return // drained
 		}
-		time.Sleep(pollInterval)
+		time.Sleep(l.drainPollInterval)
 	}
 	log.Printf("[lifecycle] wait for active jobs timed out after %v (forcing continue)", timeout)
 }
@@ -230,9 +247,9 @@ func (l *Lifecycle) waitForActiveJobs(timeout time.Duration) {
 // directories in .trash/ older than the retention period (24h).
 func (l *Lifecycle) StartGC(ctx context.Context) {
 	go func() {
-		// Run immediately on start, then every hour
+		// Run immediately on start, then at configured interval
 		l.purgeExpiredTrash()
-		ticker := time.NewTicker(1 * time.Hour)
+		ticker := time.NewTicker(l.gcInterval)
 		defer ticker.Stop()
 
 		for {

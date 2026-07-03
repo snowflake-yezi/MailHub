@@ -47,10 +47,18 @@ func main() {
 		}
 	}
 
-	// 初始化过滤引擎
+	// 从 mgmt-system 拉取动态配置（覆盖 YAML 中的硬编码默认值）
+	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret)
+	if err := remoteCfg.PullAll(); err != nil {
+		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
+	} else {
+		log.Printf("[config] remote config pulled: %d keys loaded", len(remoteCfg.Configs()))
+	}
+
+	// 初始化过滤引擎（default action 优先用远程配置，fallback YAML）
 	engine := filter.New(
-		filter.Action(cfg.Filter.DefaultAction),
-		cfg.Filter.FlagSubjectPrefix,
+		filter.Action(remoteCfg.GetString("filter.default_action", cfg.Filter.DefaultAction)),
+		remoteCfg.GetString("filter.flag_subject_prefix", cfg.Filter.FlagSubjectPrefix),
 	)
 
 	// 启动定时同步规则
@@ -73,20 +81,30 @@ func main() {
 		EnableDKIMProvision: cfg.DKIM.KeyDir != "" && cfg.DKIM.SigningTable != "" && cfg.DKIM.KeyTable != "",
 	})
 
-	// 初始化转发服务
+	// 初始化转发服务（ScanInterval / MaxEmailSize / SMTP 参数优先用远程配置）
 	forwardCfg := forward.ForwardConfig{
-		SMTPHost:      cfg.Forward.SMTPHost,
-		SMTPUser:      cfg.Forward.SMTPUser,
-		SMTPPass:      cfg.Forward.SMTPPass,
-		TargetAddress: cfg.Forward.TargetAddress,
-		SubjectPrefix: cfg.Forward.SubjectPrefix,
-		ScanInterval:  cfg.Forward.ScanInterval,
-		MaxEmailSize:  cfg.Forward.MaxEmailSize,
+		SMTPHost:          cfg.Forward.SMTPHost,
+		SMTPUser:          cfg.Forward.SMTPUser,
+		SMTPPass:          cfg.Forward.SMTPPass,
+		TargetAddress:     remoteCfg.GetString("forward.target_address", cfg.Forward.TargetAddress),
+		SubjectPrefix:     cfg.Forward.SubjectPrefix,
+		ScanInterval:      remoteCfg.GetInt("forward.scan_interval", cfg.Forward.ScanInterval),
+		MaxEmailSize:      remoteCfg.GetInt64("forward.max_email_size", cfg.Forward.MaxEmailSize),
+		BodyPreviewSize:   int64(remoteCfg.GetInt("forward.body_preview_size", 65536)),
+		SMTPDialTimeout:   remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", 15*time.Second),
+		TLSInsecureSkip:   remoteCfg.GetBool("forward.tls_insecure_skip", true),
+		TLSMinVersion:     remoteCfg.GetInt("forward.tls_min_version", 12),
 	}
-	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr)
+	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
 
 	// 初始化生命周期管理器（安全软删除 + 垃圾回收 + 重启对账）
-	lifecycle := forward.NewLifecycle(mailboxMgr, fwdSvc)
+	// 超时/间隔参数优先用远程配置，0 值触发默认值回退
+	lifecycle := forward.NewLifecycle(mailboxMgr, fwdSvc,
+		remoteCfg.GetDurationMinutes("lifecycle.trash_retention_hours", 24*time.Hour),
+		remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute),
+		time.Duration(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500))*time.Millisecond,
+		remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute),
+	)
 
 	// 启动后台转发扫描
 	ctx, cancel := context.WithCancel(context.Background())
@@ -111,6 +129,7 @@ func main() {
 		cfg.Node.Name,
 		cfg.Management.APIURL,
 		cfg.SharedSecret,
+		remoteCfg,
 	)
 
 	// 设置 Gin
@@ -130,7 +149,7 @@ func main() {
 	r.POST("/smtp/filter", nodeH.SMTPFilter)
 
 	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
-	go startHeartbeat(cfg, mailboxMgr)
+	go startHeartbeat(cfg, mailboxMgr, remoteCfg)
 
 	// 优雅退出
 	go func() {
@@ -206,9 +225,15 @@ func discoverServerID(cfg *config.Config) (uint64, error) {
 	return result.Data.ServerID, nil
 }
 
-// clampHeartbeat 把心跳间隔约束到合法区间 [5,600] 秒；区间外（含 0/负）返回 fallback（SP-7）。
-func clampHeartbeat(v, fallback int) int {
-	if v < 5 || v > 600 {
+// clampHeartbeat 把心跳间隔约束到合法区间；区间外（含 0/负）返回 fallback（SP-7）。
+// 区间边界从远程配置读取，默认 [5, 600] 秒。remoteCfg 为 nil 时使用默认值。
+func clampHeartbeat(v, fallback int, remoteCfg *config.RemoteConfig) int {
+	minInterval, maxInterval := 5, 600
+	if remoteCfg != nil {
+		minInterval = remoteCfg.GetInt("heartbeat.interval_min", 5)
+		maxInterval = remoteCfg.GetInt("heartbeat.interval_max", 600)
+	}
+	if v < minInterval || v > maxInterval {
 		return fallback
 	}
 	return v
@@ -220,8 +245,9 @@ func clampHeartbeat(v, fallback int) int {
 // 心跳间隔由 mgmt 在响应里下发（SP-6'），本循环每轮据此动态调整；本地 config 仅作
 // 冷启动首次与 mgmt 不可达时的兜底。注意：mgmt 的 status 完全由其主动探测决定，
 // 本心跳不参与 status 升降，避免与探测结论打架（见 docs/design/t7-healthcheck-design.md §4.1 / §6）。
-func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
-	interval := clampHeartbeat(cfg.Management.HeartbeatInterval, 60)
+func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *config.RemoteConfig) {
+	fallback := remoteCfg.GetInt("heartbeat.interval_fallback", 60)
+	interval := clampHeartbeat(cfg.Management.HeartbeatInterval, fallback, remoteCfg)
 	client := &http.Client{Timeout: 10 * time.Second}
 	url := strings.TrimRight(cfg.Management.APIURL, "/") + "/api/v1/internal/servers/heartbeat"
 
@@ -279,7 +305,7 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager) {
 		timer := time.NewTimer(time.Duration(interval) * time.Second)
 		<-timer.C
 		if got := beat(); got != 0 {
-			interval = clampHeartbeat(got, interval)
+			interval = clampHeartbeat(got, interval, remoteCfg)
 		}
 	}
 }

@@ -206,6 +206,7 @@ func defaultConfigs() []seedConfig {
 		{Key: "forward.smtp_dial_timeout", Value: "15", Type: "int", Category: "forward", Label: "SMTP 拨号超时（秒）", Desc: "连接 SMTP 服务器的超时时间", Default: "15", Reloadable: false},
 		{Key: "forward.tls_insecure_skip", Value: "true", Type: "bool", Category: "forward", Label: "跳过 TLS 证书验证", Desc: "true=跳过 SMTP TLS 证书验证（仅内网环境）", Default: "true", Reloadable: false},
 		{Key: "forward.tls_min_version", Value: "12", Type: "int", Category: "forward", Label: "TLS 最低版本", Desc: "SMTP STARTTLS 最低 TLS 版本（12=1.2, 13=1.3）", Default: "12", Reloadable: false},
+		{Key: "forward.target_address", Value: "union@asadad.bond", Type: "string", Category: "forward", Label: "转发目标邮箱", Desc: "非垃圾邮件汇总转发的集成邮箱地址（当前生效项，由集成邮箱管理页联动写入）", Default: "union@asadad.bond", Reloadable: true},
 
 		// ── filter（过滤引擎）── mail-node ──
 		{Key: "filter.default_action", Value: "pass", Type: "string", Category: "filter", Label: "默认过滤动作", Desc: "pass=放行 / flag=标记 / block=丢弃", Default: "pass", Reloadable: true},

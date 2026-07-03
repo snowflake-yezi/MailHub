@@ -67,8 +67,8 @@ export default function ServersPage() {
 
   // ── Edit ──
   const openEdit = (s) => setEditing({
-    id: s.id, name: s.name, api_host: s.api_host, smtp_host: s.smtp_host,
-    imap_host: s.imap_host, capacity: s.capacity, heartbeat_interval: s.heartbeat_interval || 30,
+    id: s.id, name: s.name, api_host: s.api_host,
+    capacity: s.capacity, heartbeat_interval: s.heartbeat_interval || 30,
     status: s.status,
   })
 
@@ -226,16 +226,6 @@ export default function ServersPage() {
                 <div className="form-group">
                   <label>API 地址</label>
                   <input value={editing.api_host} onChange={e => setEditing({ ...editing, api_host: e.target.value })} />
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div className="form-group">
-                  <label>SMTP 地址</label>
-                  <input value={editing.smtp_host || ''} onChange={e => setEditing({ ...editing, smtp_host: e.target.value })} placeholder="留空则从 API 地址推导" />
-                </div>
-                <div className="form-group">
-                  <label>IMAP 地址</label>
-                  <input value={editing.imap_host || ''} onChange={e => setEditing({ ...editing, imap_host: e.target.value })} placeholder="留空则从 API 地址推导" />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>

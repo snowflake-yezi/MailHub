@@ -59,6 +59,7 @@ func New(dsn string, mode string) (*Store, error) {
 		&model.ApiToken{},
 		&model.ServerDomain{},
 		&model.SystemConfig{},
+		&model.IntegratedMailbox{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
@@ -68,6 +69,9 @@ func New(dsn string, mode string) (*Store, error) {
 	// 种子数据：动态配置默认值
 	if err := s.SeedDefaultConfigs(); err != nil {
 		return nil, fmt.Errorf("seed default configs: %w", err)
+	}
+	if err := s.SeedDefaultIntegratedMailboxes(); err != nil {
+		return nil, fmt.Errorf("seed integrated mailboxes: %w", err)
 	}
 	if err := s.migrateLifecycleSchema(); err != nil {
 		return nil, fmt.Errorf("migrate lifecycle schema: %w", err)

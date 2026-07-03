@@ -15,7 +15,7 @@ func TestClampHeartbeat(t *testing.T) {
 		{601, 60, 60},  // 上界以上 → fallback
 	}
 	for _, tc := range tests {
-		if got := clampHeartbeat(tc.v, tc.fallback); got != tc.want {
+		if got := clampHeartbeat(tc.v, tc.fallback, nil); got != tc.want {
 			t.Fatalf("clampHeartbeat(%d, %d) = %d, want %d", tc.v, tc.fallback, got, tc.want)
 		}
 	}

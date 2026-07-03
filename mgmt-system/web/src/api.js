@@ -49,6 +49,15 @@ export const serverAPI = {
   addDomain(id, data) { return request(`/servers/${id}/domains`, { method: 'POST', body: JSON.stringify(data) }); },
 };
 
+// ─── Integrated Mailboxes (转发目标池) ───────────────────
+export const integratedMailboxAPI = {
+  list() { return get('/integrated-mailboxes'); },
+  create(data) { return request('/integrated-mailboxes', { method: 'POST', body: JSON.stringify(data) }); },
+  update(id, data) { return request(`/integrated-mailboxes/${id}`, { method: 'PUT', body: JSON.stringify(data) }); },
+  remove(id) { return request(`/integrated-mailboxes/${id}`, { method: 'DELETE' }); },
+  activate(id) { return request(`/integrated-mailboxes/${id}/activate`, { method: 'POST' }); },
+};
+
 // ─── Filters ─────────────────────────────────────────────
 export const filterAPI = {
   list() { return get('/filters'); },

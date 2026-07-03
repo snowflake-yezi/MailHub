@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
@@ -33,31 +34,75 @@ type ForwardConfig struct {
 	SubjectPrefix string
 	ScanInterval  int   // seconds, default 5
 	MaxEmailSize  int64 // bytes, default 10MB
+
+	// ── 以下为远程动态配置项（0 表示使用默认值） ──
+	BodyPreviewSize     int64         // 正文预览大小（bytes），默认 64KB
+	SMTPDialTimeout     time.Duration // SMTP 拨号超时，默认 15s
+	TLSInsecureSkip     bool          // 跳过 TLS 证书验证，默认 true
+	TLSMinVersion       int           // TLS 最低版本（12=1.2），默认 12
+	TrashRetention      time.Duration // 回收站保留，默认 24h
+	GCInterval          time.Duration // GC 间隔，默认 1h
+	DrainTimeout        time.Duration // 删除前排空超时，默认 5min
+	DrainPollInterval   time.Duration // 排空轮询间隔，默认 500ms
 }
 
 // Service 邮件转发服务
 type Service struct {
-	cfg    ForwardConfig
-	engine *filter.Engine
-	mgr    *mailbox.Manager
+	cfg       ForwardConfig
+	engine    *filter.Engine
+	mgr       *mailbox.Manager
+	remoteCfg *config.RemoteConfig // 动态配置，用于热加载转发目标 target_address
 
-	mu       sync.Mutex
+	mu         sync.Mutex
 	activeJobs int // count of files currently being processed
 }
 
-// New 创建转发服务
-func New(cfg ForwardConfig, engine *filter.Engine, mgr *mailbox.Manager) *Service {
+// New 创建转发服务。remoteCfg 用于热加载 forward.target_address（可为 nil）。
+func New(cfg ForwardConfig, engine *filter.Engine, mgr *mailbox.Manager, remoteCfg *config.RemoteConfig) *Service {
 	if cfg.ScanInterval <= 0 {
 		cfg.ScanInterval = 5
 	}
 	if cfg.MaxEmailSize <= 0 {
 		cfg.MaxEmailSize = maxEmailSizeDefault
 	}
-	return &Service{
-		cfg:    cfg,
-		engine: engine,
-		mgr:    mgr,
+	if cfg.BodyPreviewSize <= 0 {
+		cfg.BodyPreviewSize = bodyPreviewDefault
 	}
+	if cfg.SMTPDialTimeout <= 0 {
+		cfg.SMTPDialTimeout = 15 * time.Second
+	}
+	if cfg.TLSMinVersion <= 0 {
+		cfg.TLSMinVersion = 12 // TLS 1.2
+	}
+	if cfg.TrashRetention <= 0 {
+		cfg.TrashRetention = 24 * time.Hour
+	}
+	if cfg.GCInterval <= 0 {
+		cfg.GCInterval = 1 * time.Hour
+	}
+	if cfg.DrainTimeout <= 0 {
+		cfg.DrainTimeout = 5 * time.Minute
+	}
+	if cfg.DrainPollInterval <= 0 {
+		cfg.DrainPollInterval = 500 * time.Millisecond
+	}
+	return &Service{
+		cfg:       cfg,
+		engine:    engine,
+		mgr:       mgr,
+		remoteCfg: remoteCfg,
+	}
+}
+
+// currentTarget 解析当前生效的转发目标地址：优先读动态配置 forward.target_address，
+// 回退到启动配置。每次发送前调用，支持后台热加载（mgmt 改目标后 reload 即时生效）。
+func (s *Service) currentTarget() string {
+	if s.remoteCfg != nil {
+		if t := s.remoteCfg.GetString("forward.target_address", ""); t != "" {
+			return t
+		}
+	}
+	return s.cfg.TargetAddress
 }
 
 // ActiveJobs returns the number of currently processing files.
@@ -73,7 +118,7 @@ func (s *Service) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	log.Printf("[forward] service started (scan_interval=%ds, max_size=%dMB, target=%s)",
-		s.cfg.ScanInterval, s.cfg.MaxEmailSize/(1024*1024), s.cfg.TargetAddress)
+		s.cfg.ScanInterval, s.cfg.MaxEmailSize/(1024*1024), s.currentTarget())
 
 	// Immediate first scan
 	s.scanAndLog()
@@ -165,7 +210,7 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	start := time.Now()
 
 	// 1. Read headers + body preview for filtering
-	headers, bodyPreview, err := readForFiltering(filePath, s.cfg.MaxEmailSize)
+	headers, bodyPreview, err := readForFiltering(filePath, s.cfg.MaxEmailSize, s.cfg.BodyPreviewSize)
 	if err != nil {
 		// Oversized or unparseable → move to cur/ to avoid re-scan
 		moveToCur(filePath)
@@ -200,7 +245,8 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	// 5. Forward (pass or flag) via SMTP
 	newSubject := buildSubject(s.cfg.SubjectPrefix, sourceAddr, result.Action, headers["subject"])
 
-	if err := streamToSMTP(s.cfg, filePath, newSubject, sourceAddr); err != nil {
+	target := s.currentTarget()
+	if err := streamToSMTP(s.cfg, filePath, newSubject, sourceAddr, target); err != nil {
 		// SMTP failed → leave in new/ for next-scan retry (natural backoff)
 		return fmt.Errorf("smtp: %w", err)
 	}
@@ -209,8 +255,8 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	moveToCur(filePath)
 
 	elapsed := time.Since(start).Milliseconds()
-	log.Printf("[forward] forwarded: %s → union (action=%s, rule=%d, latency=%dms)",
-		sourceAddr, result.Action, result.RuleID, elapsed)
+	log.Printf("[forward] forwarded: %s → %s (action=%s, rule=%d, latency=%dms)",
+		sourceAddr, target, result.Action, result.RuleID, elapsed)
 
 	return nil
 }
