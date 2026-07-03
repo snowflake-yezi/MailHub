@@ -13,10 +13,11 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
+// Dynamic config keys (was hardcoded constants).
 const (
-	defaultInterval    = 5 * time.Minute
-	deleteTimeout      = 15 * time.Minute // Watchdog: 超过此时间未完成的 deleting 任务重新下发
-	deleteProbeTimeout = 10 * time.Second
+	cfgLifecycleInterval       = "lifecycle.schedule_interval_minutes"
+	cfgLifecycleWatchdogMin    = "lifecycle.delete_watchdog_minutes"
+	cfgLifecycleDeleteProbeSec = "healthcheck.probe_timeout_seconds" // reuse healthcheck probe timeout
 )
 
 // Scheduler 负责邮箱生命周期后台任务：
@@ -29,14 +30,15 @@ type Scheduler struct {
 	interval     time.Duration
 }
 
-// NewScheduler 创建生命周期调度器。interval 为 0 时使用默认 5 分钟。
+// NewScheduler 创建生命周期调度器。interval 为 0 时从 DB 配置读取（默认 5 分钟）。
 func NewScheduler(s *store.Store, sharedSecret string, interval time.Duration) *Scheduler {
 	if interval <= 0 {
-		interval = defaultInterval
+		interval = time.Duration(s.GetConfigInt(cfgLifecycleInterval, 5)) * time.Minute
 	}
+	probeTimeout := time.Duration(s.GetConfigInt(cfgLifecycleDeleteProbeSec, 10)) * time.Second
 	return &Scheduler{
 		store:        s,
-		client:       &http.Client{Timeout: deleteProbeTimeout},
+		client:       &http.Client{Timeout: probeTimeout},
 		sharedSecret: sharedSecret,
 		interval:     interval,
 	}
@@ -65,9 +67,11 @@ func (s *Scheduler) run() {
 	s.purgeExpired()
 }
 
-// watchdog 扫描 deleting 超时（>15min）的任务，重新向 mail-node 下发 DELETE。
+// watchdog 扫描 deleting 超时的任务，重新向 mail-node 下发 DELETE。
+// 超时阈值从 DB 配置读取（默认 15 分钟）。
 func (s *Scheduler) watchdog() {
-	stuck, err := s.store.FindStuckDeleting(deleteTimeout)
+	timeout := time.Duration(s.store.GetConfigInt(cfgLifecycleWatchdogMin, 15)) * time.Minute
+	stuck, err := s.store.FindStuckDeleting(timeout)
 	if err != nil {
 		log.Printf("[lifecycle] watchdog: find stuck deleting failed: %v", err)
 		return

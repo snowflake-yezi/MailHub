@@ -141,7 +141,7 @@ func (h *MailboxHandler) processBatchCreate(items []BatchCreateItem) []BatchCrea
 			Password:      item.Password,
 			DomainID:      item.DomainID,
 			ServerID:      item.ServerID,
-			RetentionDays: 30,
+			RetentionDays: h.store.GetConfigInt("general.default_retention_days", 30),
 		})
 		if err != nil {
 			result.Status = "fail"
@@ -491,7 +491,8 @@ func (h *MailboxHandler) PurgeMailbox(c *gin.Context) {
 
 func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	defaultSize := h.store.GetConfigInt("general.default_page_size", 20)
+	size, _ := strconv.Atoi(c.DefaultQuery("size", strconv.Itoa(defaultSize)))
 	status := c.Query("status")
 	search := c.Query("search")
 	if search == "" {
@@ -548,8 +549,9 @@ func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
 		badRequest(c, ErrCodeParamMissing, "password is required")
 		return
 	}
-	if len(req.Password) < 6 {
-		badRequest(c, ErrCodeParamInvalid, "password must be at least 6 characters")
+	minPwdLen := h.store.GetConfigInt("general.password_min_length", 6)
+	if len(req.Password) < minPwdLen {
+		badRequest(c, ErrCodeParamInvalid, fmt.Sprintf("password must be at least %d characters", minPwdLen))
 		return
 	}
 

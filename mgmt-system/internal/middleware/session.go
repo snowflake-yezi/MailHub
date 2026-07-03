@@ -10,9 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// Default session settings (fallback when not configured).
 const (
-	SessionCookieName = "mgmt_session"
-	SessionDuration   = 24 * time.Hour
+	DefaultSessionCookieName = "mgmt_session"
+	DefaultSessionDuration   = 24 * time.Hour
+	DefaultSessionGCInterval = 30 * time.Minute
 )
 
 // Session holds admin session data.
@@ -29,17 +31,43 @@ func (s *Session) IsExpired() bool {
 
 // SessionManager manages in-memory admin sessions.
 type SessionManager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
+	mu         sync.RWMutex
+	sessions   map[string]*Session
+	duration   time.Duration
+	cookieName string
+	gcInterval time.Duration
 }
 
 // NewSessionManager creates a new session manager and starts the GC goroutine.
-func NewSessionManager() *SessionManager {
+// duration <= 0 defaults to 24h; cookieName empty defaults to "mgmt_session"; gcInterval <= 0 defaults to 30min.
+func NewSessionManager(duration time.Duration, cookieName string, gcInterval time.Duration) *SessionManager {
+	if duration <= 0 {
+		duration = DefaultSessionDuration
+	}
+	if cookieName == "" {
+		cookieName = DefaultSessionCookieName
+	}
+	if gcInterval <= 0 {
+		gcInterval = DefaultSessionGCInterval
+	}
 	sm := &SessionManager{
-		sessions: make(map[string]*Session),
+		sessions:   make(map[string]*Session),
+		duration:   duration,
+		cookieName: cookieName,
+		gcInterval: gcInterval,
 	}
 	go sm.gcLoop()
 	return sm
+}
+
+// CookieName returns the configured session cookie name.
+func (sm *SessionManager) CookieName() string {
+	return sm.cookieName
+}
+
+// Duration returns the configured session duration.
+func (sm *SessionManager) Duration() time.Duration {
+	return sm.duration
 }
 
 // CreateSession creates a new session for the given username. Returns the token.
@@ -54,7 +82,7 @@ func (sm *SessionManager) CreateSession(username string) (string, error) {
 	sm.sessions[token] = &Session{
 		Username:  username,
 		CreatedAt: now,
-		ExpiresAt: now.Add(SessionDuration),
+		ExpiresAt: now.Add(sm.duration),
 	}
 	sm.mu.Unlock()
 
@@ -97,7 +125,7 @@ func (sm *SessionManager) DestroySession(token string) {
 // For page requests it redirects to /admin/login. For API requests it returns 401 JSON.
 func AdminAuthRequired(sm *SessionManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, _ := c.Cookie(SessionCookieName)
+		token, _ := c.Cookie(sm.CookieName())
 		session := sm.ValidateSession(token)
 
 		if session == nil {
@@ -135,7 +163,7 @@ func isAPIRequest(c *gin.Context) bool {
 
 // gcLoop periodically cleans up expired sessions.
 func (sm *SessionManager) gcLoop() {
-	ticker := time.NewTicker(30 * time.Minute)
+	ticker := time.NewTicker(sm.gcInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		sm.mu.Lock()

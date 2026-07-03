@@ -9,24 +9,26 @@ import (
 )
 
 type AuthHandler struct {
-	adminUser string
-	adminPass string
-	sessions  *middleware.SessionManager
+	adminUser    string
+	adminPass    string
+	sessionMgr   *middleware.SessionManager
+	cookieSecure bool
 }
 
-func NewAuthHandler(adminUser, adminPass string, sm *middleware.SessionManager) *AuthHandler {
+func NewAuthHandler(adminUser, adminPass string, sm *middleware.SessionManager, cookieSecure bool) *AuthHandler {
 	return &AuthHandler{
-		adminUser: adminUser,
-		adminPass: adminPass,
-		sessions:  sm,
+		adminUser:    adminUser,
+		adminPass:    adminPass,
+		sessionMgr:   sm,
+		cookieSecure: cookieSecure,
 	}
 }
 
 // LoginPage renders the login form.
 func (h *AuthHandler) LoginPage(c *gin.Context) {
 	// Already logged in? Redirect to admin dashboard.
-	token, _ := c.Cookie(middleware.SessionCookieName)
-	if s := h.sessions.ValidateSession(token); s != nil {
+	token, _ := c.Cookie(h.sessionMgr.CookieName())
+	if s := h.sessionMgr.ValidateSession(token); s != nil {
 		c.Redirect(http.StatusFound, "/admin/")
 		return
 	}
@@ -58,7 +60,7 @@ func (h *AuthHandler) LoginAction(c *gin.Context) {
 		return
 	}
 
-	token, err := h.sessions.CreateSession(username)
+	token, err := h.sessionMgr.CreateSession(username)
 	if err != nil {
 		c.HTML(http.StatusInternalServerError, "login.html", gin.H{
 			"title": "管理后台登录",
@@ -70,13 +72,13 @@ func (h *AuthHandler) LoginAction(c *gin.Context) {
 
 	// Set session cookie.
 	c.SetCookie(
-		middleware.SessionCookieName,
+		h.sessionMgr.CookieName(),
 		token,
-		int(middleware.SessionDuration.Seconds()),
+		int(h.sessionMgr.Duration().Seconds()),
 		"/", // path (covers /admin/* pages AND /api/v1/admin/* APIs)
-		"",       // domain (auto)
-		false,    // secure (set to true if using HTTPS)
-		true,     // httpOnly
+		"",     // domain (auto)
+		h.cookieSecure,
+		true,   // httpOnly
 	)
 
 	redirectURL := "/admin/"
@@ -88,12 +90,12 @@ func (h *AuthHandler) LoginAction(c *gin.Context) {
 
 // LogoutAction destroys the session and redirects to login.
 func (h *AuthHandler) LogoutAction(c *gin.Context) {
-	token, _ := c.Cookie(middleware.SessionCookieName)
+	token, _ := c.Cookie(h.sessionMgr.CookieName())
 	if token != "" {
-		h.sessions.DestroySession(token)
+		h.sessionMgr.DestroySession(token)
 	}
 
 	// Clear cookie.
-	c.SetCookie(middleware.SessionCookieName, "", -1, "/", "", false, true)
+	c.SetCookie(h.sessionMgr.CookieName(), "", -1, "/", "", h.cookieSecure, true)
 	c.Redirect(http.StatusFound, "/admin/login")
 }

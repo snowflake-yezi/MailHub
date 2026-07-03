@@ -21,7 +21,7 @@ import (
 )
 
 func main() {
-	// 加载配置
+	// Load config
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
 		configPath = "config.yaml"
@@ -35,13 +35,13 @@ func main() {
 		log.Fatalf("Invalid config: %v", err)
 	}
 
-	// 初始化数据库
+	// Init database
 	db, err := store.New(cfg.Database.DSN, cfg.Server.Mode)
 	if err != nil {
 		log.Fatalf("Failed to connect database: %v", err)
 	}
 
-	// 种子数据
+	// Seed data
 	var tokenSeeds []struct{ Name, Token, Scopes string }
 	for _, t := range cfg.Auth.Tokens {
 		scopes := ""
@@ -57,103 +57,122 @@ func main() {
 		db.SeedDefaultData(d.Name, cfg.DefaultRetentionDays, tokenSeeds)
 	}
 
-	// 初始化服务
+	// Init services
 	allocator := service.NewAllocator(db, cfg, cfg.Auth.SharedSecret)
 	importRealAccounts(db, cfg)
 	if err := db.SeedServerDomainsFromAccounts(); err != nil {
 		log.Printf("[WARN] seed server_domains failed: %v", err)
 	}
 
-	// 初始化 handler
+	// Init handlers
 	mailboxH := handler.NewMailboxHandler(db, allocator, cfg.Auth.SharedSecret)
 	emailH := handler.NewEmailHandler(db, cfg.Auth.SharedSecret)
 	serverH := handler.NewServerHandler(db, cfg.Auth.SharedSecret)
 	filterH := handler.NewFilterHandler(db, cfg.Auth.SharedSecret)
 	adminH := handler.NewAdminHandler(db)
 	healthH := handler.NewHealthHandler(db)
+	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)
 
-	// Session 管理器
-	sessionMgr := middleware.NewSessionManager()
-	authH := handler.NewAuthHandler(cfg.Auth.AdminUser, cfg.Auth.AdminPass, sessionMgr)
+	// Session manager
+	sessionDuration := time.Duration(db.GetConfigInt("session.duration_hours", 24)) * time.Hour
+	sessionCookieName := db.GetConfig("session.cookie_name", "mgmt_session")
+	sessionGCInterval := time.Duration(db.GetConfigInt("session.gc_interval_minutes", 30)) * time.Minute
+	sessionMgr := middleware.NewSessionManager(sessionDuration, sessionCookieName, sessionGCInterval)
 
-	// 设置 Gin
+	cookieSecure := db.GetConfigBool("session.cookie_secure", false)
+	authH := handler.NewAuthHandler(cfg.Auth.AdminUser, cfg.Auth.AdminPass, sessionMgr, cookieSecure)
+
+	// Set Gin mode
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
 	r := gin.Default()
 
-	// 加载 HTML 模板 + 静态资源
+	// Load static assets (React SPA is at template/static/admin-app/)
 	r.LoadHTMLGlob("template/admin/*.html")
 	r.Static("/static", "template/static")
 
-	// ---- 健康检查（公开，无鉴权，systemd / 监控探活用） ----
+	// ---- Health checks (public) ----
 	r.GET("/health", healthH.Health)
 	r.GET("/health/ready", healthH.Ready)
 
-	// ---- 公开登录/登出（无需鉴权） ----
+	// ---- Public login/logout (no auth required) ----
 	authGroup := r.Group("/admin")
 	authGroup.GET("/login", authH.LoginPage)
 	authGroup.POST("/login", authH.LoginAction)
 	authGroup.GET("/logout", authH.LogoutAction)
 	authGroup.POST("/logout", authH.LogoutAction)
 
-	// ---- 管理后台页面（Session 鉴权） ----
+	// ---- Admin pages (Session auth) ----
 	adminAuth := middleware.AdminAuthRequired(sessionMgr)
 	protectedPages := r.Group("/admin")
 	protectedPages.Use(adminAuth)
 	adminH.RegisterProtectedRoutes(protectedPages)
 
-	// ---- 管理后台 API（Session 鉴权） ----
+	// ---- Admin API (Session auth) ----
 	apiAdmin := r.Group("/api/v1/admin")
 	apiAdmin.Use(adminAuth)
 	serverH.RegisterAdminRoutes(apiAdmin)
 	filterH.RegisterAdminRoutes(apiAdmin)
 	mailboxH.RegisterAdminRoutes(apiAdmin)
 	emailH.RegisterAdminRoutes(apiAdmin)
+	// Dashboard stats API
+	apiAdmin.GET("/dashboard", adminH.DashboardAPI)
+	// Domains list (for dropdown filters)
+	apiAdmin.GET("/domains", adminH.ListDomainsAPI)
+	// System config API
+	apiAdmin.GET("/configs", configH.ListConfigs)
+	apiAdmin.GET("/configs/:key", configH.GetConfig)
+	apiAdmin.PUT("/configs/:key", configH.UpdateConfig)
+	apiAdmin.POST("/configs/batch", configH.BatchUpdate)
+	apiAdmin.POST("/configs/:key/reset", configH.ResetConfig)
+	apiAdmin.POST("/configs/reload", configH.ReloadNode)
 
-	// ---- 外部 API v1（Bearer Token 鉴权 + Scope） ----
+	// ---- External API v1 (Bearer Token auth + Scope) ----
 	api := r.Group("/api/v1")
 	api.Use(middleware.AuthRequired(db))
 
-	// 邮箱生成 & 查询（出票中心 / 大模型系统）
+	// Mailbox generation & query
 	api.POST("/mailboxes", middleware.RequireScope("mailbox:create"), mailboxH.CreateMailbox)
 	api.GET("/mailboxes/:order_id", middleware.RequireScope("mailbox:read"), mailboxH.GetMailbox)
 	api.POST("/mailboxes/:order_id/disable", middleware.RequireScope("mailbox:create"), mailboxH.DisableMailbox)
 
-	// 邮件查询（大模型系统）
+	// Email query
 	emailGroup := api.Group("")
 	emailGroup.Use(middleware.RequireScope("email:read"))
 	emailH.RegisterRoutes(emailGroup)
 
-	// ---- 内部接口（邮箱服务器调用，Shared-Secret 鉴权） ----
+	// ---- Internal API (mail-node calls, Shared-Secret auth) ----
 	internal := r.Group("/api/v1/internal")
 	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.POST("/servers/discover", serverH.DiscoverServer)
 	internal.GET("/filters", filterH.GetActiveRules)
 	internal.GET("/sync/deleting", mailboxH.SyncDeleting)
+	// Dynamic config pull (mail-node)
+	internal.GET("/configs", configH.ListConfigsInternal)
+	internal.POST("/configs/reload", configH.ReloadNodeInternal)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	healthScheduler := healthcheck.NewScheduler(db, cfg.Auth.SharedSecret, 30*time.Second, 5*time.Second)
+	healthScheduler := healthcheck.NewScheduler(db, cfg.Auth.SharedSecret, 0, 0)
 	go healthScheduler.Start(ctx)
 
-	lifecycleScheduler := lifecycle.NewScheduler(db, cfg.Auth.SharedSecret, 5*time.Minute)
+	lifecycleScheduler := lifecycle.NewScheduler(db, cfg.Auth.SharedSecret, 0)
 	go lifecycleScheduler.Start(ctx)
 
-	// 优雅退出
+	// Graceful shutdown
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
 		log.Println("Shutting down server...")
 		cancel()
-		// 这里可以加 DB 关闭逻辑
 		os.Exit(0)
 	}()
 
-	// 启动
+	// Start
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Server.Port)
 	log.Printf("Starting management system on %s (mode: %s)", addr, cfg.Server.Mode)
 	if err := r.Run(addr); err != nil {

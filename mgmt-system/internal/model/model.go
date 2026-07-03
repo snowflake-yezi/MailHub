@@ -141,7 +141,23 @@ type ServerDomain struct {
 	Domain Domain     `gorm:"foreignKey:DomainID" json:"domain,omitempty"`
 }
 
+// SystemConfig 系统动态配置（KV 表，替代硬编码）
+type SystemConfig struct {
+	ID           uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	ConfigKey    string    `gorm:"uniqueIndex;size:128;not null" json:"config_key"`
+	ConfigValue  string    `gorm:"type:text;not null" json:"config_value"`
+	ValueType    string    `gorm:"size:32;default:string" json:"value_type"` // string | int | bool | duration | json
+	Category     string    `gorm:"size:64;default:general;index" json:"category"`
+	Label        string    `gorm:"size:128;default:''" json:"label"`
+	Description  string    `gorm:"type:text" json:"description"`
+	DefaultValue string    `gorm:"type:text" json:"default_value"`
+	Reloadable   bool      `gorm:"default:false" json:"reloadable"`
+	CreatedAt    time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 // TableName 指定表名
+func (SystemConfig) TableName() string         { return "system_configs" }
 func (OrderMailbox) TableName() string        { return "order_mailboxes" }
 func (MailboxAccount) TableName() string      { return "mailbox_accounts" }
 func (OrderMailboxMapping) TableName() string { return "order_mailbox_mappings" }

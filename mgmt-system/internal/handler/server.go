@@ -63,7 +63,7 @@ func (h *ServerHandler) RegisterServer(c *gin.Context) {
 		return
 	}
 	if srv.Capacity == 0 {
-		srv.Capacity = 5000
+		srv.Capacity = h.store.GetConfigInt("general.default_server_capacity", 5000)
 	}
 	srv.Status = "healthy"
 	deriveHostDefaults(&srv)
@@ -380,7 +380,7 @@ func (h *ServerHandler) DiscoverServer(c *gin.Context) {
 	srv := &model.MailServer{
 		Name:     name,
 		APIHost:  req.APIHost,
-		Capacity: 5000,
+		Capacity: h.store.GetConfigInt("general.default_server_capacity", 5000),
 		Status:   "healthy",
 	}
 	deriveHostDefaults(srv)

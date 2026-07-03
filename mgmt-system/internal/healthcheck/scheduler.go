@@ -14,12 +14,13 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
+// Dynamic config keys (was hardcoded constants).
 const (
-	defaultInterval     = 30 * time.Second
-	defaultProbeTimeout = 5 * time.Second
-	degradeThreshold    = 3
-	downThreshold       = 5
-	heartbeatTimeout    = 90 * time.Second
+	cfgProbeInterval    = "healthcheck.probe_interval_seconds"
+	cfgProbeTimeout     = "healthcheck.probe_timeout_seconds"
+	cfgDegradeThreshold = "healthcheck.degrade_threshold"
+	cfgDownThreshold    = "healthcheck.down_threshold"
+	cfgHeartbeatTimeout = "healthcheck.heartbeat_timeout_seconds"
 )
 
 type Scheduler struct {
@@ -31,10 +32,10 @@ type Scheduler struct {
 
 func NewScheduler(s *store.Store, sharedSecret string, interval, probeTimeout time.Duration) *Scheduler {
 	if interval <= 0 {
-		interval = defaultInterval
+		interval = time.Duration(s.GetConfigInt(cfgProbeInterval, 30)) * time.Second
 	}
 	if probeTimeout <= 0 {
-		probeTimeout = defaultProbeTimeout
+		probeTimeout = time.Duration(s.GetConfigInt(cfgProbeTimeout, 5)) * time.Second
 	}
 	return &Scheduler{
 		store:        s,
@@ -78,6 +79,11 @@ func (s *Scheduler) probeOne(srv *model.MailServer) error {
 	failCount := srv.ProbeFailCount
 	status := srv.Status
 
+	// Read thresholds dynamically (cached, 30s TTL) so hot-reload works.
+	degradeThresh := s.store.GetConfigInt(cfgDegradeThreshold, 3)
+	downThresh := s.store.GetConfigInt(cfgDownThreshold, 5)
+	hbTimeout := time.Duration(s.store.GetConfigInt(cfgHeartbeatTimeout, 90)) * time.Second
+
 	if ok {
 		failCount = 0
 		if status == "down" || status == "degraded" {
@@ -87,17 +93,17 @@ func (s *Scheduler) probeOne(srv *model.MailServer) error {
 	}
 
 	failCount++
-	if failCount >= downThreshold {
+	if failCount >= downThresh {
 		status = "down"
-	} else if failCount >= degradeThreshold {
+	} else if failCount >= degradeThresh {
 		status = "degraded"
 	}
 
-	if srv.LastHeartbeat != nil && now.Sub(*srv.LastHeartbeat) > heartbeatTimeout {
+	if srv.LastHeartbeat != nil && now.Sub(*srv.LastHeartbeat) > hbTimeout {
 		if status == "healthy" {
 			status = "degraded"
 		}
-		if failCount >= degradeThreshold {
+		if failCount >= degradeThresh {
 			status = "down"
 		}
 	}

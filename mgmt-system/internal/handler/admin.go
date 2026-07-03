@@ -143,12 +143,58 @@ func (h *AdminHandler) ServerDomainsPage(c *gin.Context) {
 	})
 }
 
+// ServeSPA serves the React SPA index.html for all admin page routes.
+// Client-side React Router handles the actual page routing.
+func (h *AdminHandler) ServeSPA(c *gin.Context) {
+	c.File("template/static/admin-app/index.html")
+}
+
+// DashboardAPI returns aggregated dashboard stats as JSON.
+// GET /api/v1/admin/dashboard
+func (h *AdminHandler) DashboardAPI(c *gin.Context) {
+	servers, _ := h.store.ListServers()
+	healthyCount := 0
+	for _, s := range servers {
+		if s.Status == "healthy" {
+			healthyCount++
+		}
+	}
+	_, totalMailboxes, _ := h.store.ListMailboxes(1, 1, "active", "")
+	todayCreated, _ := h.store.CountMailboxesCreatedToday()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": gin.H{
+			"server_count":     len(servers),
+			"healthy_count":    healthyCount,
+			"active_mailboxes": totalMailboxes,
+			"today_created":    todayCreated,
+		},
+	})
+}
+
+// ListDomainsAPI returns all domains (for filter dropdowns).
+// GET /api/v1/admin/domains
+func (h *AdminHandler) ListDomainsAPI(c *gin.Context) {
+	domains, err := h.store.ListDomains()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 5000, "message": "failed to list domains"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": domains})
+}
+
 // RegisterProtectedRoutes registers admin page routes on the given (already auth-protected) group.
+// Each page route serves the React SPA index.html; React Router handles client-side routing.
 func (h *AdminHandler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
-	rg.GET("/", h.Dashboard)
-	rg.GET("/servers", h.ServersPage)
-	rg.GET("/servers/:id/domains", h.ServerDomainsPage)
-	rg.GET("/filters", h.FiltersPage)
-	rg.GET("/mailboxes", h.MailboxesPage)
-	rg.GET("/emails", h.EmailsPage)
+	// SPA entry — all admin page paths serve the same index.html
+	spa := h.ServeSPA
+	rg.GET("/", spa)
+	rg.GET("/servers", spa)
+	rg.GET("/servers/:id/domains", spa)
+	rg.GET("/filters", spa)
+	rg.GET("/mailboxes", spa)
+	rg.GET("/emails", spa)
+	rg.GET("/config", spa)
+	rg.GET("/config/*path", spa)
 }

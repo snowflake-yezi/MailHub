@@ -58,11 +58,17 @@ func New(dsn string, mode string) (*Store, error) {
 		&model.FilterRule{},
 		&model.ApiToken{},
 		&model.ServerDomain{},
+		&model.SystemConfig{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
 
 	s := &Store{db: db}
+
+	// 种子数据：动态配置默认值
+	if err := s.SeedDefaultConfigs(); err != nil {
+		return nil, fmt.Errorf("seed default configs: %w", err)
+	}
 	if err := s.migrateLifecycleSchema(); err != nil {
 		return nil, fmt.Errorf("migrate lifecycle schema: %w", err)
 	}

@@ -1,0 +1,16 @@
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.page-header h1 {
+  font-size: 22px;
+  margin-bottom: 4px;
+}
+
+.page-subtitle {
+  color: #888;
+  font-size: 13px;
+}
