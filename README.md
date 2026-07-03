@@ -15,13 +15,18 @@
 - **健康检查与心跳**：控制面主动探测 + 数据面被动心跳，连续失败自动降级→摘除，仪表盘可观测。
 
 ### 邮件处理
-- **过滤引擎**：可配置规则（按发件人 / 主题等匹配 pass / flag / block），数据面定时拉取，热生效。
+- **过滤引擎**：可配置规则（按发件人 / 主题等匹配 pass / flag / block），数据面定时拉取 + 控制面变更主动推送，热生效。
 - **自动转发汇总**：数据面异步扫描 Maildir，按规则过滤后 SMTP 转发到集成邮箱；正文原样透传，仅改 Subject 加来源标识，内置防循环。
+- **集成邮箱（转发目标池）管理**：后台维护多个集成邮箱，一键切换当前生效的转发目标；切换后控制面联动通知数据面热加载，无需改配置重启。
+- **邮件与附件查询**：MIME 结构化解析，对外 API 提供正文 + 附件元数据 + 附件流式下载。
 - **Roundcube Webmail**：集成邮箱可选的 Webmail 前端，运营统一登录查看汇总邮件。
+
+### 运维与配置
+- **系统动态配置**：80+ 项运行参数（扫描间隔 / 超时 / 阈值 / 心跳 / 会话等）后台可视化调整，部分支持热加载，免改代码重启。
 
 ### 安全与 API
 - **三层鉴权体系**：后台 Session 登录 + 外部 API Bearer Token (Scope) + 内部 Shared-Secret 互信。
-- **对外 API**：出票中心 / 大模型系统通过 Token 鉴权创建邮箱、按 scope 拉取邮件原件。
+- **对外 API**：出票中心 / 大模型系统通过 Token 鉴权创建邮箱、按 scope 拉取邮件原件与附件。
 
 ---
 
@@ -69,7 +74,7 @@ flowchart TB
     nodeN -->|"SMTP 转发"| union
 ```
 
-- **控制面 `mgmt-system`**：Go + gin + gorm，Web 后台（Go template + htmx）+ 对外/内部 API，负责编排、鉴权、健康检查，不直接处理邮件正文投递。
+- **控制面 `mgmt-system`**：Go + gin + gorm，Web 后台（React SPA）+ 对外/内部 API，负责编排、鉴权、健康检查、动态配置下发，不直接处理邮件正文投递。
 - **数据面 `mail-node`**：与 Postfix / Dovecot / OpenDKIM 同机部署，负责真实收发、Maildir 管理、过滤转发、域名 DKIM 落地、心跳上报。
 
 ---
@@ -81,7 +86,7 @@ flowchart TB
 | 后端 | Go 1.22+（gin + gorm） | 控制面 + 数据面统一语言 |
 | 数据库 | MySQL 8.0 / MariaDB 10.5 | 控制面管理数据 |
 | 邮件服务 | Postfix + Dovecot + OpenDKIM | 数据面自建 |
-| 前端（后台） | Go template + htmx | 无前后端分离，低依赖 |
+| 前端（后台） | React + Vite | SPA，构建产物随服务端发布 |
 | Webmail | Roundcube 1.6 | PHP + SQLite，可选 |
 | 部署 | 裸机 systemd + Nginx 反代 | 2C2G10M 低配友好 |
 
@@ -94,22 +99,26 @@ flowchart TB
 ├── mgmt-system/                # 控制面：管理后台 + API
 │   ├── cmd/server/             # 程序入口
 │   ├── internal/
-│   │   ├── handler/            # HTTP handler（auth / admin / mailbox / server / email / filter）
-│   │   ├── service/            # 业务层（邮箱创建、账号导入、分配器、健康检查）
-│   │   ├── store/              # gorm 数据访问
+│   │   ├── handler/            # HTTP handler（auth / admin / mailbox / server / email / filter / config / integrated_mailbox）
+│   │   ├── service/            # 业务层（邮箱创建、账号导入、分配器）
+│   │   ├── store/              # gorm 数据访问 + 动态配置 KV
 │   │   ├── middleware/         # 中间件（Session / Bearer Token / Shared-Secret）
 │   │   ├── model/              # 数据模型
 │   │   ├── config/             # 配置加载
-│   │   └── healthcheck/        # 主动健康检查调度器
-│   ├── template/               # Go template + htmx 后台页面
+│   │   ├── healthcheck/        # 主动健康检查调度器
+│   │   └── lifecycle/          # 生命周期调度器
+│   ├── web/                    # React SPA 源码（Vite 构建 → template/static/admin-app/）
+│   ├── template/static/admin-app/  # SPA 构建产物（服务端 serve）
 │   └── config.example.yaml     # 配置模板
 ├── mail-node/                  # 数据面：邮局 agent
 │   ├── cmd/node/
 │   ├── internal/
 │   │   ├── mailbox/            # Maildir 管理、邮箱创建、生命周期
-│   │   ├── forward/            # 过滤 + SMTP 转发 + 防循环
+│   │   ├── forward/            # 过滤 + SMTP 转发 + 防循环 + 生命周期
+│   │   ├── filter/             # 过滤引擎
+│   │   ├── domain/             # Postfix 虚拟域 + DKIM 落地
 │   │   ├── middleware/         # Shared-Secret 鉴权
-│   │   └── config/
+│   │   └── config/             # 配置加载 + 远程动态配置（remote.go）
 │   └── config.example.yaml
 └── docs/                       # 设计文档 / 架构概览 / 部署指南
 ```
@@ -135,7 +144,7 @@ cp mail-node/config.example.yaml    mail-node/config.yaml     # 改控制面地�
 关键配置项：
 - **DSN**：MySQL/MariaDB 连接串
 - **auth**：admin 账号密码、shared_secret（mgmt 与 mail-node 一致）、API tokens (scope)
-- **smtp**：转发目标的 SMTP 服务器、用户名、密码
+- **smtp**：转发中继的 SMTP 服务器、用户名、密码（转发目标地址 `forward.target_address` 已移至后台「集成邮箱」管理，支持运行时热切换）
 - **dkim**：selector、key_dir、signing_table、key_table
 
 ### 3. 构建
@@ -166,6 +175,8 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 | [部署指南](docs/design/deployment-guide.md) | 完整部署步骤、配置项说明 |
 | [技术实现方案](docs/design/technical-implementation.md) | Phase 1A 实现细节 |
 | [转发模块设计](docs/design/forwarding-design.md) | Maildir 扫描、过滤、SMTP 转发、防循环 |
+| [动态配置化设计](docs/design/dynamic-config-design.md) | 系统参数 KV 表 + 后台可视化 + 热加载 |
+| [集成邮箱设计](docs/design/integrated-mailbox-design.md) | 转发目标池管理 + 后台热切换 |
 | [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 域名池、Postfix 虚拟域、DKIM、DNS 清单 |
 | [鉴权体系设计](docs/design/t6-auth-design.md) | 三层鉴权：Session / Bearer Scope / Shared-Secret |
 | [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、心跳、降级摘除 |
@@ -177,7 +188,7 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 
 ## 项目状态
 
-**当前进度：Phase 3 全部闭环，T1–T10 全部完成。**
+**当前进度：Phase 3 全部闭环 + 控制面持续增强（动态配置化 / React SPA 重写 / 集成邮箱管理 / 附件下载）。**
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
@@ -190,5 +201,9 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 | Phase 3 T8 | MIME 预处理（结构化邮件） | ✅ |
 | Phase 3 T9 | 邮箱生命周期与恢复闭环 | ✅ |
 | Phase 3 T10 | 收尾（filter 主动推送、今日创建数、message_id 兼容、TLS 部署文档） | ✅ |
+| 增强 | 动态配置化（80+ 参数后台可视化） | ✅ |
+| 增强 | 管理后台 React SPA 全量重写 | ✅ |
+| 增强 | 集成邮箱转发目标池管理 + 后台热切换 | ✅ |
+| 增强 | 邮件附件流式下载 | ✅ |
 
 已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查、结构化邮件查询、邮箱生命周期恢复、filter 主动推送、TLS 部署文档。后续运维：IPv4 配置、Let's Encrypt 证书实际申请、临时机清理。
