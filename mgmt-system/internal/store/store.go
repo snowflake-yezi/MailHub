@@ -73,6 +73,9 @@ func New(dsn string, mode string) (*Store, error) {
 	if err := s.SeedDefaultIntegratedMailboxes(); err != nil {
 		return nil, fmt.Errorf("seed integrated mailboxes: %w", err)
 	}
+	if err := s.ReconcileActiveIntegratedMailboxConfig(); err != nil {
+		return nil, fmt.Errorf("reconcile integrated mailbox config: %w", err)
+	}
 	if err := s.migrateLifecycleSchema(); err != nil {
 		return nil, fmt.Errorf("migrate lifecycle schema: %w", err)
 	}

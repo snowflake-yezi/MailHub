@@ -17,7 +17,7 @@ import (
 
 const (
 	maxEmailSizeDefault = 10 * 1024 * 1024 // 10MB hard cap
-	bodyPreviewDefault   = 64 * 1024        // 64KB default body preview for filtering
+	bodyPreviewDefault  = 64 * 1024        // 64KB default body preview for filtering
 )
 
 // readForFiltering opens the file, reads headers + body preview text
@@ -103,7 +103,7 @@ func readForFiltering(filePath string, maxSize, bodyLimit int64) (headers map[st
 // parameters), we read the raw file, modify ONLY the Subject line in the
 // original headers, prepend our forwarding headers, and pass the original
 // body through byte-for-byte unchanged.
-func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAddress string) error {
+func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAddress, smtpUser, smtpPass string) error {
 	// 1. Read entire raw file (capped at maxEmailSize for safety).
 	//    For Phase 1 volumes this is fine; upgrade to streaming if needed.
 	f, err := os.Open(filePath)
@@ -169,13 +169,13 @@ func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAdd
 		}
 	}()
 
-	auth := smtp.PlainAuth("", cfg.SMTPUser, cfg.SMTPPass, host)
+	auth := smtp.PlainAuth("", smtpUser, smtpPass, host)
 	if err := client.Auth(auth); err != nil {
 		return fmt.Errorf("smtp auth: %w", err)
 	}
 
-	if err := client.Mail(cfg.SMTPUser); err != nil {
-		return fmt.Errorf("mail from %s: %w", cfg.SMTPUser, err)
+	if err := client.Mail(smtpUser); err != nil {
+		return fmt.Errorf("mail from %s: %w", smtpUser, err)
 	}
 	if err := client.Rcpt(targetAddress); err != nil {
 		return fmt.Errorf("rcpt to %s: %w", targetAddress, err)

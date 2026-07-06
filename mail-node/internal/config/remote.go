@@ -12,10 +12,10 @@ import (
 
 // RemoteConfig 从 mgmt-system 拉取的动态配置（线程安全）。
 type RemoteConfig struct {
-	mu       sync.RWMutex
-	configs  map[string]string
-	mgmtURL  string
-	secret   string
+	mu      sync.RWMutex
+	configs map[string]string
+	mgmtURL string
+	secret  string
 }
 
 // NewRemoteConfig 创建远程配置客户端。mgmtURL 为 mgmt-system 地址（不含路径），secret 为共享密钥。
@@ -93,9 +93,9 @@ func (rc *RemoteConfig) get(key string) (string, bool) {
 	return v, ok
 }
 
-// GetString 获取字符串配置，未找到返回 defaultVal。
+// GetString 获取字符串配置，未找到或远程值为空时返回 defaultVal。
 func (rc *RemoteConfig) GetString(key, defaultVal string) string {
-	if v, ok := rc.get(key); ok {
+	if v, ok := rc.get(key); ok && v != "" {
 		return v
 	}
 	return defaultVal

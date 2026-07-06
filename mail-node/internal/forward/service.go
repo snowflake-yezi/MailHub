@@ -36,14 +36,14 @@ type ForwardConfig struct {
 	MaxEmailSize  int64 // bytes, default 10MB
 
 	// ── 以下为远程动态配置项（0 表示使用默认值） ──
-	BodyPreviewSize     int64         // 正文预览大小（bytes），默认 64KB
-	SMTPDialTimeout     time.Duration // SMTP 拨号超时，默认 15s
-	TLSInsecureSkip     bool          // 跳过 TLS 证书验证，默认 true
-	TLSMinVersion       int           // TLS 最低版本（12=1.2），默认 12
-	TrashRetention      time.Duration // 回收站保留，默认 24h
-	GCInterval          time.Duration // GC 间隔，默认 1h
-	DrainTimeout        time.Duration // 删除前排空超时，默认 5min
-	DrainPollInterval   time.Duration // 排空轮询间隔，默认 500ms
+	BodyPreviewSize   int64         // 正文预览大小（bytes），默认 64KB
+	SMTPDialTimeout   time.Duration // SMTP 拨号超时，默认 15s
+	TLSInsecureSkip   bool          // 跳过 TLS 证书验证，默认 true
+	TLSMinVersion     int           // TLS 最低版本（12=1.2），默认 12
+	TrashRetention    time.Duration // 回收站保留，默认 24h
+	GCInterval        time.Duration // GC 间隔，默认 1h
+	DrainTimeout      time.Duration // 删除前排空超时，默认 5min
+	DrainPollInterval time.Duration // 排空轮询间隔，默认 500ms
 }
 
 // Service 邮件转发服务
@@ -103,6 +103,17 @@ func (s *Service) currentTarget() string {
 		}
 	}
 	return s.cfg.TargetAddress
+}
+
+// currentSMTPAuth 解析当前转发 SMTP 认证账号：优先读动态配置中的 active 集成邮箱凭据，
+// 回退到启动配置。每次发送前调用，支持后台切换集成邮箱池后热加载生效。
+func (s *Service) currentSMTPAuth() (string, string) {
+	if s.remoteCfg != nil {
+		user := s.remoteCfg.GetString("forward.smtp_user", s.cfg.SMTPUser)
+		pass := s.remoteCfg.GetString("forward.smtp_pass", s.cfg.SMTPPass)
+		return user, pass
+	}
+	return s.cfg.SMTPUser, s.cfg.SMTPPass
 }
 
 // ActiveJobs returns the number of currently processing files.
@@ -246,7 +257,8 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	newSubject := buildSubject(s.cfg.SubjectPrefix, sourceAddr, result.Action, headers["subject"])
 
 	target := s.currentTarget()
-	if err := streamToSMTP(s.cfg, filePath, newSubject, sourceAddr, target); err != nil {
+	smtpUser, smtpPass := s.currentSMTPAuth()
+	if err := streamToSMTP(s.cfg, filePath, newSubject, sourceAddr, target, smtpUser, smtpPass); err != nil {
 		// SMTP failed → leave in new/ for next-scan retry (natural backoff)
 		return fmt.Errorf("smtp: %w", err)
 	}
@@ -264,8 +276,8 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 // moveToCur moves a file from new/ to the sibling cur/ directory.
 // On failure, the file stays in new/ and gets retried next scan.
 func moveToCur(filePath string) {
-	dir := filepath.Dir(filePath)      // .../new
-	base := filepath.Base(filePath)    // <timestamp>.<pid>.<host>
+	dir := filepath.Dir(filePath)   // .../new
+	base := filepath.Base(filePath) // <timestamp>.<pid>.<host>
 	curDir := filepath.Join(filepath.Dir(dir), "cur")
 
 	// Ensure cur/ exists

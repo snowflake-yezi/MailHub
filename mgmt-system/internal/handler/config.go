@@ -22,9 +22,9 @@ func NewConfigHandler(s *store.Store, sharedSecret string) *ConfigHandler {
 
 // groupedConfig 分组配置响应
 type groupedConfig struct {
-	Category string        `json:"category"`
-	Label    string        `json:"label"`
-	Items    []configItem  `json:"items"`
+	Category string       `json:"category"`
+	Label    string       `json:"label"`
+	Items    []configItem `json:"items"`
 }
 
 type configItem struct {
@@ -99,7 +99,7 @@ func (h *ConfigHandler) ListConfigs(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"groups":      groups,
+			"groups":       groups,
 			"total_groups": len(groups),
 		},
 	})
@@ -266,10 +266,16 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 		return
 	}
 
-	// 返回简化的 KV map
-	result := make(map[string]string, len(configs))
+	// 返回简化的 KV map。内部接口可额外下发敏感运行时配置；这些值不进入 system_configs，
+	// 避免在后台配置页暴露邮箱密码。
+	result := make(map[string]string, len(configs)+3)
 	for _, cfg := range configs {
 		result[cfg.ConfigKey] = cfg.ConfigValue
+	}
+	if integrated, account, err := h.store.GetActiveIntegratedMailboxCredentials(); err == nil {
+		result["forward.target_address"] = integrated.EmailAddress
+		result["forward.smtp_user"] = account.EmailAddress
+		result["forward.smtp_pass"] = account.Password
 	}
 
 	c.JSON(http.StatusOK, gin.H{
