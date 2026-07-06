@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -121,12 +122,12 @@ Content-Type: text/html; charset="utf-8"
 
 <html><body><p>hello body</p><img src="cid:logo123@example.com"></body></html>
 --related-boundary
-Content-Type: image/png; name="logo.png"
+Content-Type: application/octet-stream
 Content-ID: <logo123@example.com>
-Content-Disposition: inline; filename="logo.png"
+Content-Disposition: inline
 Content-Transfer-Encoding: base64
 
-UE5HREFUQQ==
+iVBORw0KGgoA
 --related-boundary--
 
 --mixed-boundary
@@ -178,11 +179,12 @@ UERGREFUQQ==
 		t.Fatalf("inline Content-Type = %q", ct)
 	}
 	inlineCD := wInline.Header().Get("Content-Disposition")
-	if !strings.HasPrefix(inlineCD, "inline;") || !strings.Contains(inlineCD, "filename*=UTF-8''logo.png") {
+	if !strings.HasPrefix(inlineCD, "inline;") || !strings.Contains(inlineCD, "filename*=UTF-8''inline-1.png") {
 		t.Fatalf("inline Content-Disposition = %q", inlineCD)
 	}
-	if wInline.Body.String() != "PNGDATA" {
-		t.Fatalf("inline bytes = %q", wInline.Body.String())
+	wantInlineBytes := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
+	if !bytes.Equal(wInline.Body.Bytes(), wantInlineBytes) {
+		t.Fatalf("inline bytes = %v", wInline.Body.Bytes())
 	}
 
 	// 3. 越界 index → 404

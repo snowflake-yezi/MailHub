@@ -421,25 +421,14 @@ func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
 	}
 	part := parts[index]
 
-	contentType := strings.TrimSpace(part.ContentType)
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	filename := attachmentFilename(part, index)
+	inline := index >= len(envelope.Attachments) || strings.EqualFold(strings.TrimSpace(part.Disposition), "inline")
+	info := inferPartInfo(part, index, inline)
 	dispositionType := "attachment"
-	if index >= len(envelope.Attachments) || strings.EqualFold(strings.TrimSpace(part.Disposition), "inline") {
+	if inline {
 		dispositionType = "inline"
 	}
-	c.Header("Content-Disposition", contentDisposition(dispositionType, filename))
-	c.Data(http.StatusOK, contentType, part.Content)
-}
-
-// attachmentFilename 取附件文件名，空则回退为 attachment-<index>。
-func attachmentFilename(part *enmime.Part, index int) string {
-	if filename := strings.TrimSpace(part.FileName); filename != "" {
-		return filename
-	}
-	return fmt.Sprintf("attachment-%d", index)
+	c.Header("Content-Disposition", contentDisposition(dispositionType, info.Filename))
+	c.Data(http.StatusOK, info.ContentType, part.Content)
 }
 
 // contentDisposition 生成 RFC 5987 兼容的 Content-Disposition 头，

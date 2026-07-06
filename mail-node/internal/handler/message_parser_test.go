@@ -179,6 +179,86 @@ func TestCollectAttachmentPartsOrderAndContent(t *testing.T) {
 	}
 }
 
+func TestInferPartInfoImageAndFallbacks(t *testing.T) {
+	pngBytes := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
+	jpegBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00}
+
+	tests := []struct {
+		name            string
+		part            *enmime.Part
+		index           int
+		inline          bool
+		wantFilename    string
+		wantContentType string
+	}{
+		{
+			name:            "inline png octet stream without filename",
+			part:            &enmime.Part{ContentType: "application/octet-stream", Content: pngBytes},
+			index:           0,
+			inline:          true,
+			wantFilename:    "inline-0.png",
+			wantContentType: "image/png",
+		},
+		{
+			name:            "inline jpeg without filename",
+			part:            &enmime.Part{Content: jpegBytes},
+			index:           1,
+			inline:          true,
+			wantFilename:    "inline-1.jpg",
+			wantContentType: "image/jpeg",
+		},
+		{
+			name:            "existing filename without extension gets image extension",
+			part:            &enmime.Part{FileName: "qq-inline", ContentType: "application/octet-stream", Content: pngBytes},
+			index:           2,
+			inline:          true,
+			wantFilename:    "qq-inline.png",
+			wantContentType: "image/png",
+		},
+		{
+			name:            "existing filename with extension is preserved",
+			part:            &enmime.Part{FileName: "logo.png", ContentType: "application/octet-stream", Content: pngBytes},
+			index:           3,
+			inline:          true,
+			wantFilename:    "logo.png",
+			wantContentType: "image/png",
+		},
+		{
+			name:            "ordinary pdf attachment is unchanged",
+			part:            &enmime.Part{FileName: "itinerary.pdf", ContentType: "application/pdf", Content: []byte("%PDF-1.7")},
+			index:           4,
+			inline:          false,
+			wantFilename:    "itinerary.pdf",
+			wantContentType: "application/pdf",
+		},
+		{
+			name:            "unknown inline octet stream falls back stably",
+			part:            &enmime.Part{ContentType: "application/octet-stream", Content: []byte("unknown")},
+			index:           5,
+			inline:          true,
+			wantFilename:    "inline-5",
+			wantContentType: "application/octet-stream",
+		},
+		{
+			name:            "explicit image content type supplies missing extension",
+			part:            &enmime.Part{FileName: "photo", ContentType: "image/jpeg", Content: []byte("not-enough-magic")},
+			index:           6,
+			inline:          true,
+			wantFilename:    "photo.jpg",
+			wantContentType: "image/jpeg",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferPartInfo(tt.part, tt.index, tt.inline)
+			if got.Filename != tt.wantFilename || got.ContentType != tt.wantContentType {
+				t.Fatalf("inferPartInfo() = %+v, want filename=%q contentType=%q", got, tt.wantFilename, tt.wantContentType)
+			}
+		})
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

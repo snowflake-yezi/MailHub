@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -169,22 +170,93 @@ func collectAttachments(envelope *enmime.Envelope) []parsedAttachment {
 }
 
 func attachmentFromPart(index int, part *enmime.Part, inline bool) parsedAttachment {
-	filename := strings.TrimSpace(part.FileName)
-	if filename == "" {
-		filename = fmt.Sprintf("attachment-%d", index)
-	}
+	info := inferPartInfo(part, index, inline)
 	disposition := strings.TrimSpace(part.Disposition)
 	if disposition == "" && inline {
 		disposition = "inline"
 	}
 	return parsedAttachment{
 		Index:       index,
-		Filename:    filename,
-		ContentType: part.ContentType,
+		Filename:    info.Filename,
+		ContentType: info.ContentType,
 		Size:        int64(len(part.Content)),
 		Disposition: disposition,
 		ContentID:   strings.Trim(part.ContentID, "<>"),
 		Inline:      inline,
+	}
+}
+
+type inferredPartInfo struct {
+	Filename    string
+	ContentType string
+}
+
+func inferPartInfo(part *enmime.Part, index int, inline bool) inferredPartInfo {
+	filename := strings.TrimSpace(part.FileName)
+	contentType := strings.TrimSpace(part.ContentType)
+	inferredContentType, inferredExt := detectImagePart(part.Content)
+
+	if contentType == "" || strings.EqualFold(contentType, "application/octet-stream") {
+		if inferredContentType != "" {
+			contentType = inferredContentType
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	ext := inferredExt
+	if ext == "" {
+		ext = extensionForContentType(contentType)
+	}
+
+	if filename == "" {
+		prefix := "attachment"
+		if inline {
+			prefix = "inline"
+		}
+		filename = fmt.Sprintf("%s-%d%s", prefix, index, ext)
+	} else if filepath.Ext(filename) == "" && ext != "" {
+		filename += ext
+	}
+
+	return inferredPartInfo{
+		Filename:    filename,
+		ContentType: contentType,
+	}
+}
+
+func detectImagePart(content []byte) (string, string) {
+	switch {
+	case len(content) >= 8 && bytes.Equal(content[:8], []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}):
+		return "image/png", ".png"
+	case len(content) >= 3 && content[0] == 0xFF && content[1] == 0xD8 && content[2] == 0xFF:
+		return "image/jpeg", ".jpg"
+	case len(content) >= 6 && (bytes.Equal(content[:6], []byte("GIF87a")) || bytes.Equal(content[:6], []byte("GIF89a"))):
+		return "image/gif", ".gif"
+	case len(content) >= 12 && bytes.Equal(content[:4], []byte("RIFF")) && bytes.Equal(content[8:12], []byte("WEBP")):
+		return "image/webp", ".webp"
+	case len(content) >= 2 && content[0] == 'B' && content[1] == 'M':
+		return "image/bmp", ".bmp"
+	default:
+		return "", ""
+	}
+}
+
+func extensionForContentType(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/bmp", "image/x-ms-bmp":
+		return ".bmp"
+	default:
+		return ""
 	}
 }
 
