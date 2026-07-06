@@ -68,6 +68,53 @@ UERGREFUQQ==
 	}
 }
 
+func TestParseMessageFileMultipartRelatedInlineImage(t *testing.T) {
+	tmp := t.TempDir()
+	maildirBase := filepath.Join(tmp, "mail")
+	filePath := filepath.Join(maildirBase, "example.com", "order-003", "new", "msg.eml")
+	writeTestFile(t, filePath, strings.ReplaceAll(`Message-ID: <msg-inline@example.com>
+From: notice@example.com
+To: order-003@example.com
+Subject: inline image
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="related-boundary"; type="text/html"
+
+--related-boundary
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>see logo</p><img src="cid:logo123@example.com"></body></html>
+--related-boundary
+Content-Type: image/png; name="logo.png"
+Content-ID: <logo123@example.com>
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+UE5HREFUQQ==
+--related-boundary--
+`, "\n", "\r\n"))
+
+	msg, err := parseFullMessage(filePath, "order-003@example.com", maildirBase)
+	if err != nil {
+		t.Fatalf("parseFullMessage() error = %v", err)
+	}
+	if !strings.Contains(msg.HTMLBody, `src="cid:logo123@example.com"`) {
+		t.Fatalf("HTMLBody = %q", msg.HTMLBody)
+	}
+	if len(msg.Attachments) != 1 {
+		t.Fatalf("attachments len = %d", len(msg.Attachments))
+	}
+	att := msg.Attachments[0]
+	if !att.Inline {
+		t.Fatalf("inline = false, attachment = %+v", att)
+	}
+	if att.ContentID != "logo123@example.com" {
+		t.Fatalf("ContentID = %q", att.ContentID)
+	}
+	if att.ContentType != "image/png" {
+		t.Fatalf("ContentType = %q", att.ContentType)
+	}
+}
+
 func TestParseMessageFileFallbackID(t *testing.T) {
 	tmp := t.TempDir()
 	maildirBase := filepath.Join(tmp, "mail")

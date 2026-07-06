@@ -1,6 +1,93 @@
 import { useState, useCallback } from 'react'
 import { emailAPI } from '../api'
 
+function normalizeContentID(value) {
+  let normalized = String(value || '').trim()
+  normalized = normalized.replace(/^cid:/i, '').trim()
+  normalized = normalized.replace(/^<+|>+$/g, '').trim()
+  try {
+    normalized = decodeURIComponent(normalized)
+  } catch {
+    // 保留原值：部分邮件客户端会生成非标准 percent-encoding。
+  }
+  return normalized.replace(/^<+|>+$/g, '').trim().toLowerCase()
+}
+
+function buildCidAttachmentMap(detail, mailbox) {
+  const cidMap = new Map()
+  for (const attachment of detail?.attachments || []) {
+    if (!attachment?.inline || !attachment.content_id) continue
+    const cid = normalizeContentID(attachment.content_id)
+    if (!cid) continue
+    cidMap.set(cid, emailAPI.attachmentUrl(detail.message_id, attachment.index, mailbox))
+  }
+  return cidMap
+}
+
+function isDangerousURL(value) {
+  return /^\s*(javascript|vbscript|file):/i.test(String(value || ''))
+}
+
+function sanitizeURLAttributes(doc) {
+  for (const element of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(element.attributes)) {
+      const name = attr.name.toLowerCase()
+      if (name.startsWith('on')) {
+        element.removeAttribute(attr.name)
+        continue
+      }
+      if ((name === 'href' || name === 'src' || name === 'action' || name === 'xlink:href') && isDangerousURL(attr.value)) {
+        element.removeAttribute(attr.name)
+      }
+    }
+  }
+}
+
+function buildSafeEmailHtml(detail, mailbox) {
+  const html = String(detail?.html_body || '').trim()
+  if (!html) return ''
+
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const cidMap = buildCidAttachmentMap(detail, mailbox)
+
+  for (const element of Array.from(doc.querySelectorAll('script, iframe, object, embed, applet, form'))) {
+    element.remove()
+  }
+  sanitizeURLAttributes(doc)
+
+  for (const img of Array.from(doc.querySelectorAll('img'))) {
+    const src = img.getAttribute('src') || ''
+    if (/^\s*cid:/i.test(src)) {
+      const attachmentURL = cidMap.get(normalizeContentID(src))
+      if (attachmentURL) {
+        img.setAttribute('src', attachmentURL)
+      } else {
+        img.removeAttribute('src')
+        img.setAttribute('alt', img.getAttribute('alt') || 'inline image not found')
+      }
+    } else if (!/^\s*data:image\//i.test(src)) {
+      // 默认不加载外部图片，避免追踪像素和隐私泄露。
+      img.removeAttribute('src')
+    }
+    img.removeAttribute('srcset')
+  }
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">
+<style>
+  body { margin: 0; padding: 12px; color: #334155; font: 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }
+  img { max-width: 100%; height: auto; }
+  table { max-width: 100%; }
+</style>
+</head>
+<body>${doc.body.innerHTML}</body>
+</html>`
+}
+
 export default function EmailsPage() {
   const [mailbox, setMailbox] = useState('')
   const [query, setQuery] = useState('')
@@ -149,10 +236,15 @@ export default function EmailsPage() {
               )}
               {bodyView === 'html' && (
                 <div style={{ background: '#fbfbfc', border: '1px solid #eee', borderRadius: 8, padding: 12, marginBottom: 14 }}>
-                  <h4 style={{ fontSize: 13, marginBottom: 8 }}>HTML</h4>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.55, color: '#334155', margin: 0 }}>
-                    {detail.html_body || '-'}
-                  </pre>
+                  <h4 style={{ fontSize: 13, marginBottom: 8 }}>HTML 预览</h4>
+                  {detail.html_body ? (
+                    <iframe
+                      title="邮件 HTML 预览"
+                      sandbox="allow-same-origin"
+                      srcDoc={buildSafeEmailHtml(detail, query)}
+                      style={{ width: '100%', minHeight: 420, border: '1px solid #e2e6e8', borderRadius: 6, background: '#fff' }}
+                    />
+                  ) : <div style={{ color: '#888', fontSize: 13 }}>无 HTML 正文</div>}
                 </div>
               )}
 

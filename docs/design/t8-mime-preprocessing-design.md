@@ -46,7 +46,7 @@ T7 后，mgmt 与 mail-node 的控制链路已经具备可上线基础：账号�
 | D-2 | MIME 解析放在 mail-node | 提议 | mail-node 拥有 Maildir 本地文件，可直接解析原件和附件；mgmt 保持控制面/API 网关职责 |
 | D-3 | mgmt 负责外部 API 合约和鉴权 | 提议 | 大模型系统只访问 mgmt，Bearer `email:read` scope 继续生效 |
 | D-4 | 引入 `github.com/jhillyerd/enmime` | 已确认 | 用成熟库处理嵌套 multipart、RFC 2047、附件等真实邮件复杂场景，避免手写 MIME 解析风险 |
-| D-5 | 附件不内联 JSON，T8 不做下载端点 | 已确认 | T8 响应仅返回 `filename/content_type/size/disposition/index` 等元数据；附件下载后续单独评审 |
+| D-5 | 附件不内联 JSON，下载走独立二进制端点 | 已确认 | T8 响应仅返回 `filename/content_type/size/disposition/index` 等元数据；附件下载通过 `/api/v1/emails/:message_id/attachments/:index?mailbox=...` 流式透传 |
 | D-6 | `text/plain` 优先，`html_body` 可选返回 | 已确认 | 有 `text/plain` 用原文；只有 HTML 时提取可读文本作为 `text_body`；对外返回 `html_body` 但该字段可为空/缺省 |
 | D-7 | 缺失 `Message-ID` 使用 fallback ID | 已确认 | 使用 `sha256(relative_maildir_path + file_size + mtime)`，不暴露绝对路径，避免为生成 ID 二次读取大文件 |
 | D-8 | 管理端增加邮件查询可视界面 | 已确认 | 后台按邮箱维度查询邮件列表和详情，展示 `text_body/html_body/attachments`，用于运营和联调 |
@@ -206,7 +206,9 @@ GET /admin/emails?mailbox=order-001@asadad.bond
 - 按邮箱地址查询邮件列表，默认 page=1、size=20。
 - 列表展示标题、发件人、时间、正文预览、附件数量。
 - 点击邮件后调用管理端 API 获取详情，展示 `text_body`、可选 `html_body` 和附件元数据。
-- 不提供附件下载、回复、转发、删除等 Webmail 操作。
+- HTML 视图以受限 iframe 做安全预览；正文内 `<img src="cid:...">` 通过 `attachments[].content_id` 映射到后台附件下载 URL。
+- 默认不自动加载外部远程图片，避免追踪像素和隐私泄露；inline 图片仅通过同源、Session 保护的 `/api/v1/admin/emails/:message_id/attachments/:index` 访问。
+- 不提供回复、转发、删除等 Webmail 操作。
 - 该页面走现有后台 Session 鉴权，不对外开放。
 
 ---

@@ -376,7 +376,7 @@ func matchMessageID(candidate, target, normalizedTarget string) bool {
 // GET /internal/messages/:message_id/attachments/:index?mailbox=xxx@domain
 //
 // 例外于统一 JSON 信封——直接返回二进制：Content-Type 取附件真实类型，
-// Content-Disposition: attachment（RFC 5987 兼容中文文件名）。错误路径仍返回 JSON 信封。
+// 普通附件 Content-Disposition: attachment，inline part 返回 inline（RFC 5987 兼容中文文件名）。错误路径仍返回 JSON 信封。
 // index 与 GetMessages/GetMessageBody 返回的 attachment.index 对齐（先 attachment 后 inline）。
 func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
 	messageID, err := url.PathUnescape(c.Param("message_id"))
@@ -426,7 +426,11 @@ func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
 		contentType = "application/octet-stream"
 	}
 	filename := attachmentFilename(part, index)
-	c.Header("Content-Disposition", contentDisposition(filename))
+	dispositionType := "attachment"
+	if index >= len(envelope.Attachments) || strings.EqualFold(strings.TrimSpace(part.Disposition), "inline") {
+		dispositionType = "inline"
+	}
+	c.Header("Content-Disposition", contentDisposition(dispositionType, filename))
 	c.Data(http.StatusOK, contentType, part.Content)
 }
 
@@ -440,8 +444,12 @@ func attachmentFilename(part *enmime.Part, index int) string {
 
 // contentDisposition 生成 RFC 5987 兼容的 Content-Disposition 头，
 // 同时给出 ASCII 回退（filename=）与 UTF-8 百分号编码（filename*=），兼容中文文件名。
-func contentDisposition(filename string) string {
-	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, asciiFilenameFallback(filename), url.PathEscape(filename))
+func contentDisposition(dispositionType, filename string) string {
+	dispositionType = strings.TrimSpace(strings.ToLower(dispositionType))
+	if dispositionType != "inline" {
+		dispositionType = "attachment"
+	}
+	return fmt.Sprintf(`%s; filename="%s"; filename*=UTF-8''%s`, dispositionType, asciiFilenameFallback(filename), url.PathEscape(filename))
 }
 
 // asciiFilenameFallback 将非 ASCII 字符替换为下划线，并剔除会破坏响应头语法的引号/反斜杠，

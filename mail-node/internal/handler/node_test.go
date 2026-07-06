@@ -114,9 +114,21 @@ MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="mixed-boundary"
 
 --mixed-boundary
-Content-Type: text/plain; charset="utf-8"
+Content-Type: multipart/related; boundary="related-boundary"; type="text/html"
 
-hello body
+--related-boundary
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>hello body</p><img src="cid:logo123@example.com"></body></html>
+--related-boundary
+Content-Type: image/png; name="logo.png"
+Content-ID: <logo123@example.com>
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+UE5HREFUQQ==
+--related-boundary--
+
 --mixed-boundary
 Content-Type: application/pdf; name="itinerary.pdf"
 Content-Disposition: attachment; filename="itinerary.pdf"
@@ -152,7 +164,28 @@ UERGREFUQQ==
 		t.Fatalf("attachment bytes = %q", w.Body.String())
 	}
 
-	// 2. 越界 index → 404
+	// 2. inline 图片下载 index=1，仍按 collectAttachmentParts 的顺序与元数据对齐。
+	wInline := httptest.NewRecorder()
+	cInline, _ := gin.CreateTestContext(wInline)
+	cInline.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/1?mailbox="+url.QueryEscape(mailbox), nil)
+	cInline.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "1"}}
+	h.GetMessageAttachment(cInline)
+
+	if wInline.Code != http.StatusOK {
+		t.Fatalf("inline download status = %d, body = %s", wInline.Code, wInline.Body.String())
+	}
+	if ct := wInline.Header().Get("Content-Type"); !strings.Contains(ct, "image/png") {
+		t.Fatalf("inline Content-Type = %q", ct)
+	}
+	inlineCD := wInline.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(inlineCD, "inline;") || !strings.Contains(inlineCD, "filename*=UTF-8''logo.png") {
+		t.Fatalf("inline Content-Disposition = %q", inlineCD)
+	}
+	if wInline.Body.String() != "PNGDATA" {
+		t.Fatalf("inline bytes = %q", wInline.Body.String())
+	}
+
+	// 3. 越界 index → 404
 	w2 := httptest.NewRecorder()
 	c2, _ := gin.CreateTestContext(w2)
 	c2.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/9?mailbox="+url.QueryEscape(mailbox), nil)
@@ -162,7 +195,7 @@ UERGREFUQQ==
 		t.Fatalf("out-of-range index status = %d, body = %s", w2.Code, w2.Body.String())
 	}
 
-	// 3. 邮件不存在 → 404
+	// 4. 邮件不存在 → 404
 	w3 := httptest.NewRecorder()
 	c3, _ := gin.CreateTestContext(w3)
 	c3.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/0?mailbox="+url.QueryEscape(mailbox), nil)

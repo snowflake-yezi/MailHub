@@ -25,9 +25,10 @@
 
 | 项 | 选择 | 说明 |
 |----|------|------|
-| 传输方式 | **二进制流透传** | 端点直接返回原始字节，带真实 `Content-Type` + `Content-Disposition: attachment`；错误仍返回 JSON 信封。作为统一 JSON 信封约定的**例外**（文件下载业界标准） |
+| 传输方式 | **二进制流透传** | 端点直接返回原始字节，带真实 `Content-Type`；普通附件返回 `Content-Disposition: attachment`，inline MIME part 返回 `Content-Disposition: inline`；错误仍返回 JSON 信封。作为统一 JSON 信封约定的**例外**（文件下载/邮件内嵌资源业界标准） |
 | 定位方式 | 按 `index` | 与列表/正文返回的 `attachment.index` 字段对齐，稳定无歧义 |
-| 范围 | 仅单个附件 | 不含整封 `.eml` 下载、不含附件 OSS 化、不含查询性能优化 |
+| 覆盖范围 | 普通附件 + inline part | `collectAttachmentParts()` 顺序固定为普通附件先于 inline part；正文 HTML 的 `cid:` 图片可按 `content_id -> index` 映射到该下载端点 |
+| 范围 | 仅单个附件/inline 资源 | 不含整封 `.eml` 下载、不含附件 OSS 化、不含查询性能优化 |
 
 ### 1.4 与原需求的差异
 
@@ -38,7 +39,7 @@
 ## 2. 端到端链路
 
 ```
-emails.html <a download>
+emails.html <a download> / HTML 预览 <img src="同源附件URL">
    │  浏览器同源自动带 mgmt_session cookie
    ▼
 mgmt-system  proxyAttachmentToServer()  ← 不经 JSON 信封，保留响应头
@@ -61,7 +62,7 @@ mail-node  GET /internal/messages/:message_id/attachments/:index?mailbox=
 - 鉴权：`X-Internal-Token`（与现有 `/internal/*` 一致，`mail-node/internal/middleware/auth.go`）
 - `:message_id` 匹配沿用 `GetMessageBody` 的三级兼容（精确 / normalize 去 `<>` / fallback-id 忽略大小写）
 - 响应：
-  - 成功 `200`：`Content-Type` = `part.ContentType`（空则 `application/octet-stream`）；`Content-Disposition: attachment; filename="<ascii fallback>"; filename*=UTF-8''<urlencoded 原名>`（RFC 5987，兼容中文）；body = 附件原始字节
+  - 成功 `200`：`Content-Type` = `part.ContentType`（空则 `application/octet-stream`）；普通附件 `Content-Disposition: attachment; filename="<ascii fallback>"; filename*=UTF-8''<urlencoded 原名>`；inline MIME part `Content-Disposition: inline; ...`（同样保留 RFC 5987 文件名编码）；body = 附件/inline 资源原始字节
   - `400` `{code:1002}`：mailbox 非法 / index 非数字
   - `404` `{code:2003}`：邮件未找到 / index 越界
   - `500` `{code:5000}`：解析失败
@@ -87,7 +88,8 @@ mail-node  GET /internal/messages/:message_id/attachments/:index?mailbox=
 ## 4. 安全
 
 - 三条端点全部复用现有鉴权链（Bearer+scope / session / internal-token），**无新增中间件、无 URL 内嵌 token**。
-- 前端 `<a download>` 同源请求自动携带 session cookie，零额外鉴权代码。
+- 前端 `<a download>` 同源请求自动携带 session cookie，零额外鉴权代码；HTML 预览中的 inline 图片 URL 同样走同源 Session 保护接口。
+- HTML 预览只将 `cid:` 引用重写到本系统附件 URL，默认不加载外部远程图片，避免追踪像素和隐私泄露。
 - 文件名经 `url.PathEscape` 编码后写入 `Content-Disposition`，避免响应头注入。
 - 附件内容来自已落地的 Maildir 文件，无外部输入直接拼路径（路径由 email → `domain/local` 拼接，email 已做格式校验）。
 
