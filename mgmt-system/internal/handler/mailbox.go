@@ -493,13 +493,6 @@ func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	defaultSize := h.store.GetConfigInt("general.default_page_size", 20)
 	size, _ := strconv.Atoi(c.DefaultQuery("size", strconv.Itoa(defaultSize)))
-	status := c.Query("status")
-	search := c.Query("search")
-	if search == "" {
-		search = c.Query("order_id")
-	}
-	domainID := parseUint64(c.Query("domain_id"))
-	serverID := parseUint64(c.Query("server_id"))
 
 	if page < 1 {
 		page = 1
@@ -508,12 +501,7 @@ func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 		size = 20
 	}
 
-	list, total, err := h.store.ListMailboxesWithFilter(page, size, store.MailboxListFilter{
-		Status:   status,
-		Search:   search,
-		DomainID: domainID,
-		ServerID: serverID,
-	})
+	list, total, err := h.store.ListMailboxesWithFilter(page, size, mailboxListFilterFromQuery(c))
 	if err != nil {
 		serverError(c, ErrCodeInternal, "failed to list mailboxes")
 		return
@@ -525,6 +513,31 @@ func (h *MailboxHandler) ListMailboxes(c *gin.Context) {
 		"page":  page,
 		"size":  size,
 	})
+}
+
+func mailboxListFilterFromQuery(c *gin.Context) store.MailboxListFilter {
+	view := c.DefaultQuery("view", "normal")
+	if view != "trash" {
+		view = "normal"
+	}
+	search := c.Query("search")
+	if search == "" {
+		search = c.Query("order_id")
+	}
+
+	filter := store.MailboxListFilter{
+		Status:   c.Query("status"),
+		Search:   search,
+		DomainID: parseUint64(c.Query("domain_id")),
+		ServerID: parseUint64(c.Query("server_id")),
+	}
+	if view == "trash" {
+		filter.Status = ""
+		filter.Statuses = []string{"soft_deleted", "purged"}
+	} else {
+		filter.ExcludeStatuses = []string{"soft_deleted", "purged"}
+	}
+	return filter
 }
 
 // UpdateMailboxPassword updates the password for a mailbox account.
