@@ -6,6 +6,19 @@
 
 ---
 
+## 最新修复优先看
+
+> 近期线上反馈已优先收口以下稳定性问题，均已本地测试并部署国际机验证。
+
+- **inline 图片接收/展示修复**：兼容 QQ/Gmail 等客户端把正文图片发成 `application/octet-stream`、无标准 filename、只靠 `Content-ID` + `cid:` 引用的 MIME。mail-node 现在会按图片魔数补 `image/jpeg` / `image/png` 等真实类型和 `.jpg/.png` 后缀，管理后台邮件详情、HTML 预览、附件下载三处保持一致。
+- **Roundcube 转发链路修复**：不仅 API 读取时修正，SMTP 转发到集成邮箱前也会修复被 HTML `cid:` 引用的图片 part MIME 头，补齐 `Content-Type: image/*; name="..."` 与 `Content-Disposition: inline; filename="..."`，避免 Roundcube 仍看到无后缀附件。
+- **集成邮箱 SMTP 凭据热加载修复**：转发目标池切换后，mail-node 每次发送前动态读取 active 集成邮箱的 SMTP user/pass，避免线上 `smtp auth 535` 导致转发停滞；密码不落入后台 KV 配置页。
+- **邮箱集合 / 回收站混排修复**：React SPA 邮箱列表 API 已按 `view=trash` 正确过滤，普通列表默认排除 `soft_deleted/purged`，回收站只显示已删除/已清理状态。
+- **外部 API 契约与鉴权修复**：补齐 `/api/v1/emails/*` 邮箱维度路由、附件下载、Bearer scope 精确匹配和内部 Shared-Secret 校验，错误路径保持统一 JSON 信封。
+- **附件下载与 safe HTML 预览修复**：附件二进制下载透传 `Content-Type` / `Content-Disposition`；HTML 预览移除危险脚本与外链图片，只允许安全的 `cid:` 映射图片在 iframe 中展示。
+
+---
+
 ## 核心特性
 
 ### 邮局管理
@@ -16,17 +29,17 @@
 
 ### 邮件处理
 - **过滤引擎**：可配置规则（按发件人 / 主题等匹配 pass / flag / block），数据面定时拉取 + 控制面变更主动推送，热生效。
-- **自动转发汇总**：数据面异步扫描 Maildir，按规则过滤后 SMTP 转发到集成邮箱；正文原样透传，仅改 Subject 加来源标识，内置防循环。
+- **自动转发汇总**：数据面异步扫描 Maildir，按规则过滤后 SMTP 转发到集成邮箱；正文尽量保真，仅改 Subject 加来源标识，并对 `cid:` inline 图片的 MIME 头做兼容修复，内置防循环。
 - **集成邮箱（转发目标池）管理**：后台维护多个集成邮箱，一键切换当前生效的转发目标；切换后控制面联动通知数据面热加载，无需改配置重启。
-- **邮件与附件查询**：MIME 结构化解析，对外 API 提供正文 + 附件元数据 + 附件流式下载。
-- **Roundcube Webmail**：集成邮箱可选的 Webmail 前端，运营统一登录查看汇总邮件。
+- **邮件与附件查询**：MIME 结构化解析，对外 API 提供正文 + 附件元数据 + 附件流式下载；支持 inline 图片魔数推断、后缀补齐与 `cid:` 安全预览。
+- **Roundcube Webmail**：集成邮箱可选的 Webmail 前端，运营统一登录查看汇总邮件；转发链路会修复不规范 inline 图片 MIME 头，提升 Roundcube 展示兼容性。
 
 ### 运维与配置
 - **系统动态配置**：80+ 项运行参数（扫描间隔 / 超时 / 阈值 / 心跳 / 会话等）后台可视化调整，部分支持热加载，免改代码重启。
 
 ### 安全与 API
 - **三层鉴权体系**：后台 Session 登录 + 外部 API Bearer Token (Scope) + 内部 Shared-Secret 互信。
-- **对外 API**：出票中心 / 大模型系统通过 Token 鉴权创建邮箱、按 scope 拉取邮件原件与附件。
+- **对外 API**：出票中心 / 大模型系统通过 Token 鉴权创建邮箱、按 scope 精确授权拉取邮件原件与附件；正式契约见 [外部 API 对接文档](docs/api/external-api.md)。
 
 ---
 
@@ -171,6 +184,9 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 
 | 文档 | 说明 |
 |------|------|
+| [外部 API 对接文档](docs/api/external-api.md) | 出票中心 / 大模型系统接口、鉴权、请求响应、附件下载说明 |
+| [外部 API 契约修复设计](docs/design/external-api-contract-fix-design.md) | Scope 精确匹配、邮箱维度路由参数修复与测试方案 |
+| [inline 图片文件后缀解析修复设计](docs/design/inline-image-filename-inference-design.md) | QQ/Gmail inline 图片 octet-stream、缺 filename/后缀、CID 映射与 Roundcube 转发兼容修复 |
 | [架构概览](docs/architecture-overview.md) | 系统架构、数据模型、接口流向 |
 | [部署指南](docs/design/deployment-guide.md) | 完整部署步骤、配置项说明 |
 | [技术实现方案](docs/design/technical-implementation.md) | Phase 1A 实现细节 |
@@ -204,6 +220,9 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 | 增强 | 动态配置化（80+ 参数后台可视化） | ✅ |
 | 增强 | 管理后台 React SPA 全量重写 | ✅ |
 | 增强 | 集成邮箱转发目标池管理 + 后台热切换 | ✅ |
-| 增强 | 邮件附件流式下载 | ✅ |
+| 增强 | 邮件附件流式下载 + safe HTML 预览 + inline 图片 MIME 兼容 | ✅ |
+| 修复 | Roundcube 转发链路 inline 图片后缀 / Content-Type 修正 | ✅ |
+| 修复 | 集成邮箱 SMTP 凭据热加载与转发恢复 | ✅ |
+| 修复 | 邮箱集合 / 回收站状态混排回归 | ✅ |
 
-已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查、结构化邮件查询、邮箱生命周期恢复、filter 主动推送、TLS 部署文档。后续运维：IPv4 配置、Let's Encrypt 证书实际申请、临时机清理。
+已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查、结构化邮件查询、inline 图片兼容解析、邮箱生命周期恢复、filter 主动推送、TLS 部署文档。后续运维：IPv4 配置、Let's Encrypt 证书实际申请、临时机清理。
