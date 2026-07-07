@@ -12,7 +12,7 @@
 |------|-----|
 | 域名 | `example.com` |
 | 邮箱服务器 IP | `203.0.113.20` |
-| 操作系统 | CentOS 7+ 或 Ubuntu 20.04+ |
+| 操作系统 | CentOS 7+ / Rocky Linux 8+ / Debian 11+ / Ubuntu 20.04+ |
 | 主机名 | `mail.example.com` |
 | 集成邮箱 | `union@example.com`（自建 Dovecot 账号） |
 | vmail UID/GID | 5000:5000 |
@@ -79,15 +79,34 @@ df -h
 # 如果 25 端口被禁，联系云厂商工单申请解封
 ```
 
-### 3.3 配置防火墙
+### 3.3 安装基础工具
 
 ```bash
-# firewalld（CentOS 7+）
+# RHEL 系（CentOS / Rocky / AlmaLinux）
+yum install -y curl wget tar unzip vim git openssl ca-certificates
+
+# Debian 系（Debian / Ubuntu）
+apt-get update
+apt-get install -y curl wget tar unzip vim git openssl ca-certificates lsb-release
+```
+
+### 3.4 配置防火墙
+
+```bash
+# firewalld（CentOS / Rocky / AlmaLinux）
 firewall-cmd --add-port=25/tcp --permanent     # SMTP 收信
 firewall-cmd --add-port=587/tcp --permanent    # Submission（发信）
 firewall-cmd --add-port=443/tcp --permanent    # HTTPS（Nginx）
 firewall-cmd --add-port=8081/tcp --permanent   # mail-node API
 firewall-cmd --reload
+
+# ufw（Debian / Ubuntu，可选）
+ufw allow 25/tcp
+ufw allow 587/tcp
+ufw allow 443/tcp
+ufw allow from <控制面IP> to any port 8081 proto tcp
+ufw allow from <你的IP> to any port 22 proto tcp
+ufw reload
 ```
 
 **云厂商安全组也要放行：**
@@ -135,15 +154,15 @@ IMAP地址:  203.0.113.20
 ### 5.1 安装组件
 
 ```bash
-# CentOS 7
-yum install -y postfix dovecot
+# RHEL 系（CentOS / Rocky / AlmaLinux）
 yum install -y epel-release
-yum install -y opendkim
-yum install -y python3                        # Python 2 中文编码有 bug
+yum install -y postfix dovecot opendkim python3
 
-# Ubuntu 20.04+
-apt-get install -y postfix dovecot-core dovecot-imapd opendkim opendkim-tools
+# Debian 系（Debian / Ubuntu）
+DEBIAN_FRONTEND=noninteractive apt-get install -y postfix dovecot-core dovecot-imapd dovecot-pop3d opendkim opendkim-tools python3
 ```
+
+> Debian / Ubuntu 安装 Postfix 时如果弹出交互配置，选择 `Internet Site`，系统邮件名填 `example.com`；后续仍以本文 `main.cf` 为准覆盖关键配置。
 
 ### 5.2 配置 Postfix
 
@@ -307,23 +326,215 @@ echo "test" | mail -s "test" test@example.com
 
 ---
 
-## 6. 端到端测试
+## 6. Roundcube Webmail 安装
+
+Roundcube 是可选 Webmail 前端，推荐和集成邮箱所在的数据面同机部署。它通过 IMAP 读取 Dovecot，通过 SMTP submission 发送邮件。
+
+### 6.1 安装 PHP / Nginx / 数据库依赖
+
+```bash
+# RHEL 系（CentOS / Rocky / AlmaLinux）
+yum install -y nginx php php-fpm php-cli php-mbstring php-intl php-xml php-json php-pdo php-gd php-zip php-pear sqlite
+
+# Debian 系（Debian / Ubuntu）
+apt-get install -y nginx php-fpm php-cli php-mbstring php-intl php-xml php-json php-sqlite3 php-gd php-zip sqlite3
+```
+
+> PHP 包名会随发行版版本略有差异；如果缺少扩展，按 Roundcube installer 页面提示补装即可。
+
+### 6.2 下载并初始化 Roundcube
+
+```bash
+cd /tmp
+wget https://github.com/roundcube/roundcubemail/releases/download/1.6.9/roundcubemail-1.6.9-complete.tar.gz
+tar -xzf roundcubemail-1.6.9-complete.tar.gz
+mkdir -p /var/www
+mv roundcubemail-1.6.9 /var/www/roundcube
+cd /var/www/roundcube
+
+# SQLite 最简单，适合单机 Webmail
+mkdir -p /var/lib/roundcube
+bin/initdb.sh --dir=SQL sqlite > /var/lib/roundcube/roundcube.sqlite.sql
+sqlite3 /var/lib/roundcube/roundcube.sqlite < /var/lib/roundcube/roundcube.sqlite.sql
+```
+
+### 6.3 配置 Roundcube
+
+创建 `/var/www/roundcube/config/config.inc.php`：
+
+```php
+<?php
+$config['db_dsnw'] = 'sqlite:////var/lib/roundcube/roundcube.sqlite';
+$config['imap_host'] = 'tls://localhost:993';
+$config['smtp_host'] = 'tls://localhost:587';
+$config['smtp_user'] = '%u';
+$config['smtp_pass'] = '%p';
+$config['support_url'] = '';
+$config['product_name'] = 'MailHub Webmail';
+$config['des_key'] = 'replace_with_24_random_chars';
+$config['plugins'] = ['archive', 'zipdownload'];
+$config['smtp_conn_options'] = [
+    'ssl' => [
+        'verify_peer' => false,
+        'verify_peer_name' => false,
+        'allow_self_signed' => true,
+    ],
+];
+$config['imap_conn_options'] = $config['smtp_conn_options'];
+```
+
+生成 `des_key` 示例：
+
+```bash
+openssl rand -base64 18
+```
+
+设置权限：
+
+```bash
+# RHEL 系常见 PHP-FPM 用户是 apache；Debian/Ubuntu 常见是 www-data
+chown -R apache:apache /var/www/roundcube /var/lib/roundcube 2>/dev/null || true
+chown -R www-data:www-data /var/www/roundcube /var/lib/roundcube 2>/dev/null || true
+```
+
+### 6.4 Nginx 站点配置
+
+如果 Roundcube 与管理后台共用一个域名，可把 `/admin`、`/api` 代理到 mgmt-system，根路径 `/` 给 Roundcube：
+
+```nginx
+server {
+    listen 80;
+    server_name mail.example.com;
+
+    location /admin  { proxy_pass http://127.0.0.1:8080; }
+    location /api    { proxy_pass http://127.0.0.1:8080; }
+    location /static { proxy_pass http://127.0.0.1:8080; }
+
+    root /var/www/roundcube;
+    index index.php index.html;
+
+    location / {
+        try_files $uri $uri/ /index.php;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass 127.0.0.1:9000;     # RHEL 系常见
+        # fastcgi_pass unix:/run/php/php-fpm.sock;  # Debian/Ubuntu 按实际 php-fpm sock 调整
+    }
+}
+```
+
+```bash
+nginx -t && systemctl enable nginx && systemctl reload nginx
+systemctl enable php-fpm 2>/dev/null || systemctl enable php*-fpm
+systemctl restart php-fpm 2>/dev/null || systemctl restart php*-fpm
+```
+
+### 6.5 在 Roundcube 查看邮件
+
+1. 打开 `https://mail.example.com/` 或你的 Webmail 域名。
+2. 使用 Dovecot 邮箱账号登录，例如 `user@example.com` 和该邮箱密码。
+3. 在「收件箱」查看真实投递到该邮箱的邮件。
+4. 如果使用集成邮箱作为汇总收件箱，登录集成邮箱即可查看所有转发后的汇总邮件。
+5. 发信测试：点击「撰写」，给外部邮箱或本域邮箱发信；若报 SMTP 认证失败，重点检查 Postfix `submission` 是否启用 `smtpd_sasl_auth_enable=yes` 且 `smtpd_tls_auth_only=no`。
+
+---
+
+## 7. Windows 本地开发 / 演示部署
+
+Windows 适合运行控制面、前端和单元测试；不建议直接在 Windows 上承载生产 Postfix/Dovecot。需要完整邮件收发时，建议用 WSL2 或 Linux 虚拟机部署数据面。
+
+### 7.1 准备依赖
+
+- Go 1.22+
+- Node.js 20+
+- MySQL 8.0 / MariaDB 10.5+
+- Git for Windows
+
+### 7.2 启动控制面
+
+```powershell
+cd mgmt-system
+copy config.example.yaml config.yaml
+# 编辑 config.yaml：填写 DSN、admin、shared_secret、api_tokens
+
+go run ./cmd/server
+```
+
+访问：
+
+```text
+http://localhost:8080/admin/
+```
+
+### 7.3 启动 React 管理后台开发服务
+
+```powershell
+cd mgmt-system/web
+npm install
+npm run dev
+```
+
+开发时可使用 Vite dev server；生产发布前运行：
+
+```powershell
+npm run build
+```
+
+### 7.4 Windows 上运行 mail-node 的限制
+
+```powershell
+cd mail-node
+copy config.example.yaml config.yaml
+go run ./cmd/node
+```
+
+这只能验证 HTTP API、配置加载和部分业务逻辑。真实收发邮件依赖 Postfix/Dovecot/OpenDKIM，建议在 Linux/WSL2 中部署数据面后，再把 Windows 上的 mgmt-system 指向该数据面 API。
+
+### 7.5 Windows 本地测试
+
+```powershell
+go test ./mgmt-system/...
+go test ./mail-node/...
+npm --prefix mgmt-system/web run build
+```
+
+---
+
+## 8. 在管理后台查看邮件
+
+1. 登录 `http://<控制面地址>:8080/admin/`。
+2. 进入「服务器」页面，确认数据面节点状态为 healthy。
+3. 进入「服务器 → 域名池」，添加域名并按页面提示配置 DNS。
+4. 在域名池下创建邮箱，或通过邮箱页面批量创建邮箱。
+5. 进入「邮件」页面，输入目标邮箱地址并查询。
+6. 打开邮件详情：
+   - 「文本」查看纯文本正文；
+   - 「HTML 预览」查看经过安全处理的 HTML 正文；
+   - 「附件」下载附件或 inline 图片。
+7. inline 图片场景下，系统会把 HTML 中的 `cid:` 引用映射到附件下载接口，并按图片魔数修复缺失的后缀和 Content-Type。
+
+---
+
+## 9. 端到端测试
 
 ```
 ① mgmt 后台注册 mail-node → 添加域名 → 记录 DNS 清单
 ② 在 DNS 控制台配置 A/MX/SPF/DKIM/DMARC
 ③ mgmt 在域名池下创建测试邮箱
-④ 从外部邮箱（QQ/Gmail）发邮件到测试邮箱
-⑤ 检查：mail-node API 可查询到邮件
-⑥ 检查：union 邮箱收到转发（Subject 带 [源邮箱: xxx] 前缀）
-⑦ 从 Roundcube union 邮箱发信回复，验证双向收发
+④ 从外部邮箱发邮件到测试邮箱
+⑤ 在管理后台「邮件」页面查询该邮箱，确认正文、附件、inline 图片正常
+⑥ 登录 Roundcube 集成邮箱，确认收到转发汇总邮件
+⑦ 从 Roundcube 集成邮箱发信回复，验证双向收发
 ```
 
 ---
 
-## 7. TLS 证书（Let's Encrypt）
+## 10. TLS 证书（Let's Encrypt）
 
-### 7.1 安装 certbot
+### 10.1 安装 certbot
 
 ```bash
 # CentOS 7
@@ -335,7 +546,7 @@ apt-get update
 apt-get install -y certbot
 ```
 
-### 7.2 申请证书
+### 10.2 申请证书
 
 使用 webroot 方式（Nginx 需已监听 80 端口做验证）：
 
@@ -348,7 +559,7 @@ certbot certonly --webroot -w /var/www/html -d mail.example.com
 - 证书：`/etc/letsencrypt/live/mail.example.com/fullchain.pem`
 - 私钥：`/etc/letsencrypt/live/mail.example.com/privkey.pem`
 
-### 7.3 Nginx 配置 TLS
+### 10.3 Nginx 配置 TLS
 
 ```nginx
 server {
@@ -391,7 +602,7 @@ server {
 nginx -t && systemctl reload nginx
 ```
 
-### 7.4 Postfix TLS
+### 10.4 Postfix TLS
 
 ```bash
 # 编辑 /etc/postfix/main.cf
@@ -414,7 +625,7 @@ openssl s_client -connect mail.example.com:25 -starttls smtp </dev/null 2>/dev/n
 # 预期看到 Let's Encrypt 签发的证书信息
 ```
 
-### 7.5 Dovecot SSL
+### 10.5 Dovecot SSL
 
 ```bash
 # /etc/dovecot/conf.d/10-ssl.conf
@@ -433,7 +644,7 @@ dovecot reload
 openssl s_client -connect mail.example.com:993 </dev/null 2>/dev/null | grep -E 'subject=|issuer='
 ```
 
-### 7.6 证书自动续期
+### 10.6 证书自动续期
 
 Let's Encrypt 证书有效期 90 天，需定期续期：
 
@@ -450,7 +661,7 @@ crontab -e
 certbot renew --dry-run
 ```
 
-### 7.7 证书文件权限
+### 10.7 证书文件权限
 
 ```bash
 # Let's Encrypt 私钥仅 root 可读
@@ -463,7 +674,7 @@ chmod 640 /etc/letsencrypt/archive/mail.example.com/privkey*.pem
 
 ---
 
-## 8. 部署踩坑汇总
+## 11. 部署踩坑汇总
 
 | 坑 | 现象 | 修复 |
 |----|------|------|
@@ -478,10 +689,11 @@ chmod 640 /etc/letsencrypt/archive/mail.example.com/privkey*.pem
 
 ---
 
-## 9. 版本记录
+## 12. 版本记录
 
 | 日期 | 变更 |
 |------|------|
 | 2026-06-17 | 初版：DNS 配置 + 服务器部署步骤 |
 | 2026-06-26 | 更新至当前架构：OpenDKIM、DNS 五件套、Postfix 2.10 兼容、踩坑汇总 |
-| 2026-06-30 | T10 收尾：新增 §7 TLS 证书（Let's Encrypt 获取/部署/续期、Postfix/Dovecot/Nginx） |
+| 2026-06-30 | T10 收尾：新增 §10 TLS 证书（Let's Encrypt 获取/部署/续期、Postfix/Dovecot/Nginx） |
+| 2026-07-07 | 补充 Debian/Ubuntu/RHEL 通用安装、Windows 本地开发、Roundcube 安装与管理后台/Webmail 查看邮件步骤 |

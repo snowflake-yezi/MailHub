@@ -1,8 +1,8 @@
 # MailHub
 
-> 基于 Postfix + Dovecot 的自建邮局管理系统，提供多服务器管理、邮箱批量开通、域名 DNS / DKIM 自动配置、邮件过滤转发、Webmail 与邮件查询 API。
+> 基于 Postfix + Dovecot 的自建邮局管理系统，融合「宝塔邮局管理器」的多机管理能力与 Roundcube Webmail，并在此基础上升级出控制面 / 数据面分离、域名 DNS / DKIM 自动化、过滤转发、动态配置、结构化邮件查询 API 等能力。
 
-适用于需要自主管理业务邮箱、统一汇总邮件并对外提供结构化邮件读取能力的场景。系统将控制面与数据面解耦：控制面负责账号、服务器、域名、规则和 API；数据面负责真实邮件收发、Maildir 存储、过滤转发和附件处理。
+适用于需要自主管理业务邮箱、批量开通账号、统一汇总邮件并对外提供邮件读取能力的场景。系统将控制面与数据面解耦：控制面负责账号、服务器、域名、规则和 API；数据面负责真实邮件收发、Maildir 存储、过滤转发和附件处理。
 
 ---
 
@@ -211,7 +211,7 @@ cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cm
 | Phase 1A | 项目骨架 + 管理后台 CRUD | ✅ |
 | Phase 1B | 邮件服务器部署 + DNS + 收发验证 | ✅ |
 | Phase 2 | 自动转发 + Roundcube Webmail | ✅ |
-| Phase 3 T4/T5 | 服务器域名池 + Postfix 虚拟域 + DKIM | ✅ |
+| Phase 3 T4/T5 | 服务器域名池 + Postfix 虚域 + DKIM | ✅ |
 | Phase 3 T6 | 三层鉴权体系 | ✅ |
 | Phase 3 T7 | 健康检查与心跳 | ✅ |
 | Phase 3 T8 | MIME 预处理（结构化邮件） | ✅ |
