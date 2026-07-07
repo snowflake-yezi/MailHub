@@ -1,18 +1,33 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  ArchiveRestore,
+  CheckCircle2,
+  Copy,
+  Download,
+  Inbox,
+  KeyRound,
+  MailPlus,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { mailboxAPI, serverAPI, domainAPI, integratedMailboxAPI } from '../api'
 
-const STATUS_TAG = {
-  active: 'tag-success',
-  synced: 'tag-success',
-  pending: 'tag-warning',
-  deleting: 'tag-warning',
-  disabled: 'tag-danger',
-  recycled: 'tag-danger',
-  sync_failed: 'tag-danger',
-  soft_deleted: 'tag-info',
-  purged: 'tag-info',
-  ok: 'tag-success',
-  fail: 'tag-danger',
+const STATUS_META = {
+  active: { label: '正常', className: 'tag-success' },
+  synced: { label: '已同步', className: 'tag-success' },
+  pending: { label: '等待中', className: 'tag-warning' },
+  deleting: { label: '删除中', className: 'tag-warning' },
+  disabled: { label: '停用', className: 'tag-danger' },
+  recycled: { label: '回收站', className: 'tag-warning' },
+  sync_failed: { label: '同步失败', className: 'tag-danger' },
+  soft_deleted: { label: '可恢复', className: 'tag-warning' },
+  purged: { label: '已清理', className: 'tag-info' },
+  ok: { label: '正常', className: 'tag-success' },
+  fail: { label: '失败', className: 'tag-danger' },
 }
 
 function Toast({ message, type, onClose }) {
@@ -20,7 +35,48 @@ function Toast({ message, type, onClose }) {
     const t = setTimeout(onClose, 3000)
     return () => clearTimeout(t)
   }, [onClose])
+
   return <div className={`toast toast-${type}`}>{message}</div>
+}
+
+function ConfirmDialog({ title, message, confirmLabel = '确认', danger = true, onConfirm, onCancel }) {
+  return (
+    <div className="modal-overlay" onClick={onCancel}>
+      <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
+        <h3>{title}</h3>
+        <p>{message}</p>
+        <div className="modal-footer">
+          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
+          <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={onConfirm}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatusTag({ status }) {
+  const meta = STATUS_META[status] || { label: status || '-', className: 'tag-info' }
+  return <span className={`tag ${meta.className}`}>{meta.label}</span>
+}
+
+function SummaryTile({ icon: Icon, label, value, tone }) {
+  return (
+    <div className="summary-tile" data-tone={tone}>
+      <span className="summary-icon"><Icon size={18} /></span>
+      <div>
+        <div className="summary-value">{value}</div>
+        <div className="summary-label">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function csvEscape(value) {
@@ -31,7 +87,7 @@ function csvEscape(value) {
 
 function downloadCsv(filename, rows) {
   const content = rows.map(row => row.map(csvEscape).join(',')).join('\n')
-  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
+  const blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
@@ -43,15 +99,16 @@ function downloadCsv(filename, rows) {
 }
 
 export default function MailboxesPage() {
-  const [view, setView] = useState('normal') // 'normal' | 'trash' | 'integrated'
+  const [view, setView] = useState('normal')
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState(null)
+  const [confirm, setConfirm] = useState(null)
   const [servers, setServers] = useState([])
   const [domains, setDomains] = useState([])
 
-  // Filters
   const [search, setSearch] = useState('')
   const [domainId, setDomainId] = useState('')
   const [serverId, setServerId] = useState('')
@@ -59,7 +116,6 @@ export default function MailboxesPage() {
   const [page, setPage] = useState(1)
   const [size, setSize] = useState(20)
 
-  // Create form
   const [createPrefix, setCreatePrefix] = useState('')
   const [createPassword, setCreatePassword] = useState('')
   const [createServerId, setCreateServerId] = useState('0')
@@ -69,24 +125,21 @@ export default function MailboxesPage() {
   const [creating, setCreating] = useState(false)
   const [batchResult, setBatchResult] = useState(null)
 
-  // Password edit
   const [pwdModal, setPwdModal] = useState(null)
   const [pwdSaving, setPwdSaving] = useState(false)
 
-  // Integrated mailboxes (forward target pool)
   const [integrated, setIntegrated] = useState([])
-  const [integratedModal, setIntegratedModal] = useState(null) // { mode: 'add'|'edit', data }
+  const [integratedModal, setIntegratedModal] = useState(null)
   const [integratedSaving, setIntegratedSaving] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (silent = false) => {
+    if (silent) setRefreshing(true)
+    else setLoading(true)
     try {
       const params = { page, size, search, domain_id: domainId, server_id: serverId }
-      if (view === 'trash') {
-        params.view = 'trash'
-      } else if (statusFilter) {
-        params.status = statusFilter
-      }
+      if (view === 'trash') params.view = 'trash'
+      else if (statusFilter) params.status = statusFilter
+
       const data = await mailboxAPI.list(params)
       setItems(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [])
       setTotal(data?.total_count ?? data?.total ?? 0)
@@ -94,12 +147,12 @@ export default function MailboxesPage() {
       setToast({ type: 'error', message: '加载失败: ' + e.message })
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }, [view, search, domainId, serverId, statusFilter, page, size])
 
   useEffect(() => {
     load()
-    // Load dropdowns
     serverAPI.list().then(d => setServers(Array.isArray(d) ? d : [])).catch(() => {})
     domainAPI.list().then(d => setDomains(Array.isArray(d) ? d : [])).catch(() => {})
   }, [load])
@@ -114,18 +167,19 @@ export default function MailboxesPage() {
     if (view === 'integrated') loadIntegrated()
   }, [view, loadIntegrated])
 
-  const handleSearch = (e) => {
-    e.preventDefault()
-    setPage(1)
-    load()
-  }
+  const summary = useMemo(() => ({
+    total,
+    domains: domainId ? 1 : domains.length,
+    servers: serverId ? 1 : servers.length,
+    integrated: integrated.length,
+  }), [total, domainId, domains.length, serverId, servers.length, integrated.length])
 
   const serverDomains = (server) => server?.domains || server?.Domains || []
-  const selectedCreateServer = servers.find(s => s.id === parseInt(createServerId))
-  const selectedCreateDomain = domains.find(d => d.id === parseInt(createDomainId))
+  const selectedCreateServer = servers.find(s => s.id === parseInt(createServerId, 10))
+  const selectedCreateDomain = domains.find(d => d.id === parseInt(createDomainId, 10))
   const domainIsServedByServer = (server, domainValue) => {
     if (!server || !domainValue || domainValue === '0') return true
-    return serverDomains(server).some(d => d.id === parseInt(domainValue))
+    return serverDomains(server).some(d => d.id === parseInt(domainValue, 10))
   }
   const createServerOptions = createDomainId !== '0'
     ? servers.filter(s => domainIsServedByServer(s, createDomainId))
@@ -134,12 +188,18 @@ export default function MailboxesPage() {
     ? serverDomains(selectedCreateServer)
     : domains
 
+  const handleSearch = (e) => {
+    e.preventDefault()
+    setPage(1)
+    load(true)
+  }
+
   const handleCreateServerChange = (value) => {
     setCreateServerId(value)
-    const server = servers.find(s => s.id === parseInt(value))
+    const server = servers.find(s => s.id === parseInt(value, 10))
     if (value !== '0' && createDomainId !== '0' && !domainIsServedByServer(server, createDomainId)) {
       setCreateDomainId('0')
-      setToast({ type: 'error', message: '已清空域名：该服务器未绑定当前域名' })
+      setToast({ type: 'error', message: '已清空域名筛选：该服务器未绑定当前域名' })
     }
   }
 
@@ -147,15 +207,15 @@ export default function MailboxesPage() {
     setCreateDomainId(value)
     if (value !== '0' && createServerId !== '0' && !domainIsServedByServer(selectedCreateServer, value)) {
       setCreateServerId('0')
-      setToast({ type: 'error', message: '已清空服务器：当前域名未绑定该服务器' })
+      setToast({ type: 'error', message: '已清空服务器筛选：当前域名未绑定该服务器' })
     }
   }
 
   const buildCreateItem = (prefix, password = '') => ({
     prefix: prefix.trim(),
     password: password.trim(),
-    server_id: parseInt(createServerId) || 0,
-    domain_id: parseInt(createDomainId) || 0,
+    server_id: parseInt(createServerId, 10) || 0,
+    domain_id: parseInt(createDomainId, 10) || 0,
   })
 
   const submitCreateItems = async (createItems) => {
@@ -166,8 +226,8 @@ export default function MailboxesPage() {
     try {
       const result = await mailboxAPI.batchCreate(validItems)
       setBatchResult(result)
-      setToast({ type: 'success', message: `创建完成: 成功 ${result.success || 0}, 失败 ${result.failed || 0}` })
-      load()
+      setToast({ type: 'success', message: `创建完成：成功 ${result.success || 0}，失败 ${result.failed || 0}` })
+      load(true)
     } catch (e) {
       setToast({ type: 'error', message: '创建失败: ' + e.message })
     } finally {
@@ -200,45 +260,73 @@ export default function MailboxesPage() {
     downloadCsv(`mailbox-credentials-${ts}.csv`, rows)
   }
 
-  const handleDelete = async (item) => {
-    if (!confirm(`确认删除邮箱 ${item.email_address}？\n\n这将摘除 Postfix 收信、等待转发排空后将 Maildir 移入回收站。`)) return
-    try {
-      await mailboxAPI.remove(item.id)
-      setToast({ type: 'success', message: '已提交删除: ' + item.email_address })
-      load()
-    } catch (e) {
-      setToast({ type: 'error', message: '删除失败: ' + e.message })
-    }
+  const copyText = (text) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setToast({ type: 'success', message: '已复制' })
+    })
   }
 
-  const handleRestore = async (item) => {
-    if (!confirm(`确认恢复邮箱 ${item.email_address}？\n\n将从回收站回迁 Maildir，重建配置。仅删除后 24h 内可恢复。`)) return
-    try {
-      const data = await mailboxAPI.restore(item.id)
-      let msg = '已恢复: ' + item.email_address
-      if (data?.password) msg += '\n\n⚠️ 原密码未知，已生成临时密码：' + data.password + '\n请立即保存。'
-      alert(msg)
-      load()
-    } catch (e) {
-      setToast({ type: 'error', message: '恢复失败: ' + e.message })
-    }
+  const askDelete = (item) => {
+    setConfirm({
+      title: '删除邮箱',
+      message: `确定删除 ${item.email_address} 吗？系统会摘除收信并把 Maildir 移入回收站。`,
+      confirmLabel: '删除',
+      onConfirm: async () => {
+        try {
+          await mailboxAPI.remove(item.id)
+          setToast({ type: 'success', message: '已提交删除: ' + item.email_address })
+          load(true)
+        } catch (e) {
+          setToast({ type: 'error', message: '删除失败: ' + e.message })
+        }
+        setConfirm(null)
+      },
+      onCancel: () => setConfirm(null),
+    })
   }
 
-  const handlePurge = async (item) => {
-    if (!confirm(`确认彻底删除邮箱 ${item.email_address}？\n\n此操作不可恢复：将立即永久清除。`)) return
-    try {
-      await mailboxAPI.purge(item.id)
-      setToast({ type: 'success', message: '已彻底删除: ' + item.email_address })
-      load()
-    } catch (e) {
-      setToast({ type: 'error', message: '操作失败: ' + e.message })
-    }
+  const askRestore = (item) => {
+    setConfirm({
+      title: '恢复邮箱',
+      message: `确定恢复 ${item.email_address} 吗？仅删除后 24 小时内可从远端回收站恢复。`,
+      confirmLabel: '恢复',
+      danger: false,
+      onConfirm: async () => {
+        try {
+          const data = await mailboxAPI.restore(item.id)
+          setToast({ type: 'success', message: data?.password ? `已恢复，临时密码：${data.password}` : '已恢复: ' + item.email_address })
+          load(true)
+        } catch (e) {
+          setToast({ type: 'error', message: '恢复失败: ' + e.message })
+        }
+        setConfirm(null)
+      },
+      onCancel: () => setConfirm(null),
+    })
   }
 
-  const openPwdModal = (item) => setPwdModal({ id: item.id, email: item.email_address, password: '' })
+  const askPurge = (item) => {
+    setConfirm({
+      title: '彻底清理邮箱',
+      message: `确定永久清理 ${item.email_address} 吗？此操作不可恢复。`,
+      confirmLabel: '彻底清理',
+      onConfirm: async () => {
+        try {
+          await mailboxAPI.purge(item.id)
+          setToast({ type: 'success', message: '已彻底清理: ' + item.email_address })
+          load(true)
+        } catch (e) {
+          setToast({ type: 'error', message: '清理失败: ' + e.message })
+        }
+        setConfirm(null)
+      },
+      onCancel: () => setConfirm(null),
+    })
+  }
+
   const handlePwdSave = async () => {
     if (!pwdModal.password || pwdModal.password.length < 6) {
-      setToast({ type: 'error', message: '密码至少6个字符' })
+      setToast({ type: 'error', message: '密码至少 6 个字符' })
       return
     }
     setPwdSaving(true)
@@ -246,7 +334,7 @@ export default function MailboxesPage() {
       await mailboxAPI.updatePassword(pwdModal.id, pwdModal.password)
       setPwdModal(null)
       setToast({ type: 'success', message: '密码修改成功' })
-      load()
+      load(true)
     } catch (e) {
       setToast({ type: 'error', message: '修改失败: ' + e.message })
     } finally {
@@ -254,53 +342,63 @@ export default function MailboxesPage() {
     }
   }
 
-  const copyText = (text) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setToast({ type: 'success', message: '已复制' })
-    })
-  }
+  const totalPages = Math.max(1, Math.ceil(total / size))
+  const safePage = Math.min(page, totalPages)
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
-        <h1>邮箱账号台账</h1>
-        <p style={{ color: '#888', fontSize: 13, marginTop: 4 }}>以服务器、域名、邮箱账密为主维度；订单通过映射表关联账号。</p>
-      </div>
-
-      {/* Summary */}
-      <div className="cards" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <div className="card">
-          <div className="value">{total}</div>
-          <div className="label">筛选结果</div>
+      <div className="page-header">
+        <div>
+          <h1>邮箱账户</h1>
+          <p className="page-subtitle">按服务器、域名和生命周期管理邮箱，兼顾批量创建、回收站恢复与转发目标池。</p>
         </div>
-        <div className="card">
-          <div className="value">{domainId ? domains.find(d => d.id === parseInt(domainId))?.name || `#${domainId}` : '全部'}</div>
-          <div className="label">域名筛选</div>
-        </div>
-        <div className="card">
-          <div className="value">{serverId ? servers.find(s => s.id === parseInt(serverId))?.name || `#${serverId}` : '全部'}</div>
-          <div className="label">服务器筛选</div>
+        <div className="page-actions">
+          <button className="btn btn-outline" type="button" onClick={() => load(true)} disabled={refreshing}>
+            {refreshing ? <span className="spinner" /> : <RefreshCw size={16} />}
+            刷新
+          </button>
+          <button className="btn btn-primary" type="button" onClick={() => document.getElementById('mailbox-create-panel')?.scrollIntoView({ behavior: 'smooth' })}>
+            <MailPlus size={16} /> 创建邮箱
+          </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="tabs" style={{ display: 'inline-flex', gap: 2, padding: 3, background: '#e9ecef', borderRadius: 8, marginBottom: 16 }}>
-        <button className={`btn btn-sm ${view === 'normal' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('normal'); setPage(1) }}>账号集合</button>
-        <button className={`btn btn-sm ${view === 'trash' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('trash'); setPage(1) }}>回收站</button>
-        <button className={`btn btn-sm ${view === 'integrated' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('integrated'); loadIntegrated() }}>集成邮箱</button>
+      <div className="summary-grid">
+        <SummaryTile icon={Inbox} label="筛选结果" value={summary.total} tone="brand" />
+        <SummaryTile icon={CheckCircle2} label="可用域名" value={summary.domains} tone="success" />
+        <SummaryTile icon={Send} label="可用节点" value={summary.servers} tone="info" />
+        <SummaryTile icon={ArchiveRestore} label="转发目标" value={summary.integrated} tone="warning" />
       </div>
 
-      {/* ── List View ── */}
+      <div className="phase-tabs">
+        {[
+          ['normal', '账户集合'],
+          ['trash', '回收站'],
+          ['integrated', '集成邮箱'],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            className={view === value ? 'active' : ''}
+            type="button"
+            onClick={() => { setView(value); setPage(1); if (value === 'integrated') loadIntegrated() }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {(view === 'normal' || view === 'trash') && (
-        <div className="section">
-          {view === 'trash' && (
-            <div style={{ background: '#fff7df', color: '#8a5a00', border: '1px solid #f0d8a0', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 16 }}>
-              回收站保留删除后 <strong>24 小时</strong> 内可恢复的邮箱；超过 24h 远端已物理清除，恢复将失败。
-              「彻底删除」会立即转为已清除状态，<strong>不可恢复</strong>。
+        <section className="section data-section">
+          <div className="panel-header mailbox-toolbar-header">
+            <div>
+              <h3>{view === 'trash' ? '回收站账户' : '账户列表'}</h3>
+              <div className="panel-caption">
+                {view === 'trash' ? '远端可恢复窗口为删除后 24 小时，彻底清理不可撤销。' : '筛选条件会同步作用于分页查询。'}
+              </div>
             </div>
-          )}
+          </div>
 
-          <form onSubmit={handleSearch} style={{ display: 'grid', gridTemplateColumns: '1fr 160px 180px 150px auto auto', gap: 8, padding: '14px 16px', borderBottom: '1px solid #eee' }}>
+          <form className="mailbox-toolbar" onSubmit={handleSearch}>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索邮箱地址或前缀" />
             <select value={domainId} onChange={e => setDomainId(e.target.value)}>
               <option value="">全部域名</option>
@@ -313,197 +411,228 @@ export default function MailboxesPage() {
             {view === 'normal' && (
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                 <option value="">全部状态</option>
-                <option value="active">active</option>
-                <option value="deleting">deleting</option>
+                <option value="active">正常</option>
+                <option value="deleting">删除中</option>
               </select>
             )}
-            <button className="btn btn-primary btn-sm" type="submit">筛选</button>
-            <button className="btn btn-outline btn-sm" type="button" onClick={() => { setSearch(''); setDomainId(''); setServerId(''); setStatusFilter(''); setPage(1); }}>重置</button>
+            <button className="btn btn-primary" type="submit">筛选</button>
+            <button className="btn btn-outline" type="button" onClick={() => { setSearch(''); setDomainId(''); setServerId(''); setStatusFilter(''); setPage(1) }}>
+              <RotateCcw size={15} /> 重置
+            </button>
           </form>
 
-          <div style={{ overflowX: 'auto' }}>
-            <table>
+          <div className="table-wrap">
+            <table className="data-table mailbox-table">
               <thead>
                 <tr>
-                  <th>账号ID</th>
-                  <th>邮箱地址</th>
+                  <th>邮箱</th>
                   {view === 'normal' && <th>密码</th>}
                   <th>域名</th>
                   <th>服务器</th>
                   <th>状态</th>
                   {view === 'normal' && <th>同步</th>}
-                  {view === 'trash' && <th>删除时间</th>}
-                  {view === 'normal' && <th>创建时间</th>}
+                  <th>{view === 'trash' ? '删除时间' : '创建时间'}</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map(item => (
                   <tr key={item.id}>
-                    <td><code style={{ fontSize: 12 }}>#{item.id}</code></td>
                     <td>
-                      <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.email_address}</span>
-                      <button className="btn btn-sm btn-outline" style={{ marginLeft: 4, padding: '0 6px', height: 22 }} onClick={() => copyText(item.email_address)}>⧉</button>
+                      <div className="entity-cell">
+                        <span className="entity-icon"><Inbox size={16} /></span>
+                        <div>
+                          <strong>{item.email_address}</strong>
+                          <span>#{item.id}</span>
+                        </div>
+                        <button className="icon-button compact" type="button" title="复制邮箱" onClick={() => copyText(item.email_address)}>
+                          <Copy size={14} />
+                        </button>
+                      </div>
                     </td>
                     {view === 'normal' && (
                       <td>
                         {item.password ? (
-                          <>
-                            <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{item.password}</span>
-                            <button className="btn btn-sm btn-outline" style={{ marginLeft: 4, padding: '0 6px', height: 22 }} onClick={() => copyText(item.password)}>⧉</button>
-                          </>
-                        ) : <span style={{ color: '#888' }}>未记录</span>}
+                          <div className="secret-cell">
+                            <code>{item.password}</code>
+                            <button className="icon-button compact" type="button" title="复制密码" onClick={() => copyText(item.password)}>
+                              <Copy size={14} />
+                            </button>
+                          </div>
+                        ) : <span className="muted-text">未记录</span>}
                       </td>
                     )}
                     <td>{item.domain?.name || `#${item.domain_id}`}</td>
                     <td>{item.server?.name || `#${item.server_id}`}</td>
-                    <td><span className={`tag ${STATUS_TAG[item.status] || ''}`}>{item.status}</span></td>
-                    {view === 'normal' && <td>{item.sync_status ? <span className={`tag ${STATUS_TAG[item.sync_status] || ''}`}>{item.sync_status}</span> : <span style={{ color: '#888' }}>-</span>}</td>}
-                    {view === 'trash' && <td>{item.recycled_at ? new Date(item.recycled_at).toLocaleString('zh-CN', { hour12: false }) : '-'}</td>}
-                    {view === 'normal' && <td>{item.created_at ? new Date(item.created_at).toLocaleString('zh-CN', { hour12: false }) : '-'}</td>}
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {view === 'normal' && (
-                        <>
-                          <button className="btn btn-sm btn-primary" onClick={() => openPwdModal(item)}>改密</button>
-                          {(item.status === 'active' || item.status === 'deleting') && (
-                            <button className="btn btn-sm btn-outline" style={{ marginLeft: 4 }} onClick={() => handleDelete(item)}>删除</button>
-                          )}
-                          {item.status === 'soft_deleted' && (
-                            <button className="btn btn-sm btn-primary" style={{ marginLeft: 4 }} onClick={() => handleRestore(item)}>恢复</button>
-                          )}
-                        </>
-                      )}
-                      {view === 'trash' && item.status === 'soft_deleted' && (
-                        <>
-                          <button className="btn btn-sm btn-primary" onClick={() => handleRestore(item)}>恢复</button>
-                          <button className="btn btn-sm btn-danger" style={{ marginLeft: 4 }} onClick={() => handlePurge(item)}>彻底删除</button>
-                        </>
-                      )}
-                      {view === 'trash' && item.status === 'purged' && (
-                        <span style={{ color: '#888', fontSize: 12 }}>已彻底清除</span>
-                      )}
+                    <td><StatusTag status={item.status} /></td>
+                    {view === 'normal' && <td>{item.sync_status ? <StatusTag status={item.sync_status} /> : <span className="muted-text">-</span>}</td>}
+                    <td>{formatDate(view === 'trash' ? item.recycled_at : item.created_at)}</td>
+                    <td>
+                      <div className="row-actions">
+                        {view === 'normal' && (
+                          <>
+                            <button className="icon-button compact" type="button" title="修改密码" onClick={() => setPwdModal({ id: item.id, email: item.email_address, password: '' })}>
+                              <KeyRound size={15} />
+                            </button>
+                            {(item.status === 'active' || item.status === 'deleting') && (
+                              <button className="icon-button compact danger" type="button" title="删除" onClick={() => askDelete(item)}>
+                                <Trash2 size={15} />
+                              </button>
+                            )}
+                            {item.status === 'soft_deleted' && (
+                              <button className="icon-button compact" type="button" title="恢复" onClick={() => askRestore(item)}>
+                                <ArchiveRestore size={15} />
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {view === 'trash' && item.status === 'soft_deleted' && (
+                          <>
+                            <button className="icon-button compact" type="button" title="恢复" onClick={() => askRestore(item)}>
+                              <ArchiveRestore size={15} />
+                            </button>
+                            <button className="icon-button compact danger" type="button" title="彻底清理" onClick={() => askPurge(item)}>
+                              <Trash2 size={15} />
+                            </button>
+                          </>
+                        )}
+                        {view === 'trash' && item.status === 'purged' && <span className="muted-text">已清理</span>}
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={view === 'normal' ? 9 : 7} style={{ textAlign: 'center', color: '#888', padding: 20 }}>
-                    {loading ? '加载中...' : view === 'trash' ? '回收站为空' : '暂无邮箱账号'}
-                  </td></tr>
+                  <tr>
+                    <td colSpan={view === 'normal' ? 8 : 6}>
+                      <div className="empty-state">
+                        {loading ? <span className="spinner" /> : <Inbox size={28} />}
+                        <strong>{loading ? '加载中...' : view === 'trash' ? '回收站为空' : '暂无邮箱账户'}</strong>
+                        {!loading && <span>{view === 'trash' ? '删除后的邮箱会在这里显示，可在恢复窗口内处理。' : '创建第一个邮箱后即可开始收信和查询。'}</span>}
+                      </div>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
           </div>
 
-          {/* Pagination */}
-          {total > 0 && (() => {
-            const totalPages = Math.max(1, Math.ceil(total / size))
-            const safePage = Math.min(page, totalPages)
-            return (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderTop: '1px solid #eee', flexWrap: 'wrap' }}>
-                <button className="btn btn-sm btn-outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>上一页</button>
-                <span style={{ fontSize: 13, color: '#666' }}>第 <strong>{safePage}</strong> / {totalPages} 页（共 {total} 条）</span>
-                <button className="btn btn-sm btn-outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>下一页</button>
-                <span style={{ flex: 1 }} />
-                <label style={{ fontSize: 13, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  每页
-                  <select value={size} onChange={e => { setSize(parseInt(e.target.value)); setPage(1) }}>
-                    <option value={20}>20</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                  </select>
-                  条
-                </label>
-                <label style={{ fontSize: 13, color: '#666', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  跳至
-                  <input type="number" min={1} max={totalPages} style={{ width: 60 }} placeholder={safePage} onKeyDown={e => { if (e.key === 'Enter') { const p = parseInt(e.target.value); if (p >= 1 && p <= totalPages) setPage(p); e.target.value = '' } }} />
-                  页
-                </label>
-              </div>
-            )
-          })()}
-        </div>
+          {total > 0 && (
+            <div className="pagination-bar">
+              <button className="btn btn-sm btn-outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>上一页</button>
+              <span>第 <strong>{safePage}</strong> / {totalPages} 页，共 {total} 条</span>
+              <button className="btn btn-sm btn-outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>下一页</button>
+              <span className="pagination-spacer" />
+              <label>
+                每页
+                <select value={size} onChange={e => { setSize(parseInt(e.target.value, 10)); setPage(1) }}>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </label>
+            </div>
+          )}
+        </section>
       )}
 
-      {/* ── Integrated Mailboxes View ── */}
       {view === 'integrated' && (
-        <div className="section">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 16px', borderBottom: '1px solid #eee' }}>
+        <section className="section data-section">
+          <div className="panel-header">
             <div>
-              <strong>集成邮箱（转发目标池）</strong>
-              <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>所有非垃圾邮件汇总转发到这里。标「当前生效」的是正在使用的转发目标，切换后 mail-node 自动重载生效。</div>
+              <h3>集成邮箱</h3>
+              <div className="panel-caption">所有非垃圾邮件会汇总转发到当前生效目标，切换后 mail-node 自动拉取生效。</div>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={() => setIntegratedModal({ mode: 'add', data: { email_address: '', display_name: '' } })}>➕ 新增</button>
+            <button className="btn btn-primary" type="button" onClick={() => setIntegratedModal({ mode: 'add', data: { email_address: '', display_name: '' } })}>
+              <Plus size={16} /> 新增目标
+            </button>
           </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table>
+          <div className="table-wrap">
+            <table className="data-table">
               <thead>
-                <tr><th>ID</th><th>邮箱地址</th><th>备注</th><th>当前生效</th><th>操作</th></tr>
+                <tr><th>邮箱地址</th><th>备注</th><th>状态</th><th>操作</th></tr>
               </thead>
               <tbody>
                 {integrated.map(m => (
                   <tr key={m.id}>
-                    <td><code style={{ fontSize: 12 }}>#{m.id}</code></td>
-                    <td><span style={{ fontFamily: 'monospace', fontSize: 12 }}>{m.email_address}</span></td>
+                    <td><code>{m.email_address}</code></td>
                     <td>{m.display_name || '-'}</td>
-                    <td>{m.is_active ? <span className="tag tag-success">当前生效</span> : <span style={{ color: '#888' }}>—</span>}</td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {!m.is_active && (
-                        <button className="btn btn-sm btn-success" onClick={async () => {
-                          try { await integratedMailboxAPI.activate(m.id); setToast({ type: 'success', message: '✅ 已设为当前转发目标' }); loadIntegrated() }
-                          catch (e) { setToast({ type: 'error', message: '❌ ' + e.message }) }
-                        }}>设为当前目标</button>
-                      )}
-                      <button className="btn btn-sm btn-primary" style={{ marginLeft: 4 }} onClick={() => setIntegratedModal({ mode: 'edit', data: { ...m } })}>编辑</button>
-                      <button className="btn btn-sm btn-danger" style={{ marginLeft: 4 }} disabled={m.is_active} title={m.is_active ? '当前生效项不可删除，请先切换' : ''} onClick={async () => {
-                        if (!confirm(`确认删除集成邮箱 ${m.email_address}？`)) return
-                        try { await integratedMailboxAPI.remove(m.id); setToast({ type: 'success', message: '已删除' }); loadIntegrated() }
-                        catch (e) { setToast({ type: 'error', message: '❌ ' + e.message }) }
-                      }}>删除</button>
+                    <td>{m.is_active ? <span className="tag tag-success">当前生效</span> : <span className="muted-text">备用</span>}</td>
+                    <td>
+                      <div className="row-actions">
+                        {!m.is_active && (
+                          <button className="btn btn-sm btn-success" type="button" onClick={async () => {
+                            try {
+                              await integratedMailboxAPI.activate(m.id)
+                              setToast({ type: 'success', message: '已设为当前转发目标' })
+                              loadIntegrated()
+                            } catch (e) {
+                              setToast({ type: 'error', message: e.message })
+                            }
+                          }}>设为当前</button>
+                        )}
+                        <button className="btn btn-sm btn-outline" type="button" onClick={() => setIntegratedModal({ mode: 'edit', data: { ...m } })}>编辑</button>
+                        <button className="btn btn-sm btn-danger" type="button" disabled={m.is_active} onClick={async () => {
+                          setConfirm({
+                            title: '删除集成邮箱',
+                            message: `确定删除 ${m.email_address} 吗？当前生效目标不能删除。`,
+                            confirmLabel: '删除',
+                            onConfirm: async () => {
+                              try {
+                                await integratedMailboxAPI.remove(m.id)
+                                setToast({ type: 'success', message: '已删除' })
+                                loadIntegrated()
+                              } catch (e) {
+                                setToast({ type: 'error', message: e.message })
+                              }
+                              setConfirm(null)
+                            },
+                            onCancel: () => setConfirm(null),
+                          })
+                        }}>删除</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {integrated.length === 0 && (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: '#888', padding: 20 }}>暂无集成邮箱</td></tr>
+                  <tr><td colSpan={4}><div className="empty-state"><Send size={28} /><strong>暂无集成邮箱</strong><span>添加一个目标后即可接收转发汇总。</span></div></td></tr>
                 )}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
-      {/* ── Create Section (always at bottom) ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 420px) minmax(320px, 1fr)', gap: 16, marginTop: 18 }}>
-        <div className="section" style={{ gridColumn: '1 / -1' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, paddingBottom: 12, borderBottom: '1px solid #eee', marginBottom: 14 }}>
-            <div>
-              <h3 style={{ marginBottom: 4 }}>创建邮箱</h3>
-              <div style={{ color: '#888', fontSize: 12 }}>服务器和域名均可选；不选择时系统会按健康服务器和可用域名池自动负载分配。</div>
-            </div>
-            {(createServerId === '0' && createDomainId === '0') && <span className="tag tag-info">自动分配</span>}
+      <section id="mailbox-create-panel" className="section mailbox-create">
+        <div className="panel-header">
+          <div>
+            <h3>创建邮箱</h3>
+            <div className="panel-caption">服务器和域名均可指定，不指定时由系统按健康节点和域名池自动分配。</div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div className="form-group">
-              <label>邮箱服务器（可选）</label>
-              <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
-                <option value="0">自动选择服务器</option>
-                {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
-              </select>
-              {createDomainId !== '0' && <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
-            </div>
-            <div className="form-group">
-              <label>域名（可选）</label>
-              <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
-                <option value="0">自动选择域名</option>
-                {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-              {createServerId !== '0' && <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
-            </div>
+          {createServerId === '0' && createDomainId === '0' && <span className="tag tag-info">自动分配</span>}
+        </div>
+
+        <div className="field-grid">
+          <div className="form-group">
+            <label>邮箱服务器</label>
+            <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
+              <option value="0">自动选择服务器</option>
+              {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
+            </select>
+            {createDomainId !== '0' && <div className="form-hint">已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
+          </div>
+          <div className="form-group">
+            <label>域名</label>
+            <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
+              <option value="0">自动选择域名</option>
+              {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            {createServerId !== '0' && <div className="form-hint">已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
           </div>
         </div>
 
-        <div className="section">
-          <h3>单个创建</h3>
-          <form onSubmit={handleSingleCreate}>
+        <div className="create-grid">
+          <form className="create-card" onSubmit={handleSingleCreate}>
+            <h4>单个创建</h4>
             <div className="form-group">
               <label>邮箱前缀</label>
               <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
@@ -516,15 +645,13 @@ export default function MailboxesPage() {
               {creating && createTab === 'single' && <span className="spinner" />} 创建邮箱
             </button>
           </form>
-        </div>
 
-        <div className="section">
-          <h3>批量创建</h3>
-          <p style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>每行一个邮箱前缀，格式：<code>前缀</code> 或 <code>前缀,密码</code>；上方服务器/域名会应用到本次所有行。</p>
-          <form onSubmit={handleBatchCreate}>
+          <form className="create-card" onSubmit={handleBatchCreate}>
+            <h4>批量创建</h4>
             <div className="form-group">
               <label>邮箱列表</label>
-              <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={8} placeholder="airline-cz-001&#10;airline-cz-002&#10;airline-cz-003,mypassword123" />
+              <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={7} placeholder={'airline-cz-001\nairline-cz-002\nairline-cz-003,mypassword123'} />
+              <div className="form-hint">每行一个前缀，格式为“前缀”或“前缀,密码”。</div>
             </div>
             <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
               {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
@@ -533,85 +660,107 @@ export default function MailboxesPage() {
         </div>
 
         {batchResult && (
-          <div className="section" style={{ gridColumn: '1 / -1' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-              <h3>创建结果 — 成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</h3>
-              <button className="btn btn-outline btn-sm" type="button" onClick={downloadCredentialCsv}>下载账密 CSV</button>
-            </div>
-            {(batchResult.results || []).map((r, i) => (
-              <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid #eee', fontSize: 13 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <strong>{r.email_address || r.prefix}</strong>
-                  {r.password && <code style={{ fontSize: 12 }}>{r.password}</code>}
-                  {r.password && <button className="btn btn-sm btn-outline" style={{ padding: '0 6px', height: 22 }} onClick={() => copyText(`${r.email_address},${r.password}`)}>复制账密</button>}
-                  <span className={`tag ${STATUS_TAG[r.status] || ''}`}>{r.status}</span>
-                  {r.domain && <span style={{ color: '#666' }}>域名：{r.domain}</span>}
-                  {r.server_id ? <span style={{ color: '#666' }}>服务器：#{r.server_id}</span> : null}
-                </div>
-                {r.error && <div style={{ color: '#a82424', fontSize: 12, marginTop: 4 }}>{r.error}</div>}
+          <div className="batch-result">
+            <div className="panel-header">
+              <div>
+                <h3>创建结果</h3>
+                <div className="panel-caption">成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</div>
               </div>
-            ))}
+              <button className="btn btn-outline" type="button" onClick={downloadCredentialCsv}>
+                <Download size={16} /> 下载账密 CSV
+              </button>
+            </div>
+            <div className="result-list">
+              {(batchResult.results || []).map((r, i) => (
+                <div className="result-item" key={`${r.email_address || r.prefix}-${i}`}>
+                  <div>
+                    <strong>{r.email_address || r.prefix}</strong>
+                    <span>{r.domain || '-'} {r.server_id ? `#${r.server_id}` : ''}</span>
+                  </div>
+                  {r.password && <code>{r.password}</code>}
+                  <StatusTag status={r.status} />
+                  {r.password && <button className="icon-button compact" type="button" title="复制账密" onClick={() => copyText(`${r.email_address},${r.password}`)}><Copy size={14} /></button>}
+                  {r.error && <span className="result-error">{r.error}</span>}
+                </div>
+              ))}
+            </div>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Integrated mailbox modal */}
       {integratedModal && (
-        <div className="modal-overlay" onClick={() => setIntegratedModal(null)}>
-          <div className="modal" style={{ width: 460 }} onClick={e => e.stopPropagation()}>
-            <h3>{integratedModal.mode === 'add' ? '新增集成邮箱' : `编辑集成邮箱 #${integratedModal.data.id}`}</h3>
-            <form onSubmit={async (e) => {
+        <div className="drawer-overlay" onClick={() => setIntegratedModal(null)}>
+          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label="集成邮箱编辑">
+            <div className="drawer-header">
+              <div>
+                <div className="drawer-kicker">Forward target</div>
+                <h2>{integratedModal.mode === 'add' ? '新增集成邮箱' : `编辑 #${integratedModal.data.id}`}</h2>
+              </div>
+              <button className="icon-button" type="button" title="关闭" onClick={() => setIntegratedModal(null)}><X size={18} /></button>
+            </div>
+            <form className="drawer-body" onSubmit={async (e) => {
               e.preventDefault()
               setIntegratedSaving(true)
               try {
                 if (integratedModal.mode === 'add') await integratedMailboxAPI.create(integratedModal.data)
                 else await integratedMailboxAPI.update(integratedModal.data.id, integratedModal.data)
                 setIntegratedModal(null)
-                setToast({ type: 'success', message: '✅ 保存成功' })
+                setToast({ type: 'success', message: '保存成功' })
                 loadIntegrated()
-              } catch (err) { setToast({ type: 'error', message: '❌ ' + err.message }) }
-              finally { setIntegratedSaving(false) }
+              } catch (err) {
+                setToast({ type: 'error', message: err.message })
+              } finally {
+                setIntegratedSaving(false)
+              }
             }}>
               <div className="form-group">
-                <label>邮箱地址 *</label>
-                <input value={integratedModal.data.email_address} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, email_address: e.target.value } })} placeholder="union@asadad.bond" required />
+                <label>邮箱地址</label>
+                <input value={integratedModal.data.email_address} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, email_address: e.target.value } })} placeholder="union@example.com" required />
               </div>
               <div className="form-group">
                 <label>备注</label>
-                <input value={integratedModal.data.display_name || ''} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, display_name: e.target.value } })} placeholder="例如: 主汇总 / 备用" />
+                <input value={integratedModal.data.display_name || ''} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, display_name: e.target.value } })} placeholder="例如：主汇总 / 备用" />
               </div>
-              <div className="modal-footer">
+              <div className="drawer-footer">
                 <button className="btn btn-outline" type="button" onClick={() => setIntegratedModal(null)}>取消</button>
-                <button className="btn btn-success" type="submit" disabled={integratedSaving}>{integratedSaving && <span className="spinner" />} 保存</button>
+                <button className="btn btn-primary" type="submit" disabled={integratedSaving}>{integratedSaving && <span className="spinner" />} 保存</button>
               </div>
             </form>
-          </div>
+          </aside>
         </div>
       )}
 
-      {/* Password modal */}
       {pwdModal && (
-        <div className="modal-overlay" onClick={() => setPwdModal(null)}>
-          <div className="modal" style={{ width: 420 }} onClick={e => e.stopPropagation()}>
-            <h3>修改邮箱密码</h3>
-            <div className="form-group">
-              <label>邮箱地址</label>
-              <input value={pwdModal.email} readOnly style={{ background: '#f5f5f5' }} />
+        <div className="drawer-overlay" onClick={() => setPwdModal(null)}>
+          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label="修改邮箱密码">
+            <div className="drawer-header">
+              <div>
+                <div className="drawer-kicker">Credential</div>
+                <h2>修改邮箱密码</h2>
+              </div>
+              <button className="icon-button" type="button" title="关闭" onClick={() => setPwdModal(null)}><X size={18} /></button>
             </div>
-            <div className="form-group">
-              <label>新密码（至少6个字符）</label>
-              <input value={pwdModal.password} onChange={e => setPwdModal({ ...pwdModal, password: e.target.value })} placeholder="输入新密码" autoFocus />
+            <div className="drawer-body">
+              <div className="form-group">
+                <label>邮箱地址</label>
+                <input value={pwdModal.email} readOnly />
+              </div>
+              <div className="form-group">
+                <label>新密码</label>
+                <input value={pwdModal.password} onChange={e => setPwdModal({ ...pwdModal, password: e.target.value })} placeholder="至少 6 个字符" autoFocus />
+              </div>
+              <div className="drawer-footer">
+                <button className="btn btn-outline" type="button" onClick={() => setPwdModal(null)}>取消</button>
+                <button className="btn btn-primary" type="button" onClick={handlePwdSave} disabled={pwdSaving}>
+                  {pwdSaving && <span className="spinner" />} 保存
+                </button>
+              </div>
             </div>
-            <div className="modal-footer">
-              <button className="btn btn-outline" onClick={() => setPwdModal(null)}>取消</button>
-              <button className="btn btn-primary" onClick={handlePwdSave} disabled={pwdSaving}>
-                {pwdSaving && <span className="spinner" />} 保存
-              </button>
-            </div>
-          </div>
+          </aside>
         </div>
       )}
 
+      {confirm && <ConfirmDialog {...confirm} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
   )

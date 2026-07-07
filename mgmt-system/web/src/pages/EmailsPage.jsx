@@ -1,4 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import {
+  Download,
+  FileText,
+  Inbox,
+  MailOpen,
+  Paperclip,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+} from 'lucide-react'
 import { emailAPI } from '../api'
 
 function normalizeContentID(value) {
@@ -8,7 +18,7 @@ function normalizeContentID(value) {
   try {
     normalized = decodeURIComponent(normalized)
   } catch {
-    // 保留原值：部分邮件客户端会生成非标准 percent-encoding。
+    // Keep the original value when a mail client emits invalid percent encoding.
   }
   return normalized.replace(/^<+|>+$/g, '').trim().toLowerCase()
 }
@@ -67,7 +77,6 @@ function buildSafeEmailHtml(detail, mailbox) {
         img.setAttribute('alt', img.getAttribute('alt') || 'inline image not found')
       }
     } else if (!/^\s*data:image\//i.test(src)) {
-      // 默认不加载外部图片，避免追踪像素和隐私泄露。
       img.removeAttribute('src')
     }
     img.removeAttribute('srcset')
@@ -88,6 +97,19 @@ function buildSafeEmailHtml(detail, mailbox) {
 </html>`
 }
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatBytes(value) {
+  const size = Number(value) || 0
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / 1024 / 1024).toFixed(1)} MB`
+}
+
 export default function EmailsPage() {
   const [mailbox, setMailbox] = useState('')
   const [query, setQuery] = useState('')
@@ -98,39 +120,50 @@ export default function EmailsPage() {
   const [error, setError] = useState(null)
   const [searched, setSearched] = useState(false)
 
-  // Detail
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [bodyView, setBodyView] = useState('text')
 
-  const doSearch = useCallback(async (e) => {
-    if (e) e.preventDefault()
-    if (!mailbox.trim()) return
-    setQuery(mailbox)
-    setPage(1)
-    setSelected(null)
-    setDetail(null)
+  const totalAttachments = useMemo(
+    () => messages.reduce((sum, msg) => sum + (Number(msg.attachments_count) || 0), 0),
+    [messages],
+  )
+
+  const fetchMessages = useCallback(async (targetMailbox, targetPage = 1, targetSize = size) => {
+    const normalizedMailbox = String(targetMailbox || '').trim()
+    if (!normalizedMailbox) return
     setLoading(true)
     setSearched(true)
     setError(null)
+    setQuery(normalizedMailbox)
+    setSelected(null)
+    setDetail(null)
     try {
-      const data = await emailAPI.list(mailbox, 1, size)
+      const data = await emailAPI.list(normalizedMailbox, targetPage, targetSize)
       setMessages(Array.isArray(data?.messages) ? data.messages : Array.isArray(data) ? data : [])
+      setPage(targetPage)
     } catch (err) {
       setError(err.message)
       setMessages([])
     } finally {
       setLoading(false)
     }
-  }, [mailbox, size])
+  }, [size])
+
+  const doSearch = (e) => {
+    if (e) e.preventDefault()
+    fetchMessages(mailbox, 1, size)
+  }
 
   const loadMessage = async (msg) => {
     setSelected(msg.message_id)
     setDetailLoading(true)
+    setBodyView(msg.html_body ? 'html' : 'text')
     try {
       const data = await emailAPI.body(msg.message_id, query)
       setDetail(data)
+      setBodyView(data?.text_body ? 'text' : data?.html_body ? 'html' : 'meta')
     } catch (err) {
       setDetail({ _error: err.message })
     } finally {
@@ -138,140 +171,217 @@ export default function EmailsPage() {
     }
   }
 
-  const formatDate = (v) => {
-    if (!v) return '-'
-    const d = new Date(v)
-    return isNaN(d.getTime()) ? v : d.toLocaleString('zh-CN', { hour12: false })
+  const reset = () => {
+    setMailbox('')
+    setQuery('')
+    setPage(1)
+    setMessages([])
+    setSearched(false)
+    setError(null)
+    setSelected(null)
+    setDetail(null)
   }
-
-  const eHtml = (v) => String(v ?? '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
-        <h1>邮件查询</h1>
-        <p style={{ color: '#888', fontSize: 13, marginTop: 4 }}>按邮箱查看结构化邮件内容，支持正文预览、详情和附件下载。</p>
+      <div className="page-header">
+        <div>
+          <h1>邮件查询</h1>
+          <p className="page-subtitle">按邮箱维度查看结构化邮件，支持正文审阅、HTML 预览和附件下载。</p>
+        </div>
+        <div className="page-actions">
+          <button className="btn btn-outline" type="button" onClick={() => fetchMessages(query || mailbox, page, size)} disabled={loading || !(query || mailbox).trim()}>
+            {loading ? <span className="spinner" /> : <RefreshCw size={16} />}
+            刷新
+          </button>
+        </div>
       </div>
 
-      {/* Search */}
-      <div className="section" style={{ marginBottom: 16 }}>
-        <form onSubmit={doSearch} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px auto auto', gap: 8 }}>
-          <input value={mailbox} onChange={e => setMailbox(e.target.value)} placeholder="输入邮箱地址，例如 order-001@asadad.bond" />
-          <input type="number" value={page} onChange={e => setPage(parseInt(e.target.value) || 1)} min={1} placeholder="页码" />
-          <input type="number" value={size} onChange={e => setSize(parseInt(e.target.value) || 20)} min={1} max={100} placeholder="每页条数" />
-          <button className="btn btn-primary" type="submit" disabled={loading}>查询</button>
-          <button className="btn btn-outline" type="button" onClick={() => { setMailbox(''); setMessages([]); setSearched(false); setDetail(null); }}>重置</button>
-        </form>
-      </div>
-
-      {/* Split: list + detail */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 400px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
-        {/* List */}
-        <div className="section" style={{ overflow: 'hidden' }}>
-          <h3>邮件列表</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ minWidth: '100%' }}>
-              <thead>
-                <tr><th>标题</th><th>发件人</th><th>时间</th><th>附件</th></tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={4} style={{ textAlign: 'center', color: '#888', padding: 20 }}>加载中...</td></tr>}
-                {error && <tr><td colSpan={4} style={{ textAlign: 'center', padding: 20 }}><span style={{ color: '#c62828' }}>{error}</span></td></tr>}
-                {!loading && !error && messages.map(msg => (
-                  <tr key={msg.message_id} onClick={() => loadMessage(msg)}
-                    style={{ cursor: 'pointer', background: selected === msg.message_id ? '#eef7f4' : undefined }}>
-                    <td>
-                      <div style={{ fontWeight: 650, marginBottom: 4 }}>{msg.subject || '(无标题)'}</div>
-                      <div style={{ color: '#888', fontSize: 12, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {msg.text_preview || '-'}
-                      </div>
-                    </td>
-                    <td>{msg.from || '-'}</td>
-                    <td>{formatDate(msg.date || msg.received_at)}</td>
-                    <td>{msg.attachments_count || 0}</td>
-                  </tr>
-                ))}
-                {!loading && !error && searched && messages.length === 0 && (
-                  <tr><td colSpan={4} style={{ textAlign: 'center', color: '#888', padding: 20 }}>暂无邮件</td></tr>
-                )}
-                {!searched && <tr><td colSpan={4} style={{ textAlign: 'center', color: '#888', padding: 20 }}>请输入邮箱地址后查询</td></tr>}
-              </tbody>
-            </table>
+      <div className="summary-grid">
+        <div className="summary-tile" data-tone="brand">
+          <span className="summary-icon"><Inbox size={18} /></span>
+          <div>
+            <div className="summary-value">{messages.length}</div>
+            <div className="summary-label">当前页邮件</div>
           </div>
         </div>
+        <div className="summary-tile" data-tone="info">
+          <span className="summary-icon"><Paperclip size={18} /></span>
+          <div>
+            <div className="summary-value">{totalAttachments}</div>
+            <div className="summary-label">附件入口</div>
+          </div>
+        </div>
+        <div className="summary-tile" data-tone="success">
+          <span className="summary-icon"><ShieldCheck size={18} /></span>
+          <div>
+            <div className="summary-value">{detail?.parse_status || (detail ? 'ok' : '-')}</div>
+            <div className="summary-label">解析状态</div>
+          </div>
+        </div>
+      </div>
 
-        {/* Detail */}
-        <div className="section">
-          <h3>邮件详情</h3>
-          {detailLoading && <div style={{ color: '#888', padding: 20 }}>加载中...</div>}
-          {detail && detail._error && <div style={{ color: '#c62828' }}>{detail._error}</div>}
-          {detail && !detail._error && (
+      <section className="section email-search-panel">
+        <form className="email-search-form" onSubmit={doSearch}>
+          <div className="search-input-wrap">
+            <Search size={17} />
+            <input value={mailbox} onChange={e => setMailbox(e.target.value)} placeholder="输入邮箱地址，例如 order-001@example.com" />
+          </div>
+          <input type="number" value={size} onChange={e => setSize(parseInt(e.target.value, 10) || 20)} min={1} max={100} aria-label="每页条数" />
+          <button className="btn btn-primary" type="submit" disabled={loading || !mailbox.trim()}>
+            {loading && <span className="spinner" />} 查询
+          </button>
+          <button className="btn btn-outline" type="button" onClick={reset}>重置</button>
+        </form>
+      </section>
+
+      <div className="email-workbench">
+        <section className="section email-list-panel">
+          <div className="panel-header">
             <div>
-              <div style={{ display: 'grid', gap: 8, marginBottom: 14 }}>
-                <div><strong>Message-ID：</strong><code style={{ fontSize: 11 }}>{detail.message_id || '-'}</code></div>
-                <div><strong>主题：</strong>{eHtml(detail.subject || '-')}</div>
-                <div><strong>发件人：</strong>{eHtml(detail.from || '-')}</div>
-                <div><strong>收件人：</strong>{eHtml((detail.to || []).join(', ') || '-')}</div>
-                <div><strong>时间：</strong>{detail.date || detail.received_at || '-'}</div>
-                <div><strong>解析状态：</strong>{detail.parse_status || 'ok'}
-                  {detail.parse_error && <span style={{ color: '#c62828', fontSize: 12, marginLeft: 8 }}>{detail.parse_error}</span>}
+              <h3>邮件列表</h3>
+              <div className="panel-caption">{query ? query : '等待输入邮箱地址'}</div>
+            </div>
+          </div>
+
+          <div className="email-list">
+            {loading && (
+              <div className="empty-state"><span className="spinner" /><strong>加载邮件...</strong></div>
+            )}
+            {error && (
+              <div className="empty-state error-state"><MailOpen size={28} /><strong>查询失败</strong><span>{error}</span></div>
+            )}
+            {!loading && !error && messages.map(msg => (
+              <button
+                className={`email-list-item ${selected === msg.message_id ? 'active' : ''}`}
+                key={msg.message_id}
+                type="button"
+                onClick={() => loadMessage(msg)}
+              >
+                <div className="email-list-top">
+                  <strong>{msg.subject || '(无标题)'}</strong>
+                  {(msg.attachments_count || 0) > 0 && <span className="tag tag-info"><Paperclip size={12} /> {msg.attachments_count}</span>}
+                </div>
+                <div className="email-list-meta">
+                  <span>{msg.from || '-'}</span>
+                  <span>{formatDate(msg.date || msg.received_at)}</span>
+                </div>
+                <p>{msg.text_preview || '无正文预览'}</p>
+              </button>
+            ))}
+            {!loading && !error && searched && messages.length === 0 && (
+              <div className="empty-state"><Inbox size={28} /><strong>暂无邮件</strong><span>该邮箱当前没有可展示的结构化邮件。</span></div>
+            )}
+            {!searched && (
+              <div className="empty-state"><Search size={28} /><strong>输入邮箱后查询</strong><span>查询结果会以紧凑列表展示，点击即可审阅详情。</span></div>
+            )}
+          </div>
+
+          {searched && !loading && (
+            <div className="pagination-bar email-pagination">
+              <button className="btn btn-sm btn-outline" disabled={page <= 1} onClick={() => fetchMessages(query, page - 1, size)}>上一页</button>
+              <span>第 <strong>{page}</strong> 页</span>
+              <button className="btn btn-sm btn-outline" disabled={messages.length < size} onClick={() => fetchMessages(query, page + 1, size)}>下一页</button>
+            </div>
+          )}
+        </section>
+
+        <section className="section email-detail-panel">
+          <div className="panel-header">
+            <div>
+              <h3>邮件详情</h3>
+              <div className="panel-caption">正文、HTML 和附件在同一审阅器中处理。</div>
+            </div>
+            {detail && !detail._error && <span className="tag tag-success">已解析</span>}
+          </div>
+
+          {detailLoading && <div className="empty-state"><span className="spinner" /><strong>加载详情...</strong></div>}
+          {detail && detail._error && <div className="empty-state error-state"><MailOpen size={28} /><strong>详情加载失败</strong><span>{detail._error}</span></div>}
+          {detail && !detail._error && (
+            <div className="email-detail">
+              <div className="email-detail-head">
+                <h2>{detail.subject || '(无标题)'}</h2>
+                <div className="email-meta-grid">
+                  <span>Message-ID</span><code>{detail.message_id || '-'}</code>
+                  <span>发件人</span><strong>{detail.from || '-'}</strong>
+                  <span>收件人</span><strong>{(detail.to || []).join(', ') || '-'}</strong>
+                  <span>时间</span><strong>{formatDate(detail.date || detail.received_at)}</strong>
+                  <span>解析</span>
+                  <strong>
+                    {detail.parse_status || 'ok'}
+                    {detail.parse_error && <em className="parse-error">{detail.parse_error}</em>}
+                  </strong>
                 </div>
               </div>
 
-              <div style={{ display: 'inline-flex', gap: 2, padding: 3, background: '#e9ecef', borderRadius: 8, marginBottom: 12 }}>
-                <button className={`btn btn-sm ${bodyView === 'text' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }}
-                  onClick={() => setBodyView('text')}>Text</button>
-                <button className={`btn btn-sm ${bodyView === 'html' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }}
-                  onClick={() => setBodyView('html')}>HTML</button>
+              <div className="phase-tabs email-body-tabs">
+                {[
+                  ['text', 'Text'],
+                  ['html', 'HTML'],
+                  ['meta', 'Raw 元信息'],
+                ].map(([value, label]) => (
+                  <button className={bodyView === value ? 'active' : ''} type="button" key={value} onClick={() => setBodyView(value)}>
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {bodyView === 'text' && (
-                <div style={{ background: '#fbfbfc', border: '1px solid #eee', borderRadius: 8, padding: 12, marginBottom: 14 }}>
-                  <h4 style={{ fontSize: 13, marginBottom: 8 }}>正文</h4>
-                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.55, color: '#334155', margin: 0 }}>
-                    {detail.text_body || '-'}
-                  </pre>
+                <div className="email-body-card">
+                  <div className="body-card-title"><FileText size={15} /> 正文</div>
+                  <pre>{detail.text_body || '-'}</pre>
                 </div>
               )}
               {bodyView === 'html' && (
-                <div style={{ background: '#fbfbfc', border: '1px solid #eee', borderRadius: 8, padding: 12, marginBottom: 14 }}>
-                  <h4 style={{ fontSize: 13, marginBottom: 8 }}>HTML 预览</h4>
+                <div className="email-body-card">
+                  <div className="body-card-title"><ShieldCheck size={15} /> HTML 预览</div>
                   {detail.html_body ? (
                     <iframe
                       title="邮件 HTML 预览"
                       sandbox="allow-same-origin"
                       srcDoc={buildSafeEmailHtml(detail, query)}
-                      style={{ width: '100%', minHeight: 420, border: '1px solid #e2e6e8', borderRadius: 6, background: '#fff' }}
                     />
-                  ) : <div style={{ color: '#888', fontSize: 13 }}>无 HTML 正文</div>}
+                  ) : <div className="muted-text">无 HTML 正文</div>}
+                </div>
+              )}
+              {bodyView === 'meta' && (
+                <div className="email-body-card">
+                  <div className="body-card-title"><FileText size={15} /> 元信息</div>
+                  <pre>{JSON.stringify({
+                    message_id: detail.message_id,
+                    from: detail.from,
+                    to: detail.to,
+                    date: detail.date || detail.received_at,
+                    parse_status: detail.parse_status || 'ok',
+                    attachments: detail.attachments || [],
+                  }, null, 2)}</pre>
                 </div>
               )}
 
-              <div style={{ background: '#fbfbfc', border: '1px solid #eee', borderRadius: 8, padding: 12 }}>
-                <h4 style={{ fontSize: 13, marginBottom: 8 }}>附件</h4>
+              <div className="attachments-panel">
+                <div className="body-card-title"><Paperclip size={15} /> 附件</div>
                 {detail.attachments && detail.attachments.length > 0 ? (
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div className="attachment-list">
                     {detail.attachments.map(a => (
-                      <div key={a.index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', border: '1px solid #e2e6e8', borderRadius: 6, background: '#fff' }}>
+                      <div className="attachment-item" key={a.index}>
                         <div>
-                          <div style={{ fontWeight: 650, fontSize: 13 }}>{a.filename || `attachment-${a.index}`}</div>
-                          <div style={{ color: '#888', fontSize: 12 }}>{a.content_type || '-'} · {a.size || 0} bytes · {a.disposition || '-'}</div>
+                          <strong>{a.filename || `attachment-${a.index}`}</strong>
+                          <span>{a.content_type || '-'} · {formatBytes(a.size)} · {a.inline ? 'inline' : (a.disposition || 'attachment')}</span>
                         </div>
-                        <a href={emailAPI.attachmentUrl(detail.message_id, a.index, query)}
-                          download={a.filename || `attachment-${a.index}`}
-                          style={{ padding: '4px 12px', border: '1px solid #d0d7de', borderRadius: 4, textDecoration: 'none', color: '#0969da', fontSize: 12 }}>
-                          下载
+                        <a className="btn btn-sm btn-outline" href={emailAPI.attachmentUrl(detail.message_id, a.index, query)} download={a.filename || `attachment-${a.index}`}>
+                          <Download size={14} /> 下载
                         </a>
                       </div>
                     ))}
                   </div>
-                ) : <div style={{ color: '#888', fontSize: 13 }}>无附件</div>}
+                ) : <div className="muted-text">无附件</div>}
               </div>
             </div>
           )}
-          {!detail && !detailLoading && <div style={{ color: '#888', fontSize: 13, padding: 20 }}>请选择一封邮件。</div>}
-        </div>
+          {!detail && !detailLoading && (
+            <div className="empty-state"><MailOpen size={28} /><strong>选择一封邮件</strong><span>详情会展示主题、收发件人、正文和附件。</span></div>
+          )}
+        </section>
       </div>
     </div>
   )
