@@ -421,7 +421,8 @@ func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
 	}
 	part := parts[index]
 
-	inline := index >= len(envelope.Attachments) || strings.EqualFold(strings.TrimSpace(part.Disposition), "inline")
+	inlineContentIDs := htmlCIDReferences(envelope.HTML)
+	inline := index >= len(envelope.Attachments) || isInlinePart(part, inlineContentIDs)
 	info := inferPartInfo(part, index, inline)
 	dispositionType := "attachment"
 	if inline {

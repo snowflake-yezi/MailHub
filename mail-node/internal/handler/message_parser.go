@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -16,6 +18,8 @@ import (
 )
 
 const textPreviewLimit = 300
+
+var cidReferencePattern = regexp.MustCompile(`(?i)cid:([^"'\\s>]+)`)
 
 type parsedAttachment struct {
 	Index       int    `json:"index"`
@@ -160,13 +164,49 @@ func collectAttachmentParts(envelope *enmime.Envelope) []*enmime.Part {
 func collectAttachments(envelope *enmime.Envelope) []parsedAttachment {
 	parts := collectAttachmentParts(envelope)
 	attachmentCount := len(envelope.Attachments)
+	inlineContentIDs := htmlCIDReferences(envelope.HTML)
 	attachments := make([]parsedAttachment, 0, len(parts))
 	for i, part := range parts {
-		// index < attachmentCount 的是 Attachment（inline=false），其余是 Inline（inline=true）
-		inline := i >= attachmentCount
+		inline := i >= attachmentCount || isInlinePart(part, inlineContentIDs)
 		attachments = append(attachments, attachmentFromPart(i, part, inline))
 	}
 	return attachments
+}
+
+func isInlinePart(part *enmime.Part, inlineContentIDs map[string]struct{}) bool {
+	if strings.EqualFold(strings.TrimSpace(part.Disposition), "inline") {
+		return true
+	}
+	contentID := normalizeCID(part.ContentID)
+	if contentID == "" {
+		return false
+	}
+	_, ok := inlineContentIDs[contentID]
+	return ok
+}
+
+func htmlCIDReferences(htmlBody string) map[string]struct{} {
+	matches := cidReferencePattern.FindAllStringSubmatch(htmlBody, -1)
+	refs := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		if cid := normalizeCID(match[1]); cid != "" {
+			refs[cid] = struct{}{}
+		}
+	}
+	return refs
+}
+
+func normalizeCID(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(strings.ToLower(value), "cid:")
+	value = strings.Trim(value, "<>")
+	if decoded, err := url.PathUnescape(value); err == nil {
+		value = decoded
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSpace(value), "<>"))
 }
 
 func attachmentFromPart(index int, part *enmime.Part, inline bool) parsedAttachment {
@@ -216,13 +256,29 @@ func inferPartInfo(part *enmime.Part, index int, inline bool) inferredPartInfo {
 			prefix = "inline"
 		}
 		filename = fmt.Sprintf("%s-%d%s", prefix, index, ext)
-	} else if filepath.Ext(filename) == "" && ext != "" {
+	} else if shouldAppendInferredExtension(filename, ext) {
 		filename += ext
 	}
 
 	return inferredPartInfo{
 		Filename:    filename,
 		ContentType: contentType,
+	}
+}
+
+func shouldAppendInferredExtension(filename, ext string) bool {
+	if ext == "" {
+		return false
+	}
+	existing := strings.ToLower(filepath.Ext(filename))
+	if existing == "" {
+		return true
+	}
+	switch existing {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+		return false
+	default:
+		return strings.Contains(filename, "@") || len(existing) > 8
 	}
 }
 

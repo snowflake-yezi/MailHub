@@ -179,6 +179,33 @@ func TestCollectAttachmentPartsOrderAndContent(t *testing.T) {
 	}
 }
 
+func TestCollectAttachmentsMarksCIDReferencedOctetStreamAsInline(t *testing.T) {
+	jpegBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00}
+	env := &enmime.Envelope{
+		HTML: `<div><img src="cid:283F2ACD@3D967052.E5884B6A00000000"></div>`,
+		Attachments: []*enmime.Part{
+			{
+				FileName:    "283F2ACD@3D967052.E5884B6A00000000",
+				ContentID:   "<283F2ACD@3D967052.E5884B6A00000000>",
+				ContentType: "application/octet-stream",
+				Content:     jpegBytes,
+			},
+		},
+	}
+
+	atts := collectAttachments(env)
+	if len(atts) != 1 {
+		t.Fatalf("attachments len = %d", len(atts))
+	}
+	att := atts[0]
+	if !att.Inline || att.Disposition != "inline" {
+		t.Fatalf("attachment inline/disposition = %+v", att)
+	}
+	if att.Filename != "283F2ACD@3D967052.E5884B6A00000000.jpg" || att.ContentType != "image/jpeg" {
+		t.Fatalf("attachment inference = %+v", att)
+	}
+}
+
 func TestInferPartInfoImageAndFallbacks(t *testing.T) {
 	pngBytes := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
 	jpegBytes := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00}
