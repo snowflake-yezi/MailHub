@@ -11,6 +11,8 @@ const STATUS_TAG = {
   sync_failed: 'tag-danger',
   soft_deleted: 'tag-info',
   purged: 'tag-info',
+  ok: 'tag-success',
+  fail: 'tag-danger',
 }
 
 function Toast({ message, type, onClose }) {
@@ -21,8 +23,27 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
+function csvEscape(value) {
+  const text = value === undefined || value === null ? '' : String(value)
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
+  return text
+}
+
+function downloadCsv(filename, rows) {
+  const content = rows.map(row => row.map(csvEscape).join(',')).join('\n')
+  const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export default function MailboxesPage() {
-  const [view, setView] = useState('normal') // 'normal' | 'trash' | 'create' | 'integrated'
+  const [view, setView] = useState('normal') // 'normal' | 'trash' | 'integrated'
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -42,8 +63,9 @@ export default function MailboxesPage() {
   const [createPrefix, setCreatePrefix] = useState('')
   const [createPassword, setCreatePassword] = useState('')
   const [createServerId, setCreateServerId] = useState('0')
+  const [createDomainId, setCreateDomainId] = useState('0')
   const [batchText, setBatchText] = useState('')
-  const [createTab, setCreateTab] = useState('batch')
+  const [createTab, setCreateTab] = useState('single')
   const [creating, setCreating] = useState(false)
   const [batchResult, setBatchResult] = useState(null)
 
@@ -98,29 +120,84 @@ export default function MailboxesPage() {
     load()
   }
 
-  const handleCreate = async (e) => {
-    e.preventDefault()
-    const items = createTab === 'batch'
-      ? batchText.split('\n').filter(Boolean).map(line => {
-          const [prefix, ...rest] = line.split(',')
-          return { prefix: prefix.trim(), password: rest.join(',').trim() }
-        })
-      : [{ prefix: createPrefix.trim(), password: createPassword.trim(), server_id: parseInt(createServerId) || 0 }]
+  const serverDomains = (server) => server?.domains || server?.Domains || []
+  const selectedCreateServer = servers.find(s => s.id === parseInt(createServerId))
+  const selectedCreateDomain = domains.find(d => d.id === parseInt(createDomainId))
+  const domainIsServedByServer = (server, domainValue) => {
+    if (!server || !domainValue || domainValue === '0') return true
+    return serverDomains(server).some(d => d.id === parseInt(domainValue))
+  }
+  const createServerOptions = createDomainId !== '0'
+    ? servers.filter(s => domainIsServedByServer(s, createDomainId))
+    : servers
+  const createDomainOptions = createServerId !== '0' && selectedCreateServer
+    ? serverDomains(selectedCreateServer)
+    : domains
 
-    if (items.length === 0) return
+  const handleCreateServerChange = (value) => {
+    setCreateServerId(value)
+    const server = servers.find(s => s.id === parseInt(value))
+    if (value !== '0' && createDomainId !== '0' && !domainIsServedByServer(server, createDomainId)) {
+      setCreateDomainId('0')
+      setToast({ type: 'error', message: '已清空域名：该服务器未绑定当前域名' })
+    }
+  }
+
+  const handleCreateDomainChange = (value) => {
+    setCreateDomainId(value)
+    if (value !== '0' && createServerId !== '0' && !domainIsServedByServer(selectedCreateServer, value)) {
+      setCreateServerId('0')
+      setToast({ type: 'error', message: '已清空服务器：当前域名未绑定该服务器' })
+    }
+  }
+
+  const buildCreateItem = (prefix, password = '') => ({
+    prefix: prefix.trim(),
+    password: password.trim(),
+    server_id: parseInt(createServerId) || 0,
+    domain_id: parseInt(createDomainId) || 0,
+  })
+
+  const submitCreateItems = async (createItems) => {
+    const validItems = createItems.filter(item => item.prefix)
+    if (validItems.length === 0) return
     setCreating(true)
     setBatchResult(null)
     try {
-      const result = await mailboxAPI.batchCreate(items)
+      const result = await mailboxAPI.batchCreate(validItems)
       setBatchResult(result)
       setToast({ type: 'success', message: `创建完成: 成功 ${result.success || 0}, 失败 ${result.failed || 0}` })
-      setView('normal')
       load()
     } catch (e) {
       setToast({ type: 'error', message: '创建失败: ' + e.message })
     } finally {
       setCreating(false)
     }
+  }
+
+  const handleSingleCreate = (e) => {
+    e.preventDefault()
+    setCreateTab('single')
+    submitCreateItems([buildCreateItem(createPrefix, createPassword)])
+  }
+
+  const handleBatchCreate = (e) => {
+    e.preventDefault()
+    setCreateTab('batch')
+    const createItems = batchText.split('\n').filter(Boolean).map(line => {
+      const [prefix, ...rest] = line.split(',')
+      return buildCreateItem(prefix, rest.join(','))
+    })
+    submitCreateItems(createItems)
+  }
+
+  const downloadCredentialCsv = () => {
+    const rows = [
+      ['email_address', 'password', 'prefix', 'domain', 'server_id', 'status', 'error'],
+      ...(batchResult?.results || []).map(r => [r.email_address || '', r.password || '', r.prefix || '', r.domain || '', r.server_id || '', r.status || '', r.error || '']),
+    ]
+    const ts = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 12)
+    downloadCsv(`mailbox-credentials-${ts}.csv`, rows)
   }
 
   const handleDelete = async (item) => {
@@ -185,12 +262,9 @@ export default function MailboxesPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-        <div>
-          <h1>邮箱账号台账</h1>
-          <p style={{ color: '#888', fontSize: 13, marginTop: 4 }}>以服务器、域名、邮箱账密为主维度；订单通过映射表关联账号。</p>
-        </div>
-        <button className="btn btn-primary" onClick={() => { setView('create'); setBatchResult(null) }}>创建邮箱</button>
+      <div style={{ marginBottom: 20 }}>
+        <h1>邮箱账号台账</h1>
+        <p style={{ color: '#888', fontSize: 13, marginTop: 4 }}>以服务器、域名、邮箱账密为主维度；订单通过映射表关联账号。</p>
       </div>
 
       {/* Summary */}
@@ -213,7 +287,6 @@ export default function MailboxesPage() {
       <div className="tabs" style={{ display: 'inline-flex', gap: 2, padding: 3, background: '#e9ecef', borderRadius: 8, marginBottom: 16 }}>
         <button className={`btn btn-sm ${view === 'normal' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('normal'); setPage(1) }}>账号集合</button>
         <button className={`btn btn-sm ${view === 'trash' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('trash'); setPage(1) }}>回收站</button>
-        <button className={`btn btn-sm ${view === 'create' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('create'); setBatchResult(null) }}>创建邮箱</button>
         <button className={`btn btn-sm ${view === 'integrated' ? 'btn-primary' : 'btn-outline'}`} style={{ borderRadius: 6 }} onClick={() => { setView('integrated'); loadIntegrated() }}>集成邮箱</button>
       </div>
 
@@ -314,7 +387,7 @@ export default function MailboxesPage() {
                 ))}
                 {items.length === 0 && (
                   <tr><td colSpan={view === 'normal' ? 9 : 7} style={{ textAlign: 'center', color: '#888', padding: 20 }}>
-                    {view === 'trash' ? '回收站为空' : '暂无邮箱账号'}
+                    {loading ? '加载中...' : view === 'trash' ? '回收站为空' : '暂无邮箱账号'}
                   </td></tr>
                 )}
               </tbody>
@@ -348,80 +421,6 @@ export default function MailboxesPage() {
               </div>
             )
           })()}
-        </div>
-      )}
-
-      {/* ── Create View ── */}
-      {view === 'create' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 420px) minmax(320px, 1fr)', gap: 16 }}>
-          <div className="section">
-            <h3>单个创建</h3>
-            <form onSubmit={handleCreate}>
-              <div className="form-group">
-                <label>邮箱前缀</label>
-                <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
-              </div>
-              <div className="form-group">
-                <label>密码</label>
-                <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder="留空自动生成" />
-              </div>
-              <div className="form-group">
-                <label>目标服务器</label>
-                <select value={createServerId} onChange={e => setCreateServerId(e.target.value)}>
-                  <option value="0">自动选择</option>
-                  {servers.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
-                </select>
-              </div>
-              <button className="btn btn-primary" type="submit" disabled={creating} onClick={() => setCreateTab('single')}>
-                {creating && <span className="spinner" />} 创建邮箱
-              </button>
-            </form>
-          </div>
-
-          <div className="section">
-            <h3>批量创建</h3>
-            <div style={{ display: 'flex', gap: 4, marginBottom: 12 }}>
-              <button className={`btn btn-sm ${createTab === 'batch' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setCreateTab('batch')}>批量粘贴</button>
-              <button className={`btn btn-sm ${createTab === 'csv' ? 'btn-primary' : 'btn-outline'}`} onClick={() => setCreateTab('csv')}>CSV 上传</button>
-            </div>
-
-            {createTab === 'batch' && (
-              <form onSubmit={handleCreate}>
-                <p style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>每行一个邮箱前缀，格式：<code>前缀</code> 或 <code>前缀,密码</code></p>
-                <div className="form-group">
-                  <label>邮箱列表</label>
-                  <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={8} placeholder="airline-cz-001&#10;airline-cz-002&#10;airline-cz-003,mypassword123" />
-                </div>
-                <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
-                  {creating && <span className="spinner" />} 批量创建
-                </button>
-              </form>
-            )}
-
-            {createTab === 'csv' && (
-              <form onSubmit={e => { e.preventDefault(); setToast({ type: 'error', message: 'CSV 上传请使用 API: POST /api/v1/admin/mailboxes/upload' }) }}>
-                <div className="form-group">
-                  <label>选择文件</label>
-                  <input type="file" accept=".csv,.txt" />
-                </div>
-                <button className="btn btn-primary" type="submit">上传并创建</button>
-              </form>
-            )}
-          </div>
-
-          {batchResult && (
-            <div className="section" style={{ gridColumn: '1 / -1' }}>
-              <h3>创建结果 — 成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</h3>
-              {(batchResult.results || []).map((r, i) => (
-                <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #eee', fontSize: 13 }}>
-                  <strong>{r.email_address || r.prefix}</strong>{' '}
-                  {r.password && <code style={{ fontSize: 12 }}>{r.password}</code>}{' '}
-                  <span className={`tag ${r.status === 'success' ? 'tag-success' : 'tag-danger'}`}>{r.status}</span>
-                  {r.error && <div style={{ color: '#a82424', fontSize: 12, marginTop: 4 }}>{r.error}</div>}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -471,6 +470,90 @@ export default function MailboxesPage() {
           </div>
         </div>
       )}
+
+      {/* ── Create Section (always at bottom) ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 420px) minmax(320px, 1fr)', gap: 16, marginTop: 18 }}>
+        <div className="section" style={{ gridColumn: '1 / -1' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, paddingBottom: 12, borderBottom: '1px solid #eee', marginBottom: 14 }}>
+            <div>
+              <h3 style={{ marginBottom: 4 }}>创建邮箱</h3>
+              <div style={{ color: '#888', fontSize: 12 }}>服务器和域名均可选；不选择时系统会按健康服务器和可用域名池自动负载分配。</div>
+            </div>
+            {(createServerId === '0' && createDomainId === '0') && <span className="tag tag-info">自动分配</span>}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="form-group">
+              <label>邮箱服务器（可选）</label>
+              <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
+                <option value="0">自动选择服务器</option>
+                {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
+              </select>
+              {createDomainId !== '0' && <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
+            </div>
+            <div className="form-group">
+              <label>域名（可选）</label>
+              <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
+                <option value="0">自动选择域名</option>
+                {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              {createServerId !== '0' && <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
+            </div>
+          </div>
+        </div>
+
+        <div className="section">
+          <h3>单个创建</h3>
+          <form onSubmit={handleSingleCreate}>
+            <div className="form-group">
+              <label>邮箱前缀</label>
+              <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
+            </div>
+            <div className="form-group">
+              <label>密码</label>
+              <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder="留空自动生成" />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={creating || !createPrefix.trim()}>
+              {creating && createTab === 'single' && <span className="spinner" />} 创建邮箱
+            </button>
+          </form>
+        </div>
+
+        <div className="section">
+          <h3>批量创建</h3>
+          <p style={{ color: '#888', fontSize: 12, marginBottom: 10 }}>每行一个邮箱前缀，格式：<code>前缀</code> 或 <code>前缀,密码</code>；上方服务器/域名会应用到本次所有行。</p>
+          <form onSubmit={handleBatchCreate}>
+            <div className="form-group">
+              <label>邮箱列表</label>
+              <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={8} placeholder="airline-cz-001&#10;airline-cz-002&#10;airline-cz-003,mypassword123" />
+            </div>
+            <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
+              {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
+            </button>
+          </form>
+        </div>
+
+        {batchResult && (
+          <div className="section" style={{ gridColumn: '1 / -1' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <h3>创建结果 — 成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</h3>
+              <button className="btn btn-outline btn-sm" type="button" onClick={downloadCredentialCsv}>下载账密 CSV</button>
+            </div>
+            {(batchResult.results || []).map((r, i) => (
+              <div key={i} style={{ padding: '10px 0', borderBottom: '1px solid #eee', fontSize: 13 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <strong>{r.email_address || r.prefix}</strong>
+                  {r.password && <code style={{ fontSize: 12 }}>{r.password}</code>}
+                  {r.password && <button className="btn btn-sm btn-outline" style={{ padding: '0 6px', height: 22 }} onClick={() => copyText(`${r.email_address},${r.password}`)}>复制账密</button>}
+                  <span className={`tag ${STATUS_TAG[r.status] || ''}`}>{r.status}</span>
+                  {r.domain && <span style={{ color: '#666' }}>域名：{r.domain}</span>}
+                  {r.server_id ? <span style={{ color: '#666' }}>服务器：#{r.server_id}</span> : null}
+                </div>
+                {r.error && <div style={{ color: '#a82424', fontSize: 12, marginTop: 4 }}>{r.error}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Integrated mailbox modal */}
       {integratedModal && (

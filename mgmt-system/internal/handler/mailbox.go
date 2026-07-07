@@ -73,6 +73,8 @@ type BatchCreateResult struct {
 	Prefix       string `json:"prefix"`
 	EmailAddress string `json:"email_address"`
 	Password     string `json:"password,omitempty"`
+	Domain       string `json:"domain,omitempty"`
+	ServerID     uint64 `json:"server_id,omitempty"`
 	Status       string `json:"status"`
 	SyncStatus   string `json:"sync_status,omitempty"`
 	Error        string `json:"error,omitempty"`
@@ -152,6 +154,8 @@ func (h *MailboxHandler) processBatchCreate(items []BatchCreateItem) []BatchCrea
 
 		result.EmailAddress = created.EmailAddress
 		result.Password = created.Password
+		result.Domain = created.Domain
+		result.ServerID = created.ServerID
 		result.SyncStatus = created.SyncStatus
 		result.Status = "ok"
 		results = append(results, result)
@@ -198,6 +202,20 @@ func parseCSV(r io.Reader) ([]BatchCreateItem, error) {
 		item := BatchCreateItem{Prefix: strings.TrimSpace(record[0])}
 		if len(record) >= 2 {
 			item.Password = strings.TrimSpace(record[1])
+		}
+		if len(record) >= 3 && strings.TrimSpace(record[2]) != "" {
+			domainID, err := strconv.ParseUint(strings.TrimSpace(record[2]), 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid domain_id %q", record[2])
+			}
+			item.DomainID = domainID
+		}
+		if len(record) >= 4 && strings.TrimSpace(record[3]) != "" {
+			serverID, err := strconv.ParseUint(strings.TrimSpace(record[3]), 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid server_id %q", record[3])
+			}
+			item.ServerID = serverID
 		}
 		items = append(items, item)
 	}

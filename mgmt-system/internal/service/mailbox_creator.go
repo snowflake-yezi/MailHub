@@ -22,6 +22,7 @@ type MailboxCreateInput struct {
 	DomainID      uint64
 	ServerID      uint64
 	RetentionDays int
+	AllowExisting bool
 }
 
 type MailboxCreateResult struct {
@@ -63,7 +64,10 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 	}
 
 	if existing, err := m.store.GetMailboxByOrderID(input.OrderID); err == nil {
-		return mailboxResult(existing, input.OrderID, true), nil
+		if input.AllowExisting {
+			return mailboxResult(existing, input.OrderID, true), nil
+		}
+		return nil, fmt.Errorf("mailbox already exists for prefix: %s", input.OrderID)
 	}
 
 	localPart := input.LocalPart
@@ -142,11 +146,11 @@ func (m *MailboxCreator) selectDomain(domainID uint64) (*model.Domain, error) {
 		return domain, nil
 	}
 
-	domains, err := m.store.ListDomains()
-	if err != nil || len(domains) == 0 {
-		return nil, fmt.Errorf("no active domain available")
+	domain, err := m.store.GetAllocatableDomain()
+	if err != nil {
+		return nil, fmt.Errorf("no active domain available with healthy synced server")
 	}
-	return &domains[0], nil
+	return domain, nil
 }
 
 func (m *MailboxCreator) selectServer(serverID, domainID uint64) (*model.MailServer, error) {

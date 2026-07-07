@@ -325,6 +325,29 @@ func (s *Store) GetHealthyServerForDomain(domainID uint64) (*model.MailServer, e
 	return &srv, nil
 }
 
+// GetAllocatableDomain 自动域名分配：只从至少有一台 healthy、容量未满、Postfix 已同步服务器的 active 域名中选择。
+// 排序优先选择整体负载较低的域名，避免未配置到任何可投递服务器的域名被误选。
+func (s *Store) GetAllocatableDomain() (*model.Domain, error) {
+	var domain model.Domain
+	err := s.db.Model(&model.Domain{}).
+		Select("domains.*").
+		Joins("JOIN server_domains ON server_domains.domain_id = domains.id").
+		Joins("JOIN mail_servers ON mail_servers.id = server_domains.server_id").
+		Where("domains.status = ?", "active").
+		Where("server_domains.status = ?", "active").
+		Where("server_domains.sync_status IN ?", []string{"synced", "partial"}).
+		Where("server_domains.postfix_status = ?", "synced").
+		Where("mail_servers.status = ?", "healthy").
+		Where("mail_servers.current_load < mail_servers.capacity").
+		Group("domains.id").
+		Order("MIN(mail_servers.current_load) ASC, domains.id ASC").
+		First(&domain).Error
+	if err != nil {
+		return nil, err
+	}
+	return &domain, nil
+}
+
 // CountMailboxesOnServerDomain 统计某服务器某域的邮箱数（移除域名保护检查）
 func (s *Store) CountMailboxesOnServerDomain(serverID, domainID uint64) (int64, error) {
 	var count int64

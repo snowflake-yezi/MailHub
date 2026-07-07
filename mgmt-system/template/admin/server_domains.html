@@ -72,7 +72,7 @@
 
         <div class="note">
             📌 域名池列出本服务器已提供收发服务的域名（远端 Postfix <code>virtual_mailbox_domains</code> + DKIM 同步状态）。
-            可在「该服务器该域下创建邮箱」（宝塔式：服务器→域名→邮箱，固定 server+domain，只输前缀/密码）。
+            可在「邮箱管理」页面底部统一创建邮箱；本页仅维护服务器域名池、同步状态与 DNS 信息。
             「添加新域名（配 Postfix+DKIM+DNS）」在 T5A-C 接入。
         </div>
 
@@ -134,58 +134,18 @@
                     </tr>
                     {{end}}
                     {{if not .bindings}}
-                    <tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">该服务器暂无绑定域名。添加域名后即可在该域下创建邮箱。</td></tr>
+                    <tr><td colspan="9" style="color:#888;text-align:center;padding:20px;">该服务器暂无绑定域名。添加域名后可在邮箱管理页底部创建邮箱。</td></tr>
                     {{end}}
                 </tbody>
             </table>
         </div>
 
-        {{if and .bindings (eq .server.Status "healthy")}}
-        <!-- 在该服务器创建邮箱 -->
+        {{if .bindings}}
         <div class="section">
-            <h3 style="margin-bottom:14px;">在该服务器创建邮箱</h3>
-            <div class="form-group" style="max-width:320px;">
-                <label>目标域名</label>
-                <select id="create-domain">
-                    {{range .bindings}}{{if and (eq .Status "active") (eq .PostfixStatus "synced")}}
-                    <option value="{{.DomainID}}">{{.Domain.Name}}</option>
-                    {{end}}{{end}}
-                </select>
-            </div>
-
-            <div class="tabs">
-                <div class="tab active" onclick="switchCreateTab('single')">单个创建</div>
-                <div class="tab" onclick="switchCreateTab('batch')">批量粘贴</div>
-            </div>
-
-            <div id="create-single">
-                <div class="form-row" style="max-width:560px;">
-                    <div class="form-group">
-                        <label>邮箱前缀</label>
-                        <input type="text" id="single-prefix" placeholder="airline-cz-001">
-                    </div>
-                    <div class="form-group">
-                        <label>密码（留空自动）</label>
-                        <input type="text" id="single-password" placeholder="自动生成">
-                    </div>
-                </div>
-                <button class="btn btn-primary" onclick="submitSingle()">创建邮箱</button>
-                <span id="single-spinner" class="spinner">创建中...</span>
-            </div>
-
-            <div id="create-batch" style="display:none;">
-                <p class="muted" style="margin-bottom:8px;">每行一个前缀，格式：<code>前缀</code> 或 <code>前缀,密码</code>（密码可省略自动生成）</p>
-                <div class="form-group">
-                    <textarea id="batch-text" rows="5" style="font-family:monospace;" placeholder="airline-cz-001&#10;airline-cz-002&#10;airline-cz-003,mypassword123"></textarea>
-                </div>
-                <button class="btn btn-primary" onclick="submitBatch()">批量创建</button>
-                <span id="batch-spinner" class="spinner">创建中...</span>
-            </div>
-
-            <div id="create-result" style="margin-top:14px;"></div>
+            <h3 style="margin-bottom:8px;">创建邮箱入口已合并</h3>
+            <p class="muted" style="margin-bottom:12px;">请到邮箱管理页面底部创建邮箱，可选择邮箱服务器和域名；不选择时系统会自动分配。</p>
+            <a class="btn btn-primary" href="/admin/mailboxes">前往邮箱管理</a>
         </div>
-        {{else if .bindings}}
-        <div class="section"><span class="muted">该服务器当前非 healthy，暂不能创建邮箱。</span></div>
         {{end}}
     </div>
 
@@ -214,22 +174,6 @@
 
         function copyText(text) {
             navigator.clipboard.writeText(text).then(function() { showToast('已复制', 'ok'); });
-        }
-
-        function renderResults(results) {
-            var box = document.getElementById('create-result');
-            if (!results || results.length === 0) { box.innerHTML = ''; return; }
-            var html = '';
-            results.forEach(function(r) {
-                if (r.status === 'ok') {
-                    html += '<div class="result-row ok">✅ <strong>' + (r.email_address || r.prefix) + '</strong>';
-                    if (r.password) { html += ' &nbsp;密码：<code>' + r.password + '</code> <button class="copy-btn" onclick="copyText(\'' + r.password + '\')">复制</button>'; }
-                    html += ' <span class="muted">(' + r.sync_status + ')</span></div>';
-                } else {
-                    html += '<div class="result-row fail">❌ <strong>' + (r.prefix || '?') + '</strong> — ' + (r.error || '失败') + '</div>';
-                }
-            });
-            box.innerHTML = html;
         }
 
         function renderDNSRecords(records) {
@@ -285,59 +229,6 @@
                 }).catch(function(err) {
                     showToast('❌ 网络错误: ' + err.message, 'err');
                 });
-        }
-
-        function submitSingle() {
-            var domainID = Number(document.getElementById('create-domain').value || 0);
-            var prefix = document.getElementById('single-prefix').value.trim();
-            var password = document.getElementById('single-password').value.trim();
-            if (!prefix) { showToast('请输入邮箱前缀', 'err'); return; }
-            document.getElementById('single-spinner').style.display = 'inline';
-            var body = [{ prefix: prefix, password: password, domain_id: domainID, server_id: SERVER_ID }];
-            fetch('/api/v1/admin/mailboxes/batch', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-            }).then(function(r) { return r.json(); }).then(function(resp) {
-                document.getElementById('single-spinner').style.display = 'none';
-                if (resp.code === 0 && resp.data) {
-                    renderResults(resp.data.results);
-                    var ok = resp.data.success, fail = resp.data.failed;
-                    showToast((ok > 0 ? '✅ 创建成功 ' + ok + ' 个' : '') + (fail > 0 ? ' ❌ 失败 ' + fail : ''), ok > 0 ? 'ok' : 'err');
-                } else {
-                    showToast('❌ ' + (resp.message || '失败'), 'err');
-                }
-            }).catch(function(err) {
-                document.getElementById('single-spinner').style.display = 'none';
-                showToast('❌ 网络错误: ' + err.message, 'err');
-            });
-        }
-
-        function submitBatch() {
-            var domainID = Number(document.getElementById('create-domain').value || 0);
-            var text = document.getElementById('batch-text').value;
-            var items = [];
-            text.split('\n').forEach(function(line) {
-                line = line.trim();
-                if (!line || line.startsWith('#')) return;
-                var parts = line.split(',');
-                items.push({ prefix: parts[0].trim(), password: parts.length > 1 ? parts.slice(1).join(',').trim() : '', domain_id: domainID, server_id: SERVER_ID });
-            });
-            if (items.length === 0) { showToast('请输入至少一个前缀', 'err'); return; }
-            document.getElementById('batch-spinner').style.display = 'inline';
-            fetch('/api/v1/admin/mailboxes/batch', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(items)
-            }).then(function(r) { return r.json(); }).then(function(resp) {
-                document.getElementById('batch-spinner').style.display = 'none';
-                if (resp.code === 0 && resp.data) {
-                    renderResults(resp.data.results);
-                    var ok = resp.data.success, fail = resp.data.failed;
-                    showToast('成功 ' + ok + ' / 失败 ' + fail, ok > 0 ? 'ok' : 'err');
-                } else {
-                    showToast('❌ ' + (resp.message || '失败'), 'err');
-                }
-            }).catch(function(err) {
-                document.getElementById('batch-spinner').style.display = 'none';
-                showToast('❌ 网络错误: ' + err.message, 'err');
-            });
         }
     </script>
 </body>

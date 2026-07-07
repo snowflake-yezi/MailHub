@@ -42,6 +42,7 @@ func (a *Allocator) Allocate(orderID string, domainID uint64, retentionDays int)
 		OrderID:       orderID,
 		DomainID:      domainID,
 		RetentionDays: retentionDays,
+		AllowExisting: true,
 	})
 	if err != nil {
 		return nil, err
