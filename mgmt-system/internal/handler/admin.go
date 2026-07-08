@@ -195,6 +195,7 @@ func (h *AdminHandler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/filters", spa)
 	rg.GET("/mailboxes", spa)
 	rg.GET("/emails", spa)
+	rg.GET("/search", spa)
 	rg.GET("/config", spa)
 	rg.GET("/config/*path", spa)
 }

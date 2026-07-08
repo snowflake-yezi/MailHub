@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   ChevronLeft,
   ChevronRight,
@@ -42,11 +42,31 @@ function getInitialTheme() {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
+function normalizeGlobalSearch(value) {
+  return String(value || '').trim()
+}
+
+function isLikelyServerQuery(value) {
+  const text = value.toLowerCase()
+  return (
+    /^(server|node|mail-node|节点|服务器)\s*[:：]/i.test(value) ||
+    /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(value) ||
+    text.includes('mail-node') ||
+    text.includes('server-')
+  )
+}
+
+function stripSearchPrefix(value) {
+  return value.replace(/^(server|node|mail-node|节点|服务器)\s*[:：]\s*/i, '').trim()
+}
+
 export default function Layout({ children }) {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(getInitialCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [theme, setTheme] = useState(getInitialTheme)
+  const [globalSearch, setGlobalSearch] = useState('')
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_KEY, String(collapsed))
@@ -62,8 +82,18 @@ export default function Layout({ children }) {
   }, [pathname])
 
   const activeItem = useMemo(() => {
+    if (pathname === '/search') return { label: '搜索结果' }
     return NAV_ITEMS.find(item => item.path === pathname) || NAV_ITEMS[0]
   }, [pathname])
+
+  const submitGlobalSearch = (e) => {
+    e.preventDefault()
+    const query = normalizeGlobalSearch(globalSearch)
+    if (!query) return
+
+    const normalizedQuery = isLikelyServerQuery(query) ? stripSearchPrefix(query) : query
+    navigate(`/search?q=${encodeURIComponent(normalizedQuery)}`)
+  }
 
   return (
     <div className={`app-shell ${collapsed ? 'is-collapsed' : ''}`}>
@@ -143,10 +173,15 @@ export default function Layout({ children }) {
             <strong>{activeItem.label}</strong>
           </div>
           <div className="topbar-actions">
-            <label className="global-search">
+            <form className="global-search" onSubmit={submitGlobalSearch}>
               <Search size={16} />
-              <input placeholder="搜索邮箱、节点或 Message-ID" />
-            </label>
+              <input
+                value={globalSearch}
+                onChange={e => setGlobalSearch(e.target.value)}
+                placeholder="搜索邮箱、节点或 Message-ID"
+                aria-label="全局搜索"
+              />
+            </form>
             <button className="icon-button" type="button" title="刷新">
               <RefreshCw size={18} />
             </button>

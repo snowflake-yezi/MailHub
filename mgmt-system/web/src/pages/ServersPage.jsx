@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
@@ -191,6 +192,8 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
 }
 
 export default function ServersPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const searchQuery = (searchParams.get('search') || '').trim()
   const [servers, setServers] = useState([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -216,19 +219,34 @@ export default function ServersPage() {
 
   useEffect(() => { load() }, [load])
 
+  const visibleServers = useMemo(() => {
+    const needle = searchQuery.toLowerCase()
+    if (!needle) return servers
+    return servers.filter(server => {
+      const domainText = (server.domains || []).map(domain => domain.name).join(' ')
+      return [
+        server.id,
+        server.name,
+        server.api_host,
+        server.status,
+        domainText,
+      ].some(value => String(value || '').toLowerCase().includes(needle))
+    })
+  }, [searchQuery, servers])
+
   const summary = useMemo(() => {
-    const byStatus = servers.reduce((acc, server) => {
+    const byStatus = visibleServers.reduce((acc, server) => {
       acc[server.status || 'down'] = (acc[server.status || 'down'] || 0) + 1
       return acc
     }, {})
     return {
-      total: servers.length,
+      total: visibleServers.length,
       healthy: byStatus.healthy || 0,
       degraded: byStatus.degraded || 0,
       draining: byStatus.draining || 0,
       down: byStatus.down || 0,
     }
-  }, [servers])
+  }, [visibleServers])
 
   const openCreate = () => {
     setForm(EMPTY_FORM)
@@ -363,8 +381,15 @@ export default function ServersPage() {
         <div className="panel-header">
           <div>
             <h3>节点列表</h3>
-            <div className="panel-caption">负载、心跳和探测结果在同一行内完成判断。</div>
+            <div className="panel-caption">
+              {searchQuery ? `搜索「${searchQuery}」匹配 ${visibleServers.length} 个节点。` : '负载、心跳和探测结果在同一行内完成判断。'}
+            </div>
           </div>
+          {searchQuery && (
+            <button className="btn btn-sm btn-outline" type="button" onClick={() => setSearchParams({})}>
+              清除搜索
+            </button>
+          )}
         </div>
         <div className="table-wrap">
           <table className="data-table server-table">
@@ -382,7 +407,7 @@ export default function ServersPage() {
               </tr>
             </thead>
             <tbody>
-              {servers.map(server => {
+              {visibleServers.map(server => {
                 const percent = clampLoad(server.current_load, server.capacity)
                 return (
                   <tr key={server.id}>
@@ -444,16 +469,20 @@ export default function ServersPage() {
                   </tr>
                 )
               })}
-              {servers.length === 0 && (
+              {visibleServers.length === 0 && (
                 <tr>
                   <td colSpan={9}>
                     <div className="empty-state">
                       <Database size={28} />
-                      <strong>暂无服务器节点</strong>
-                      <span>注册第一台 mail-node 后，MailHub 才能开始分配邮箱。</span>
-                      <button className="btn btn-primary" type="button" onClick={openCreate}>
-                        <Plus size={16} /> 注册服务器
-                      </button>
+                      <strong>{searchQuery ? '没有匹配的服务器节点' : '暂无服务器节点'}</strong>
+                      <span>{searchQuery ? '换个节点名称、API 地址或域名再试。' : '注册第一台 mail-node 后，MailHub 才能开始分配邮箱。'}</span>
+                      {searchQuery ? (
+                        <button className="btn btn-outline" type="button" onClick={() => setSearchParams({})}>清除搜索</button>
+                      ) : (
+                        <button className="btn btn-primary" type="button" onClick={openCreate}>
+                          <Plus size={16} /> 注册服务器
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>

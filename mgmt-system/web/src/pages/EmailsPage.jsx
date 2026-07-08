@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   Download,
   FileText,
@@ -111,6 +112,8 @@ function formatBytes(value) {
 }
 
 export default function EmailsPage() {
+  const location = useLocation()
+  const appliedURLSearch = useRef('')
   const [mailbox, setMailbox] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -150,6 +153,56 @@ export default function EmailsPage() {
       setLoading(false)
     }
   }, [size])
+
+  const fetchMessageByID = useCallback(async (targetMailbox, messageID) => {
+    const normalizedMailbox = String(targetMailbox || '').trim()
+    const normalizedMessageID = String(messageID || '').trim()
+    if (!normalizedMailbox || !normalizedMessageID) return
+    setLoading(false)
+    setSearched(true)
+    setError(null)
+    setMailbox(normalizedMailbox)
+    setQuery(normalizedMailbox)
+    setMessages([])
+    setSelected(normalizedMessageID)
+    setDetail(null)
+    setDetailLoading(true)
+    setBodyView('text')
+    try {
+      const data = await emailAPI.body(normalizedMessageID, normalizedMailbox)
+      setDetail(data)
+      setBodyView(data?.text_body ? 'text' : data?.html_body ? 'html' : 'meta')
+    } catch (err) {
+      setDetail({ _error: err.message })
+    } finally {
+      setDetailLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (appliedURLSearch.current === location.search) return
+    appliedURLSearch.current = location.search
+    const params = new URLSearchParams(location.search)
+    const mailboxParam = params.get('mailbox') || ''
+    const messageID = params.get('message_id') || ''
+
+    if (mailboxParam && messageID) {
+      fetchMessageByID(mailboxParam, messageID)
+      return
+    }
+    if (mailboxParam) {
+      setMailbox(mailboxParam)
+      fetchMessages(mailboxParam, 1, size)
+      return
+    }
+    if (messageID) {
+      setSearched(true)
+      setError('Message-ID 查询需要同时提供邮箱地址。请先输入邮箱地址查询邮件，再打开对应邮件详情。')
+      setMessages([])
+      setSelected(messageID)
+      setDetail(null)
+    }
+  }, [fetchMessageByID, fetchMessages, location.search, size])
 
   const doSearch = (e) => {
     if (e) e.preventDefault()

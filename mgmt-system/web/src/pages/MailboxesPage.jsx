@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   ArchiveRestore,
   CheckCircle2,
@@ -99,7 +100,10 @@ function downloadCsv(filename, rows) {
 }
 
 export default function MailboxesPage() {
-  const [view, setView] = useState('normal')
+  const location = useLocation()
+  const initialParams = new URLSearchParams(location.search)
+  const initialView = initialParams.get('view') === 'trash' ? 'trash' : initialParams.get('view') === 'integrated' ? 'integrated' : 'normal'
+  const [view, setView] = useState(initialView)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -109,10 +113,10 @@ export default function MailboxesPage() {
   const [servers, setServers] = useState([])
   const [domains, setDomains] = useState([])
 
-  const [search, setSearch] = useState('')
-  const [domainId, setDomainId] = useState('')
-  const [serverId, setServerId] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
+  const [search, setSearch] = useState(initialParams.get('search') || '')
+  const [domainId, setDomainId] = useState(initialParams.get('domain_id') || '')
+  const [serverId, setServerId] = useState(initialParams.get('server_id') || '')
+  const [statusFilter, setStatusFilter] = useState(initialParams.get('status') || '')
   const [page, setPage] = useState(1)
   const [size, setSize] = useState(20)
 
@@ -150,6 +154,17 @@ export default function MailboxesPage() {
       setRefreshing(false)
     }
   }, [view, search, domainId, serverId, statusFilter, page, size])
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const nextView = params.get('view') === 'trash' ? 'trash' : params.get('view') === 'integrated' ? 'integrated' : 'normal'
+    setView(nextView)
+    setSearch(params.get('search') || '')
+    setDomainId(params.get('domain_id') || '')
+    setServerId(params.get('server_id') || '')
+    setStatusFilter(params.get('status') || '')
+    setPage(1)
+  }, [location.search])
 
   useEffect(() => {
     load()
