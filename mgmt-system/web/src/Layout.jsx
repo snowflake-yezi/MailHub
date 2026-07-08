@@ -13,10 +13,12 @@ import {
   Search,
   Server,
   Settings,
+  Sun,
   X,
 } from 'lucide-react'
 
 const SIDEBAR_KEY = 'mailhub.sidebar.collapsed'
+const THEME_KEY = 'mailhub.theme'
 const LOGO_SRC = `${import.meta.env.BASE_URL}mailhub.png`
 
 const NAV_ITEMS = [
@@ -33,14 +35,27 @@ function getInitialCollapsed() {
   return window.localStorage.getItem(SIDEBAR_KEY) === 'true'
 }
 
+function getInitialTheme() {
+  if (typeof window === 'undefined') return 'light'
+  const stored = window.localStorage.getItem(THEME_KEY)
+  if (stored === 'light' || stored === 'dark') return stored
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 export default function Layout({ children }) {
   const { pathname } = useLocation()
   const [collapsed, setCollapsed] = useState(getInitialCollapsed)
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [theme, setTheme] = useState(getInitialTheme)
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_KEY, String(collapsed))
   }, [collapsed])
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem(THEME_KEY, theme)
+  }, [theme])
 
   useEffect(() => {
     setMobileOpen(false)
@@ -135,8 +150,15 @@ export default function Layout({ children }) {
             <button className="icon-button" type="button" title="刷新">
               <RefreshCw size={18} />
             </button>
-            <button className="icon-button" type="button" title="主题">
-              <Moon size={18} />
+            <button
+              className="icon-button"
+              type="button"
+              title={theme === 'dark' ? '切换浅色模式' : '切换深色模式'}
+              aria-label={theme === 'dark' ? '切换浅色模式' : '切换深色模式'}
+              aria-pressed={theme === 'dark'}
+              onClick={() => setTheme(v => (v === 'dark' ? 'light' : 'dark'))}
+            >
+              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
           </div>
         </header>

@@ -146,7 +146,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="dashboard-panel" style={{ textAlign: 'center', padding: 44, color: 'var(--color-muted)' }}>
+      <div className="dashboard-panel loading-panel">
         <span className="spinner" /> 正在载入 MailHub 控制台...
       </div>
     )
