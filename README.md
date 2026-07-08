@@ -1,73 +1,57 @@
 # MailHub
 
-> 基于 Postfix + Dovecot 的自建邮局管理系统，融合「宝塔邮局管理器」的多机管理能力与 Roundcube Webmail，并在此基础上升级出控制面 / 数据面分离、域名 DNS / DKIM 自动化、过滤转发、动态配置、结构化邮件查询 API 等能力。
+MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统。它把管理编排放在 `mgmt-system` 控制面，把真实收信、Maildir 存储、过滤转发和域名落地放在 `mail-node` 数据面，适合批量开通业务邮箱、统一汇总邮件，并通过 API 向业务系统或大模型系统提供结构化邮件读取能力。
 
-适用于需要自主管理业务邮箱、批量开通账号、统一汇总邮件并对外提供邮件读取能力的场景。系统将控制面与数据面解耦：控制面负责账号、服务器、域名、规则和 API；数据面负责真实邮件收发、Maildir 存储、过滤转发和附件处理。
-
----
-
-## 最新修复优先看
-
-> 近期重点收口以下稳定性问题，均已通过本地测试并完成部署验证。
-
-- **inline 图片接收/展示修复**：兼容常见邮件客户端把正文图片发成 `application/octet-stream`、无标准 filename、只靠 `Content-ID` + `cid:` 引用的 MIME。mail-node 现在会按图片魔数补 `image/jpeg` / `image/png` 等真实类型和 `.jpg/.png` 后缀，管理后台邮件详情、HTML 预览、附件下载三处保持一致。
-- **Roundcube 转发链路修复**：不仅 API 读取时修正，SMTP 转发到集成邮箱前也会修复被 HTML `cid:` 引用的图片 part MIME 头，补齐 `Content-Type: image/*; name="..."` 与 `Content-Disposition: inline; filename="..."`，避免 Roundcube 仍看到无后缀附件。
-- **集成邮箱 SMTP 凭据热加载修复**：转发目标池切换后，mail-node 每次发送前动态读取 active 集成邮箱的 SMTP user/pass，避免认证失败导致转发停滞；密码不落入后台 KV 配置页。
-- **邮箱集合 / 回收站混排修复**：React SPA 邮箱列表 API 已按 `view=trash` 正确过滤，普通列表默认排除 `soft_deleted/purged`，回收站只显示已删除/已清理状态。
-- **外部 API 契约与鉴权修复**：补齐 `/api/v1/emails/*` 邮箱维度路由、附件下载、Bearer scope 精确匹配和服务间 Shared-Secret 校验，错误路径保持统一 JSON 信封。
-- **附件下载与 safe HTML 预览修复**：附件二进制下载透传 `Content-Type` / `Content-Disposition`；HTML 预览移除危险脚本与外链图片，只允许安全的 `cid:` 映射图片在 iframe 中展示。
+当前代码已经完成多服务器邮局池、域名/DKIM 自动化、React 管理后台、过滤转发、集成邮箱热切换、动态配置、回收站生命周期、结构化邮件查询、附件下载和 inline 图片兼容处理。
 
 ---
 
-## 核心特性
+## 当前能力
 
-### 邮局管理
-- **多服务器邮局池**：一台控制面调度 N 台数据面邮件服务器，横向扩容；服务器按健康度参与邮箱分配，宕机自动摘除。
-- **域名池 + DNS 一键生成**：每台服务器管理自己的域名，添加域名时自动配置 Postfix 虚拟域、生成 DKIM 密钥并返回 A / MX / SPF / DKIM / DMARC 完整 DNS 清单，运营只需到 DNS 控制台粘贴。
-- **邮箱账号全生命周期**：单个 / 批量 / CSV 创建，密码持久化、远端同步状态追踪；安全软删除（回收站 + 定时 GC）。
-- **健康检查与心跳**：控制面主动探测 + 数据面被动心跳，连续失败自动降级→摘除，仪表盘可观测。
+### 控制面 `mgmt-system`
 
-### 邮件处理
-- **过滤引擎**：可配置规则（按发件人 / 主题等匹配 pass / flag / block），数据面定时拉取 + 控制面变更主动推送，热生效。
-- **自动转发汇总**：数据面异步扫描 Maildir，按规则过滤后 SMTP 转发到集成邮箱；正文尽量保真，仅改 Subject 加来源标识，并对 `cid:` inline 图片的 MIME 头做兼容修复，内置防循环。
-- **集成邮箱（转发目标池）管理**：后台维护多个集成邮箱，一键切换当前生效的转发目标；切换后控制面联动通知数据面热加载，无需改配置重启。
-- **邮件与附件查询**：MIME 结构化解析，对外 API 提供正文 + 附件元数据 + 附件流式下载；支持 inline 图片魔数推断、后缀补齐与 `cid:` 安全预览。
-- **Roundcube Webmail**：集成邮箱可选的 Webmail 前端，运营统一登录查看汇总邮件；转发链路会修复不规范 inline 图片 MIME 头，提升 Roundcube 展示兼容性。
+- 管理后台：React SPA，入口为 `/admin/*`，Session 鉴权。
+- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`，Bearer Token + scope 鉴权。
+- 内部 API：`/api/v1/internal/*`，与 mail-node 通过 `X-Internal-Token` Shared-Secret 互信。
+- 资源管理：邮箱账号、服务器池、域名池、过滤规则、系统配置、集成邮箱。
+- 调度能力：健康检查、心跳接收、生命周期 Watchdog、软删除过期标记、配置/规则热加载通知。
+- 数据存储：MySQL / MariaDB，使用 GORM AutoMigrate，并保留历史 `order_mailboxes` 到新账号模型的迁移路径。
 
-### 运维与配置
-- **系统动态配置**：80+ 项运行参数（扫描间隔 / 超时 / 阈值 / 心跳 / 会话等）后台可视化调整，部分支持热加载，免改代码重启。
+### 数据面 `mail-node`
 
-### 安全与 API
-- **三层鉴权体系**：后台 Session 登录 + 外部 API Bearer Token (Scope) + 服务间 Shared-Secret 互信。
-- **对外 API**：业务系统通过 Token 鉴权创建邮箱、按 scope 精确授权拉取邮件原件与附件；正式契约见 [外部 API 对接文档](docs/api/external-api.md)。
+- 邮件服务同机组件：Postfix 收信、Dovecot 存储、OpenDKIM 签名配置。
+- 邮箱管理：创建邮箱、修改密码、安全删除、从 `.trash` 恢复。
+- 域名管理：Postfix 虚拟域落地、DKIM key / SigningTable / KeyTable 写入。
+- 邮件处理：扫描 Maildir `new/` 和 `cur/`，按规则 `pass / flag / block` 处理，SMTP 转发到当前 active 集成邮箱。
+- 邮件读取：结构化解析 MIME，返回正文、头部、附件元数据，并支持附件二进制下载。
+- 兼容处理：对缺 filename、缺后缀、错误 `application/octet-stream` 的 inline 图片按魔数推断类型和扩展名；API 读取、HTML 预览、SMTP 转发链路保持一致。
 
 ---
 
-## 系统架构
+## 架构
 
 ```mermaid
 flowchart TB
     internet((互联网))
 
     subgraph edge["边界层"]
-        nginx["Nginx :443<br/>/admin → mgmt :8080<br/>/api/* → mgmt :8080"]
+        nginx["Nginx :443<br/>/admin -> mgmt :8080<br/>/api/* -> mgmt :8080"]
     end
 
     subgraph mgmt["mgmt-system 控制面"]
-        web["Web 后台<br/>邮箱 CRUD / 服务器池 / 域名池 + DNS / 过滤规则"]
-        api["API<br/>邮箱创建 / 邮件查询<br/>业务系统集成"]
-        control["控制层<br/>健康检查 / 负载分配 / 规则下发 / 生命周期管理"]
-        auth["鉴权<br/>Session / Bearer Token + Scope / Shared-Secret"]
-        db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token")]
+        web["React 管理后台<br/>邮箱 / 服务器 / 域名 / 过滤 / 配置 / 集成邮箱"]
+        api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
+        control["控制层<br/>分配 / 健康检查 / 生命周期 / 热加载通知"]
+        auth["鉴权<br/>Session / Bearer scope / Shared-Secret"]
+        db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token / 配置")]
     end
 
     subgraph nodes["mail-node 数据面集群"]
-        node1["mail-node 1<br/>Postfix :25 / Dovecot / OpenDKIM<br/>过滤 + 转发 / 心跳 + 健康"]
-        node2["mail-node 2<br/>Postfix :25 / Dovecot / OpenDKIM<br/>过滤 + 转发 / 心跳 + 健康"]
-        nodeN["mail-node N<br/>Postfix :25 / Dovecot / OpenDKIM<br/>过滤 + 转发 / 心跳 + 健康"]
+        node1["mail-node 1<br/>Postfix / Dovecot / OpenDKIM<br/>Maildir / 过滤 / 转发 / 附件解析"]
+        nodeN["mail-node N<br/>横向扩展"]
     end
 
-    union["集成邮箱<br/>Roundcube Webmail 查看"]
+    union["集成邮箱<br/>Roundcube 查看"]
 
     internet --> nginx
     nginx --> web
@@ -77,63 +61,59 @@ flowchart TB
     auth --> web
     auth --> api
     control --> db
-
-    control -->|"服务间 API<br/>X-Internal-Token"| node1
-    control -->|"服务间 API<br/>X-Internal-Token"| node2
-    control -->|"服务间 API<br/>X-Internal-Token"| nodeN
-
+    control -->|"X-Internal-Token"| node1
+    control -->|"X-Internal-Token"| nodeN
     node1 -->|"SMTP 转发"| union
-    node2 -->|"SMTP 转发"| union
     nodeN -->|"SMTP 转发"| union
 ```
 
-- **控制面 `mgmt-system`**：Go + gin + gorm，Web 后台（React SPA）+ 对外/服务间 API，负责编排、鉴权、健康检查、动态配置下发，不直接处理邮件正文投递。
-- **数据面 `mail-node`**：与 Postfix / Dovecot / OpenDKIM 同机部署，负责真实收发、Maildir 管理、过滤转发、域名 DKIM 落地、心跳上报。
+更完整的数据模型、接口流向和运行约束见 [架构概览](docs/architecture-overview.md)。
 
 ---
 
 ## 技术栈
 
-| 层面 | 选型 | 说明 |
-|------|------|------|
-| 后端 | Go 1.22+（gin + gorm） | 控制面 + 数据面统一语言 |
-| 数据库 | MySQL 8.0 / MariaDB 10.5 | 控制面管理数据 |
-| 邮件服务 | Postfix + Dovecot + OpenDKIM | 数据面自建 |
-| 前端（后台） | React + Vite | SPA，构建产物随服务端发布 |
-| Webmail | Roundcube 1.6 | PHP + SQLite，可选 |
-| 部署 | 裸机 systemd + Nginx 反代 | 2C2G10M 低配友好 |
+| 层面 | 选型 | 当前用途 |
+|------|------|----------|
+| 后端 | Go 1.22+、Gin、GORM | 控制面和数据面服务 |
+| 数据库 | MySQL 8.0 / MariaDB 10.5+ | 控制面元数据 |
+| 邮件服务 | Postfix、Dovecot、OpenDKIM | 数据面真实收发和签名 |
+| 管理后台 | React、Vite | `/admin/*` SPA |
+| Webmail | Roundcube 1.6+ | 查看集成邮箱汇总邮件 |
+| 部署 | systemd、Nginx | 裸机/云主机部署 |
 
 ---
 
 ## 目录结构
 
-```
+```text
 .
-├── mgmt-system/                # 控制面：管理后台 + API
-│   ├── cmd/server/             # 程序入口
+├── mgmt-system/
+│   ├── cmd/server/                 # 控制面入口
 │   ├── internal/
-│   │   ├── handler/            # HTTP handler（auth / admin / mailbox / server / email / filter / config / integrated_mailbox）
-│   │   ├── service/            # 业务层（邮箱创建、账号导入、分配器）
-│   │   ├── store/              # gorm 数据访问 + 动态配置 KV
-│   │   ├── middleware/         # 中间件（Session / Bearer Token / Shared-Secret）
-│   │   ├── model/              # 数据模型
-│   │   ├── config/             # 配置加载
-│   │   ├── healthcheck/        # 主动健康检查调度器
-│   │   └── lifecycle/          # 生命周期调度器
-│   ├── web/                    # React SPA 源码（Vite 构建 → template/static/admin-app/）
-│   ├── template/static/admin-app/  # SPA 构建产物（服务端 serve）
-│   └── config.example.yaml     # 配置模板
-├── mail-node/                  # 数据面：邮局 agent
-│   ├── cmd/node/
-│   ├── internal/
-│   │   ├── mailbox/            # Maildir 管理、邮箱创建、生命周期
-│   │   ├── forward/            # 过滤 + SMTP 转发 + 防循环 + 生命周期
-│   │   ├── filter/             # 过滤引擎
-│   │   ├── domain/             # Postfix 虚拟域 + DKIM 落地
-│   │   ├── middleware/         # Shared-Secret 鉴权
-│   │   └── config/             # 配置加载 + 远程动态配置（remote.go）
+│   │   ├── handler/                # HTTP handlers
+│   │   ├── service/                # 邮箱创建、账号导入、分配器
+│   │   ├── store/                  # GORM 数据访问、动态配置、迁移
+│   │   ├── middleware/             # Session / Bearer / Shared-Secret
+│   │   ├── healthcheck/            # 主动健康检查
+│   │   └── lifecycle/              # 生命周期 Watchdog / purge
+│   ├── web/                        # React SPA 源码
+│   ├── template/static/admin-app/  # SPA 构建产物
 │   └── config.example.yaml
-└── docs/                       # 设计文档 / 架构概览 / 部署指南
+├── mail-node/
+│   ├── cmd/node/                   # 数据面入口
+│   ├── internal/
+│   │   ├── mailbox/                # Maildir、账号配置、密码
+│   │   ├── forward/                # 扫描、过滤、SMTP 转发、生命周期
+│   │   ├── handler/                # 内部 API、MIME 解析、附件下载
+│   │   ├── domain/                 # 虚拟域、DKIM
+│   │   ├── filter/                 # 过滤引擎
+│   │   └── config/                 # YAML + 远程动态配置
+│   └── config.example.yaml
+└── docs/
+    ├── architecture-overview.md    # 当前架构事实源
+    ├── api/external-api.md         # 外部 API 契约事实源
+    └── design/                     # 专题设计、历史设计和部署文档
 ```
 
 ---
@@ -142,87 +122,91 @@ flowchart TB
 
 ### 1. 准备
 
-- 一台控制面机器（MySQL 8.0+ / MariaDB 10.5+）、至少一台数据面机器（开放 25 端口）
-- 一个邮件域名，可在 DNS 控制台管理解析
+- 控制面机器：MySQL 8.0 / MariaDB 10.5+。
+- 至少一台数据面机器：开放 SMTP 25 端口，并安装 Postfix、Dovecot、OpenDKIM。
+- 一个可管理 DNS 的邮件域名。
 
 ### 2. 配置
 
-复制并填写配置模板：
-
 ```bash
-cp mgmt-system/config.example.yaml  mgmt-system/config.yaml   # 改 DSN、API Token、域名
-cp mail-node/config.example.yaml    mail-node/config.yaml     # 改控制面地址、SMTP、转发目标
+cp mgmt-system/config.example.yaml mgmt-system/config.yaml
+cp mail-node/config.example.yaml mail-node/config.yaml
 ```
 
-关键配置项：
-- **DSN**：MySQL/MariaDB 连接串
-- **auth**：admin 账号密码、shared_secret（mgmt 与 mail-node 一致）、API tokens (scope)
-- **smtp**：转发中继的 SMTP 服务器、用户名、密码（转发目标地址 `forward.target_address` 已移至后台「集成邮箱」管理，支持运行时热切换）
-- **dkim**：selector、key_dir、signing_table、key_table
+关键配置：
+
+- `database.dsn`：控制面数据库连接。
+- `auth.admin_user` / `auth.admin_pass`：后台登录账号。
+- `auth.shared_secret`：mgmt-system 与 mail-node 必须一致。
+- `auth.tokens`：外部 API token 与 scope。
+- `management.api_url`：mail-node 访问 mgmt-system 的地址。
+- `forward.smtp_*`：转发用 SMTP 连接参数；转发目标地址由后台“集成邮箱”管理，并同步到动态配置。
+- `dkim.*`、`postfix.*`、`maildir.*`：数据面落地 Postfix / Dovecot / OpenDKIM 所需路径。
 
 ### 3. 构建
 
 ```bash
-# 控制面
-cd mgmt-system && go build -o mgmt-server ./cmd/server
+cd mgmt-system
+go build -o mgmt-server ./cmd/server
 
-# 数据面（交叉编译到 Linux）
-cd mail-node && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
+cd ../mail-node
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 ```
 
-### 4. 部署数据面邮件服务
+### 4. 部署
 
-在数据面机器安装 Postfix + Dovecot + OpenDKIM 并注册到控制面。完整步骤见 **[部署指南](docs/design/deployment-guide.md)**。
-
-### 5. 启动
-
-两台机器分别用 systemd 启动（服务文件模板见部署指南），访问管理后台即可开始添加域名、开通邮箱。
+完整部署步骤、systemd 模板、Nginx、Postfix、Dovecot、OpenDKIM、Roundcube 配置见 [部署指南](docs/design/deployment-guide.md)。
 
 ---
 
-## 文档
+## 文档导航
+
+### 当前事实源
+
+| 文档 | 用途 |
+|------|------|
+| [架构概览](docs/architecture-overview.md) | 当前组件职责、数据模型、接口流向、状态机 |
+| [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
+| [部署指南](docs/design/deployment-guide.md) | 生产部署步骤和配置说明 |
+
+### 当前专题设计
+
+| 文档 | 用途 |
+|------|------|
+| [动态配置化设计](docs/design/dynamic-config-design.md) | `system_configs`、后台配置页、热加载 |
+| [集成邮箱设计](docs/design/integrated-mailbox-design.md) | 转发目标池和 active 集成邮箱 |
+| [附件下载设计](docs/design/attachment-download-design.md) | 附件代理、二进制响应、safe HTML 预览 |
+| [inline 图片兼容设计](docs/design/inline-image-filename-inference-design.md) | inline 图片类型/后缀推断和 Roundcube 兼容 |
+| [生命周期恢复设计](docs/design/t9-restore-design.md) | `.trash` 恢复路径和冲突处理 |
+| [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 服务器-域名绑定、DKIM、DNS 清单 |
+| [鉴权体系设计](docs/design/t6-auth-design.md) | Session、Bearer scope、Shared-Secret |
+| [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、被动心跳、状态升降级 |
+
+### 历史/规划记录
+
+这些文档保留决策过程和早期方案，不作为当前实现事实源。若与当前代码、[架构概览](docs/architecture-overview.md) 或 [外部 API 文档](docs/api/external-api.md) 冲突，以当前代码和事实源文档为准。
 
 | 文档 | 说明 |
 |------|------|
-| [外部 API 对接文档](docs/api/external-api.md) | 业务系统接口、鉴权、请求响应、附件下载说明 |
-| [外部 API 契约修复设计](docs/design/external-api-contract-fix-design.md) | Scope 精确匹配、邮箱维度路由参数修复与测试方案 |
-| [inline 图片文件后缀解析修复设计](docs/design/inline-image-filename-inference-design.md) | 常见邮件客户端 inline 图片 octet-stream、缺 filename/后缀、CID 映射与 Roundcube 转发兼容修复 |
-| [架构概览](docs/architecture-overview.md) | 系统架构、数据模型、接口流向 |
-| [部署指南](docs/design/deployment-guide.md) | 完整部署步骤、配置项说明 |
-| [技术实现方案](docs/design/technical-implementation.md) | Phase 1A 实现细节 |
-| [转发模块设计](docs/design/forwarding-design.md) | Maildir 扫描、过滤、SMTP 转发、防循环 |
-| [动态配置化设计](docs/design/dynamic-config-design.md) | 系统参数 KV 表 + 后台可视化 + 热加载 |
-| [集成邮箱设计](docs/design/integrated-mailbox-design.md) | 转发目标池管理 + 后台热切换 |
-| [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 域名池、Postfix 虚拟域、DKIM、DNS 清单 |
-| [鉴权体系设计](docs/design/t6-auth-design.md) | 三层鉴权：Session / Bearer Scope / Shared-Secret |
-| [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、心跳、降级摘除 |
-| [Phase 1 设计文档](docs/design/phase1-design.md) | 初始 DB Schema、API 设计 |
-| [Phase 3 补全计划](docs/design/phase3-mgmt-completion-plan.md) | 控制面补全执行计划 |
-| [Roundcube 参考分析](docs/roundcube-analysis.md) | Roundcube 技术评估 |
+| [技术实现方案](docs/design/technical-implementation.md) | 已整理为当前实现摘要，替代早期 Phase 1 草稿 |
+| [Phase 1 设计文档](docs/design/phase1-design.md) | 初始设计记录 |
+| [Phase 3 补全计划](docs/design/phase3-mgmt-completion-plan.md) | Phase 3 规划和验收记录 |
+| [转发模块设计](docs/design/forwarding-design.md) | 早期转发方案和后续补充记录 |
+| [Roundcube 参考分析](docs/roundcube-analysis.md) | Roundcube 技术参考 |
 
 ---
 
-## 项目状态
+## 当前状态
 
-**当前进度：Phase 3 全部闭环 + 控制面持续增强（动态配置化 / React SPA 重写 / 集成邮箱管理 / 附件下载）。**
-
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| Phase 1A | 项目骨架 + 管理后台 CRUD | ✅ |
-| Phase 1B | 邮件服务器部署 + DNS + 收发验证 | ✅ |
-| Phase 2 | 自动转发 + Roundcube Webmail | ✅ |
-| Phase 3 T4/T5 | 服务器域名池 + Postfix 虚域 + DKIM | ✅ |
-| Phase 3 T6 | 三层鉴权体系 | ✅ |
-| Phase 3 T7 | 健康检查与心跳 | ✅ |
-| Phase 3 T8 | MIME 预处理（结构化邮件） | ✅ |
-| Phase 3 T9 | 邮箱生命周期与恢复闭环 | ✅ |
-| Phase 3 T10 | 收尾（filter 主动推送、今日创建数、message_id 兼容、TLS 部署文档） | ✅ |
-| 增强 | 动态配置化（80+ 参数后台可视化） | ✅ |
-| 增强 | 管理后台 React SPA 全量重写 | ✅ |
-| 增强 | 集成邮箱转发目标池管理 + 后台热切换 | ✅ |
-| 增强 | 邮件附件流式下载 + safe HTML 预览 + inline 图片 MIME 兼容 | ✅ |
-| 修复 | Roundcube 转发链路 inline 图片后缀 / Content-Type 修正 | ✅ |
-| 修复 | 集成邮箱 SMTP 凭据热加载与转发恢复 | ✅ |
-| 修复 | 邮箱集合 / 回收站状态混排回归 | ✅ |
-
-已就绪：邮箱账号管理、多服务器域名池、DKIM 自动配置、自动转发、Webmail、管理后台鉴权、服务器健康检查、结构化邮件查询、inline 图片兼容解析、邮箱生命周期恢复、filter 主动推送、TLS 部署文档。后续运维：IPv4 配置、Let's Encrypt 证书实际申请、历史节点清理。
+| 模块 | 状态 |
+|------|------|
+| 邮箱账号管理、批量创建、CSV 上传 | 已完成 |
+| 多服务器、域名池、DKIM、DNS 清单 | 已完成 |
+| React 管理后台 | 已完成 |
+| 三层鉴权 | 已完成 |
+| 健康检查、心跳、节点发现 | 已完成 |
+| 过滤规则、主动重载、Maildir 转发 | 已完成 |
+| 集成邮箱管理和 SMTP 凭据热加载 | 已完成 |
+| MIME 结构化解析、正文查询、附件下载 | 已完成 |
+| 回收站、恢复、purge、重启删除任务恢复 | 已完成 |
+| inline 图片 MIME / filename / 后缀兼容 | 已完成 |

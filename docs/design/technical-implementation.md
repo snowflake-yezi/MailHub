@@ -1,281 +1,282 @@
-﻿# 技术实现方案
+# 技术实现方案
 
-> 版本: v1.1 | 日期: 2026-06-17 | 状态: Phase 1A 已实现，本稿为历史设计参考。当前架构见 `docs/architecture-overview.md`
-
----
-
-## 1. 概述
-
-本文档描述国际订单邮箱系统的跨服务器技术实现：管理系统如何远程调用邮箱服务器、如何在目标服务器上创建邮箱账号、以及邮件的收发链路。
+> 版本: v2.0 | 日期: 2026-07-08 | 状态: 与当前代码实现对齐。更完整的架构事实源见 `docs/architecture-overview.md`，外部接口事实源见 `docs/api/external-api.md`。
 
 ---
 
-## 2. 数据分布
+## 1. 实现边界
 
-```mermaid
-flowchart TB
-    subgraph mgmt["管理系统"]
-        mysql[("MySQL 元数据<br/>domains：域名池<br/>mail_servers：服务器池<br/>order_mailboxes：邮箱 + 订单<br/>filter_rules：过滤规则<br/>api_tokens：API 鉴权")]
-        noMail["不存邮件内容<br/>不存附件"]
-    end
+MailHub 当前由两个 Go 服务组成：
 
-    subgraph nodes["邮箱服务器 × N"]
-        maildir[("磁盘 /var/mail/vhosts<br/>{domain}/{user}/cur：已读<br/>{domain}/{user}/new：新邮件<br/>{domain}/{user}/tmp：处理中")]
-        conf["配置文件<br/>/etc/dovecot/users.conf：账号<br/>/etc/postfix/vmailbox：映射"]
-        svc["Postfix :25：收信<br/>Dovecot：存信/取信<br/>mail-node：过滤 + 对内 API"]
-    end
-```
+| 服务 | 边界 | 主要职责 |
+|------|------|----------|
+| `mgmt-system` | 控制面 | 后台、外部 API、内部编排、数据库、健康检查、生命周期调度、动态配置 |
+| `mail-node` | 数据面 | Postfix/Dovecot/OpenDKIM 落地、Maildir、过滤转发、MIME 解析、附件下载、软删除恢复 |
+
+控制面不直接投递 SMTP，也不直接读本机 Maildir。所有邮件数据读取都由控制面通过内部 API 代理到对应 mail-node。
 
 ---
 
-## 3. 跨服务器通信
+## 2. 数据存储
 
-### 3.1 通信模型
+### 2.1 控制面数据库
 
-```mermaid
-flowchart LR
-    mgmt["管理系统<br/>1 台"]
-    s1["邮箱服务器-01<br/>:8081"]
-    s2["邮箱服务器-02<br/>:8081"]
-    sN["邮箱服务器-N<br/>:8081"]
+`mgmt-system` 使用 MySQL / MariaDB + GORM。启动时执行 AutoMigrate，并做以下迁移和种子动作：
 
-    mgmt -->|"HTTP 内网"| s1
-    mgmt -->|"HTTP 内网"| s2
-    mgmt -->|"HTTP 内网"| sN
+- 补齐 `system_configs` 默认配置。
+- 补齐 `integrated_mailboxes` 默认记录，并同步 active 集成邮箱到 `forward.target_address`。
+- 扩展 `mailbox_accounts.status` 生命周期枚举。
+- 将历史 `order_mailboxes` 迁移到 `mailbox_accounts` + `order_mailbox_mappings`。
+
+核心表：
+
+```text
+domains
+mail_servers
+server_domains
+mailbox_accounts
+order_mailbox_mappings
+order_mailboxes              # 历史兼容
+filter_rules
+api_tokens
+system_configs
+integrated_mailboxes
 ```
 
-### 3.2 短信协议
+### 2.2 数据面文件
 
-- **协议**: HTTP/1.1
-- **格式**: JSON
-- **内容格式**: `Content-Type: application/json`
-- **鉴权**: 内部固定 Token（`X-Internal-Token` 请求头），不对外暴露
-- **超时**: 10 秒 (创建账号、查询邮件)；3 秒 (健康检查)
+`mail-node` 管理以下本机文件或目录：
 
-### 3.3 管理系统 → 邮箱服务器 API
-
-| 方法 | 路径 | 说明 | 权重 |
-|------|------|------|------|
-| POST | `/internal/mailboxes` | 创建邮箱账号 | 核心 |
-| DELETE | `/internal/mailboxes/:email` | 删除/回收邮箱 | |
-| GET | `/internal/mailboxes/:email/messages` | 获取邮件列表 | |
-| GET | `/internal/messages/:id` | 获取单封邮件完整内容 | |
-| GET | `/internal/health` | 健康检查 + 负载信息 | 核心 |
-| GET | `/internal/filters` | 拉取最新过滤规则 | |
-| POST | `/internal/filters/reload` | 强制重载规则 | |
-
-### 3.4 内部 API 请求/响应格式
-
-#### POST /internal/mailboxes — 创建邮箱
-
-```
-Request:
-{
-    "email_address": "airline-cz-001@mail.xxx.com",
-    "password": "aB3xKp9m"
-}
-
-Response 201:
-{
-    "code": 0,
-    "message": "created",
-    "data": {
-        "email_address": "airline-cz-001@mail.xxx.com",
-        "domain": "mail.xxx.com",
-        "local_part": "airline-cz-001",
-        "maildir_path": "/var/mail/vhosts/mail.xxx.com/airline-cz-001"
-    }
-}
+```text
+<maildir_base>/<domain>/<localpart>/{new,cur,tmp}
+<maildir_base>/.trash/<domain>__<localpart>-<unix_ts>
+/etc/dovecot/users.conf
+/etc/postfix/vmailbox
+/etc/postfix/virtual_domains
+/etc/opendkim/SigningTable
+/etc/opendkim/KeyTable
+<dkim_key_dir>/<domain>/
 ```
 
-#### GET /internal/health — 健康检查
-
-```
-Response 200:
-{
-    "code": 0,
-    "data": {
-        "status": "ok",
-        "load": 342,           // 当前邮箱数
-        "capacity": 5000,
-        "disk_usage": "23%",
-        "uptime": 86400,
-        "node_id": 1,
-        "node_name": "mail-node-01"
-    }
-}
-```
+`mail-node` 对 Maildir 的删除使用同文件系统 `os.Rename`，先移入 `.trash`，再由 GC 物理清理。
 
 ---
 
-## 4. 邮箱账号创建流程（端到端）
+## 3. 通信协议
 
-### 4.1 单账号创建
+### 3.1 外部 API
 
-```mermaid
-flowchart TB
-    form["运营在 Web 后台提交<br/>邮箱前缀：airline-cz-001<br/>域名：mail.xxx.com<br/>密码：留空自动生成<br/>目标服务器：auto"]
-    validate["Step 1：管理系统校验<br/>检查前缀 + 域名是否已存在<br/>检查域名是否 active<br/>auto 时选择健康且负载最小服务器"]
-    call["Step 2：调用邮箱服务器<br/>POST http://{server.api_host}/internal/mailboxes<br/>X-Internal-Token<br/>Body: email_address + password"]
-    remote["Step 3：邮箱服务器本地操作<br/>创建 Maildir<br/>chown vmail:vmail<br/>追加 Dovecot users.conf<br/>追加 Postfix vmailbox<br/>postmap + postfix reload"]
-    db["Step 4：管理系统写本地记录<br/>INSERT order_mailboxes<br/>UPDATE mail_servers current_load + 1"]
-    resp["Step 5：返回结果<br/>{code: 0, data: email_address, created_at}"]
-    fail["失败：返回错误<br/>不写入本地 DB"]
+- 基础路径：`/api/v1`
+- 鉴权：`Authorization: Bearer <token>`
+- Scope：`mailbox:create`、`mailbox:read`、`email:read`、`*`
+- JSON 响应：统一 `{code,message,data,request_id}` 信封
+- 例外：附件下载成功响应直接返回二进制流
 
-    form --> validate --> call
-    call -->|"成功"| remote --> db --> resp
-    call -->|"失败"| fail
+### 3.2 管理后台
+
+- 页面入口：`/admin/*`
+- 静态资源：`/static/admin-app/*`
+- 后台 API：`/api/v1/admin/*`
+- 鉴权：`mgmt_session` Session Cookie
+
+### 3.3 服务间 API
+
+双向服务间调用都使用 `X-Internal-Token`：
+
+```text
+mgmt-system -> mail-node: http://<api_host>/internal/*
+mail-node -> mgmt-system: <management.api_url>/api/v1/internal/*
 ```
 
-### 4.2 批量创建
-
-```
-运营上传 CSV 文件:
-  airline-cz-001,
-  airline-cz-002,
-  airline-cz-003,mypass123
-
-管理系统逐行处理:
-  for each row in CSV:
-    ├ password = row.password || autoGenerate()
-    ├ 验重: 查询 order_mailboxes 是否已有
-    ├ 分配: 按当前负载选服务器
-    ├ 下发: HTTP POST → 邮箱服务器
-    └ 记录: INSERT 到 order_mailboxes
-
-  → 返回汇总:
-    {total: 3, success: 3, failed: 0,
-     results: [{prefix, email, server, status}, ...]}
-```
-
-### 4.3 密码处理
-
-- 创建时不传密码 → 自动生成 16 位随机密码
-- 密码明文写入 Dovecot `users.conf`（Phase 1 不加密，后续可改 `{SHA512-CRYPT}`）
-- 密码仅存储于邮箱服务器本地，管理系统的 MySQL 不存密码
+所有内部接口缺少或不匹配 `X-Internal-Token` 时直接拒绝。
 
 ---
 
-## 5. 邮件收发链路
-
-### 5.1 收信（航司 → 邮箱服务器）
-
-```mermaid
-flowchart TB
-    dns["DNS 查 MX 记录<br/>mail.xxx.com → 1.2.3.4"]
-    airline["航司 SMTP"] --> mx["mail.xxx.com:25"] --> postfix["Postfix smtpd"]
-    dns --> mx
-    postfix --> filter["mail-node 过滤引擎<br/>Go 程序 :8081<br/>规则匹配：白名单 pass / 黑名单 block / 关键词打分 / 无匹配 pass"]
-
-    filter --> pass["PASS"]
-    filter --> flag["FLAG"]
-    filter --> block["BLOCK"]
-
-    pass --> inbox["Dovecot 入库<br/>Maildir/cur"]
-    flag --> inbox
-    block --> archive["归档 / DISCARD<br/>不转发"]
-
-    inbox --> forward["SMTP 转发到集成邮箱<br/>目标：union@xxx.com<br/>PASS：原标题<br/>FLAG：加 [疑似] 前缀<br/>标题格式：[源: {mailbox_addr}] {原始标题}"]
-    forward --> union["union@xxx.com 收件箱<br/>运营统一查看"]
-```
-
-### 5.2 Postfix content_filter 配置
-
-```conf
-# /etc/postfix/master.cf
-# 定义过滤服务
-filter    unix  -       n       n       -       10      pipe
-  flags=Rq user=filter argv=/usr/local/bin/filter-postfix
-  http://127.0.0.1:8081/smtp/filter
-
-# /etc/postfix/main.cf  
-content_filter = filter:127.0.0.1:10025
-```
-
-> `filter-postfix` 是一个轻量 shell 脚本（或 Go 编译的小工具），把 Postfix 传来的原始邮件内容 POST 到 mail-node 的 `/smtp/filter` 端点，等到过滤结果后决定放行/拒绝。
-
-### 5.3 发信（可选，Phase 1 不做）
-
-Phase 1 仅收信 + 转发。如需邮件服务器主动发信（如自动回复），在 Phase 2 扩展。
-
----
-
-## 6. 过滤规则热更新
+## 4. 邮箱创建流程
 
 ```mermaid
 sequenceDiagram
-    participant M as 管理系统<br/>规则主本 filter_rules
+    participant C as 调用方/后台
+    participant M as mgmt-system
+    participant DB as MySQL/MariaDB
     participant N as mail-node
 
-    loop 每 30 秒
-        N->>M: GET /internal/filters
-        M-->>N: 返回规则 JSON
-        N->>N: 更新内存规则<br/>sync.RWMutex<br/>规则生效
-    end
-
-    M->>N: 可选：POST /internal/filters/reload<br/>规则变更后立即通知
+    C->>M: 创建邮箱请求
+    M->>DB: 查询/创建订单映射和可分配域名
+    M->>DB: 选择 healthy 且容量可用的 server_domains 绑定
+    M->>N: POST /internal/mailboxes<br/>X-Internal-Token
+    N->>N: 创建 Maildir + 写 Dovecot/Postfix
+    N-->>M: 创建结果
+    M->>DB: 写 mailbox_accounts + order_mailbox_mappings
+    M-->>C: 邮箱、密码、服务器、同步状态
 ```
 
-或者规则变更后，管理系统主动 POST `/internal/filters/reload` 通知立即更新。
+关键规则：
+
+- 外部创建接口按 `order_id` 幂等复用已有邮箱。
+- `domain_id` 可由调用方指定；未指定时由分配器选择可投递域名。
+- 分配器只选择 `server_domains.status=active`、`postfix_status=synced`、服务器 `status=healthy` 且容量未满的绑定。
+- 创建成功后密码保存在控制面账号表，并写入数据面 Dovecot 配置。
 
 ---
 
-## 7. 管理系统 → 邮箱服务器故障处理
+## 5. 域名同步流程
 
-| 故障场景 | 处理策略 |
-|----------|---------|
-| 邮箱服务器不可达 (超时 10s) | 返回错误，不写入本地 DB；下次创建时自动选择其他健康服务器 |
-| 邮箱服务器创建成功但本地 DB 写入失败 | 回滚：调用邮箱服务器 DELETE 删除刚创建的账号 |
-| 邮箱服务器返回错误（前缀已存在等） | 透传错误给前端，不做本地记录 |
-| 邮箱服务器心跳超时 N 次 | 管理系统标记该服务器状态为 `degraded`，暂停分配新邮箱 |
-| 邮箱服务器宕机 | 状态自动变为 `down`，触发告警；已有邮件不受影响（发件方 SMTP 会重试） |
+```mermaid
+sequenceDiagram
+    participant UI as 管理后台
+    participant M as mgmt-system
+    participant DB as MySQL/MariaDB
+    participant N as mail-node
+
+    UI->>M: 服务器上添加域名
+    M->>DB: 写入/激活 server_domains，状态 pending
+    M->>N: POST /internal/domains
+    N->>N: 更新 Postfix 虚拟域，生成 DKIM，写 OpenDKIM 表
+    N-->>M: DNS/DKIM 结果
+    M->>DB: 更新 sync_status/postfix_status/dkim_status
+    M-->>UI: 返回 DNS 清单
+```
+
+`server_domains` 记录的是添加/移除域名时的远端同步快照，不是实时探测结果。节点可用性由健康检查维护。
 
 ---
 
-## 8. Phase 1 部署形态
+## 6. 邮件接收与转发
+
+当前主链路是 Maildir 异步扫描，不使用 Postfix `content_filter` 作为主路径。
 
 ```mermaid
 flowchart TB
-    subgraph vm["云服务器（Phase 1 单机部署）"]
-        mysql[("MySQL 8.0<br/>元数据存储")]
-        mgmt["mgmt-system :8080<br/>Web 后台 + API"]
-        nginx["Nginx :443<br/>TLS + 反代"]
-        node["mail-node :8081<br/>过滤 + 对内 API"]
-        postfix["Postfix :25<br/>SMTP 收信"]
-        dovecot["Dovecot<br/>Maildir 存储"]
-        maildir[("/var/mail/vhosts/<br/>邮件目录")]
-        dns["DNS<br/>mail.xxx.com A + MX → 服务器 IP"]
-    end
-
-    union["集成邮箱<br/>union@xxx.com<br/>自建 Dovecot + Roundcube"]
-
-    nginx --> mgmt
-    mgmt --> mysql
-    mgmt --> node
-    postfix --> dovecot --> maildir
-    node --> maildir
-    node -->|"SMTP 转发"| union
-    dns --> postfix
+    smtp["外部 SMTP"] --> postfix["Postfix :25"]
+    postfix --> maildir["Maildir new/"]
+    maildir --> scanner["forward.Service 扫描"]
+    scanner --> filter["filter.Engine"]
+    filter -->|"pass"| union["active 集成邮箱"]
+    filter -->|"flag"| union
+    filter -->|"block"| keep["保留原件，不转发"]
+    union --> roundcube["Roundcube 查看"]
 ```
 
-Phase 2 扩容时只需新增云服务器，装上 Postfix + Dovecot + mail-node，在后台注册即可纳入管理。
+实现要点：
+
+- `forward.scan_interval` 默认 5 秒，可通过动态配置调整。
+- 过滤规则从 mgmt 拉取，保存后可主动 reload。
+- `pass` 和 `flag` 转发到 active 集成邮箱；`block` 不转发但保留 Maildir 原件。
+- 转发前修正常见 inline 图片 MIME 头，避免 Roundcube 把正文图片显示为无后缀附件。
+- 发送前动态读取 active 集成邮箱 SMTP 凭据，切换目标不需要重启 mail-node。
 
 ---
 
-## 9. 安全性
+## 7. 邮件查询与附件下载
 
-| 关注点 | 实现 |
-|--------|------|
-| 管理系统 → 邮箱服务器通信 | 内网 IP + `X-Internal-Token` 固定密钥（非公网暴露） |
-| API 对外暴露 | `Authorization: Bearer <token>` + Token 存储在 DB 可轮换 |
-| SMTP 开放中继防护 | `mynetworks = 127.0.0.1, 10.0.0.0/8`，其他全部 reject |
-| SMTP TLS | Phase 2 启用（Let's Encrypt 证书） |
-| 邮箱密码存储 | Phase 1 明文存 Dovecot users.conf（Phase 2 改 SHA512-CRYPT） |
+外部调用方只访问 mgmt-system：
+
+```text
+GET /api/v1/orders/{order_id}/emails
+GET /api/v1/mailboxes/{email}/messages
+GET /api/v1/emails/{message_id}/body?mailbox={email}
+GET /api/v1/emails/{message_id}/attachments/{index}?mailbox={email}
+```
+
+mgmt-system 根据订单或邮箱定位 mail-node，然后调用：
+
+```text
+GET /internal/mailboxes/{email}/messages
+GET /internal/messages/{message_id}?mailbox={email}
+GET /internal/messages/{message_id}/attachments/{index}?mailbox={email}
+```
+
+实现要点：
+
+- mail-node 扫描 `new/` 和 `cur/`，按文件修改时间倒序分页。
+- MIME 解析使用 `enmime`。
+- `message_id` 支持精确匹配、去尖括号/引号的规范化匹配，以及 fallback id 兼容匹配。
+- 附件下载成功时直接返回字节流，设置 `Content-Type` 与 RFC 5987 兼容的 `Content-Disposition`。
+- inline 图片按 `Content-ID`、HTML `cid:` 引用、文件魔数和原始 MIME 头推断 content-type 与文件名。
 
 ---
 
-## 10. 版本记录
+## 8. 生命周期
 
-| 日期 | 变更 | 作者 |
-|------|------|------|
-| 2026-06-17 | 初版 | Claude |
+```mermaid
+stateDiagram-v2
+    [*] --> active
+    active --> deleting
+    deleting --> soft_deleted
+    soft_deleted --> active
+    soft_deleted --> purged
+    purged --> [*]
+```
+
+### 8.1 删除
+
+1. mgmt-system 将账号置为 `deleting`，记录 `delete_requested_at`。
+2. mgmt-system 调用 mail-node `DELETE /internal/mailboxes/{email}`。
+3. mail-node 先摘除 Postfix/Dovecot 配置，拒收新信。
+4. mail-node 等待活跃转发任务排空，最长由 `lifecycle.drain_timeout_minutes` 控制。
+5. mail-node 将 Maildir 移入 `.trash`。
+6. mgmt-system 确认后将状态置为 `soft_deleted`。
+
+### 8.2 恢复
+
+1. 仅允许 `soft_deleted -> active`。
+2. mgmt-system 调用 mail-node `POST /internal/mailboxes/{email}/restore` 并下发原密码。
+3. mail-node 在 `.trash` 中查找最近一次匹配目录。
+4. 目标 Maildir 已存在时返回 409，不覆盖现有邮箱。
+5. 回迁成功后重建 Dovecot/Postfix 配置。
+
+### 8.3 Watchdog 与清理
+
+- mgmt-system 定时扫描超时 `deleting` 任务并重新下发 DELETE。
+- mail-node 启动时拉取 `/api/v1/internal/sync/deleting` 恢复未完成删除任务。
+- mail-node GC 清理超过 `lifecycle.trash_retention_hours` 的 `.trash` 目录。
+- mgmt-system 将超过账号 `retention_days` 的 `soft_deleted` 标记为 `purged`。
+
+---
+
+## 9. 健康检查与心跳
+
+| 链路 | 默认间隔 | 作用 |
+|------|----------|------|
+| mgmt-system 主动探测 `GET /internal/health` | `healthcheck.probe_interval_seconds=30` | 决定 `healthy / degraded / down` |
+| mail-node 心跳 `POST /api/v1/internal/servers/heartbeat` | `heartbeat.interval_fallback=60`，可由 mgmt 响应调整 | 刷新 `last_heartbeat` 和 `current_load` |
+
+健康状态由 mgmt 主动探测决定。mail-node 心跳只证明节点进程存活和 node -> mgmt 方向可达，不覆盖主动探测结论。
+
+---
+
+## 10. 动态配置
+
+`system_configs` 覆盖转发、过滤、生命周期、健康检查、心跳、会话、数据库、Maildir 和通用参数。读取规则：
+
+- mgmt-system 从数据库读取，带 30 秒缓存。
+- mail-node 启动时拉取全量配置。
+- 后台保存配置后，mgmt-system 可通知 mail-node `/internal/configs/reload`。
+- `reloadable=true` 表示该项设计为运行时可重载；非 reloadable 项需要重启相关服务才完整生效。
+
+---
+
+## 11. 安全约束
+
+| 项目 | 当前实现 |
+|------|----------|
+| 后台登录 | Session Cookie，默认名 `mgmt_session` |
+| 外部 API | Bearer Token，scope 精确匹配 |
+| 内部 API | `X-Internal-Token` Shared-Secret |
+| 附件下载 | 成功响应为二进制；错误仍返回 JSON 信封 |
+| HTML 预览 | 仅允许安全的 `cid:` 映射资源，危险脚本和外链图片由上层预览逻辑处理 |
+| SMTP 转发 | 使用 SMTP AUTH / STARTTLS 参数；TLS 行为由动态配置控制 |
+
+---
+
+## 12. 与历史方案的差异
+
+| 历史表述 | 当前实现 |
+|----------|----------|
+| Go template + htmx 后台 | React + Vite SPA |
+| Postfix `content_filter` 作为主过滤路径 | Maildir 异步扫描为主路径，`/smtp/filter` 仅保留兼容 |
+| `order_mailboxes` 为主表 | `mailbox_accounts` + `order_mailbox_mappings` 为主，`order_mailboxes` 只做历史兼容 |
+| 早期 T8/T9/T10 状态 | MIME 解析、生命周期、规则热加载和 message_id 兼容均已落地 |
+| 附件只返回元数据 | 已支持附件二进制下载 |
+| 集成邮箱写死在 YAML | active 集成邮箱由后台管理并热加载 |

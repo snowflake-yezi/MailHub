@@ -18,13 +18,13 @@ import (
 
 // Lifecycle 邮箱生命周期管理：安全软删除 + 垃圾回收 + 重启对账
 type Lifecycle struct {
-	mgr              *mailbox.Manager
-	fwdSvc           *Service // for ActiveJobs() check
-	trashBase        string   // <maildirBase>/.trash
-	trashRetention   time.Duration
-	drainTimeout     time.Duration
+	mgr               *mailbox.Manager
+	fwdSvc            *Service // for ActiveJobs() check
+	trashBase         string   // <maildirBase>/.trash
+	trashRetention    time.Duration
+	drainTimeout      time.Duration
 	drainPollInterval time.Duration
-	gcInterval       time.Duration
+	gcInterval        time.Duration
 }
 
 // NewLifecycle 创建生命周期管理器。timeout/intervals 为 0 时会使用默认值。
@@ -43,13 +43,13 @@ func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTi
 	}
 	trashBase := filepath.Join(mgr.MaildirBase(), ".trash")
 	return &Lifecycle{
-		mgr:              mgr,
-		fwdSvc:           fwdSvc,
-		trashBase:        trashBase,
-		trashRetention:   trashRetention,
-		drainTimeout:     drainTimeout,
+		mgr:               mgr,
+		fwdSvc:            fwdSvc,
+		trashBase:         trashBase,
+		trashRetention:    trashRetention,
+		drainTimeout:      drainTimeout,
 		drainPollInterval: drainPollInterval,
-		gcInterval:       gcInterval,
+		gcInterval:        gcInterval,
 	}
 }
 
@@ -229,7 +229,6 @@ func trashDirNameMatches(name, domain, localPart string) bool {
 	return name[:idx] == fmt.Sprintf("%s__%s", domain, localPart)
 }
 
-
 // waitForActiveJobs blocks until fwdSvc.ActiveJobs() reaches 0 or timeout expires.
 func (l *Lifecycle) waitForActiveJobs(timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
@@ -335,12 +334,19 @@ type syncResponse struct {
 // belonging to this node. Each task is resumed per the safe-deletion protocol.
 //
 // GET /api/v1/internal/sync/deleting?server_id=<nodeID>
-func (l *Lifecycle) PullDeletingTasks(mgmtURL string, nodeID uint64) {
+func (l *Lifecycle) PullDeletingTasks(mgmtURL string, nodeID uint64, sharedSecret string) {
 	url := fmt.Sprintf("%s/api/v1/internal/sync/deleting?server_id=%d", mgmtURL, nodeID)
 
 	log.Printf("[lifecycle] pull deleting tasks from %s", url)
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		log.Printf("[lifecycle] pull sync build request failed: %v", err)
+		return
+	}
+	req.Header.Set("X-Internal-Token", sharedSecret)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("[lifecycle] pull sync failed: %v", err)
 		return

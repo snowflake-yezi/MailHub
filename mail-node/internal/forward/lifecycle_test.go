@@ -2,6 +2,8 @@ package forward
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,6 +80,29 @@ func TestRestoreFromTrashRollsBackWhenConfigFails(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(base, "example.com", "alice")); !os.IsNotExist(err) {
 		t.Fatalf("maildir should not remain after rollback, stat err=%v", err)
+	}
+}
+
+func TestPullDeletingTasksSendsInternalToken(t *testing.T) {
+	var gotToken string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Internal-Token")
+		if r.URL.Path != "/api/v1/internal/sync/deleting" {
+			t.Fatalf("path = %q, want /api/v1/internal/sync/deleting", r.URL.Path)
+		}
+		if r.URL.Query().Get("server_id") != "42" {
+			t.Fatalf("server_id = %q, want 42", r.URL.Query().Get("server_id"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":[]}`))
+	}))
+	defer server.Close()
+
+	lifecycle := &Lifecycle{}
+	lifecycle.PullDeletingTasks(server.URL, 42, "secret")
+
+	if gotToken != "secret" {
+		t.Fatalf("X-Internal-Token = %q, want secret", gotToken)
 	}
 }
 

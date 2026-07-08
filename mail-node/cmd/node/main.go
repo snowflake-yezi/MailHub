@@ -83,17 +83,17 @@ func main() {
 
 	// 初始化转发服务（ScanInterval / MaxEmailSize / SMTP 参数优先用远程配置）
 	forwardCfg := forward.ForwardConfig{
-		SMTPHost:          cfg.Forward.SMTPHost,
-		SMTPUser:          cfg.Forward.SMTPUser,
-		SMTPPass:          cfg.Forward.SMTPPass,
-		TargetAddress:     remoteCfg.GetString("forward.target_address", cfg.Forward.TargetAddress),
-		SubjectPrefix:     cfg.Forward.SubjectPrefix,
-		ScanInterval:      remoteCfg.GetInt("forward.scan_interval", cfg.Forward.ScanInterval),
-		MaxEmailSize:      remoteCfg.GetInt64("forward.max_email_size", cfg.Forward.MaxEmailSize),
-		BodyPreviewSize:   int64(remoteCfg.GetInt("forward.body_preview_size", 65536)),
-		SMTPDialTimeout:   remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", 15*time.Second),
-		TLSInsecureSkip:   remoteCfg.GetBool("forward.tls_insecure_skip", true),
-		TLSMinVersion:     remoteCfg.GetInt("forward.tls_min_version", 12),
+		SMTPHost:        cfg.Forward.SMTPHost,
+		SMTPUser:        cfg.Forward.SMTPUser,
+		SMTPPass:        cfg.Forward.SMTPPass,
+		TargetAddress:   remoteCfg.GetString("forward.target_address", cfg.Forward.TargetAddress),
+		SubjectPrefix:   cfg.Forward.SubjectPrefix,
+		ScanInterval:    remoteCfg.GetInt("forward.scan_interval", cfg.Forward.ScanInterval),
+		MaxEmailSize:    remoteCfg.GetInt64("forward.max_email_size", cfg.Forward.MaxEmailSize),
+		BodyPreviewSize: int64(remoteCfg.GetInt("forward.body_preview_size", 65536)),
+		SMTPDialTimeout: remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", 15*time.Second),
+		TLSInsecureSkip: remoteCfg.GetBool("forward.tls_insecure_skip", true),
+		TLSMinVersion:   remoteCfg.GetInt("forward.tls_min_version", 12),
 	}
 	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
 
@@ -116,7 +116,7 @@ func main() {
 
 	// 重启自愈：向 mgmt 拉取属于本节点的 DELETING 状态任务并恢复执行
 	if cfg.Node.ID != 0 {
-		go lifecycle.PullDeletingTasks(cfg.Management.APIURL, cfg.Node.ID)
+		go lifecycle.PullDeletingTasks(cfg.Management.APIURL, cfg.Node.ID, cfg.SharedSecret)
 	}
 
 	// 初始化 handler（注入 lifecycle 以支持安全删除协议）
