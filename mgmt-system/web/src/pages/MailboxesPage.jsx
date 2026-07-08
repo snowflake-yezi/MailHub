@@ -99,10 +99,15 @@ function downloadCsv(filename, rows) {
   URL.revokeObjectURL(url)
 }
 
+function parseMailboxView(value) {
+  if (value === 'trash' || value === 'integrated' || value === 'create') return value
+  return 'normal'
+}
+
 export default function MailboxesPage() {
   const location = useLocation()
   const initialParams = new URLSearchParams(location.search)
-  const initialView = initialParams.get('view') === 'trash' ? 'trash' : initialParams.get('view') === 'integrated' ? 'integrated' : 'normal'
+  const initialView = parseMailboxView(initialParams.get('view'))
   const [view, setView] = useState(initialView)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
@@ -157,7 +162,7 @@ export default function MailboxesPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const nextView = params.get('view') === 'trash' ? 'trash' : params.get('view') === 'integrated' ? 'integrated' : 'normal'
+    const nextView = parseMailboxView(params.get('view'))
     setView(nextView)
     setSearch(params.get('search') || '')
     setDomainId(params.get('domain_id') || '')
@@ -167,10 +172,13 @@ export default function MailboxesPage() {
   }, [location.search])
 
   useEffect(() => {
-    load()
+    if (view === 'normal' || view === 'trash') load()
+  }, [load, view])
+
+  useEffect(() => {
     serverAPI.list().then(d => setServers(Array.isArray(d) ? d : [])).catch(() => {})
     domainAPI.list().then(d => setDomains(Array.isArray(d) ? d : [])).catch(() => {})
-  }, [load])
+  }, [])
 
   const loadIntegrated = useCallback(() => {
     integratedMailboxAPI.list()
@@ -181,6 +189,17 @@ export default function MailboxesPage() {
   useEffect(() => {
     if (view === 'integrated') loadIntegrated()
   }, [view, loadIntegrated])
+
+  const switchView = (nextView) => {
+    setView(nextView)
+    setPage(1)
+    if (nextView === 'integrated' && view === 'integrated') loadIntegrated()
+    if (nextView === 'create') {
+      window.setTimeout(() => {
+        document.getElementById('mailbox-create-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 0)
+    }
+  }
 
   const summary = useMemo(() => ({
     total,
@@ -372,7 +391,7 @@ export default function MailboxesPage() {
             {refreshing ? <span className="spinner" /> : <RefreshCw size={16} />}
             刷新
           </button>
-          <button className="btn btn-primary" type="button" onClick={() => document.getElementById('mailbox-create-panel')?.scrollIntoView({ behavior: 'smooth' })}>
+          <button className="btn btn-primary" type="button" onClick={() => switchView('create')}>
             <MailPlus size={16} /> 创建邮箱
           </button>
         </div>
@@ -390,12 +409,13 @@ export default function MailboxesPage() {
           ['normal', '账户集合'],
           ['trash', '回收站'],
           ['integrated', '集成邮箱'],
+          ['create', '创建邮箱'],
         ].map(([value, label]) => (
           <button
             key={value}
             className={view === value ? 'active' : ''}
             type="button"
-            onClick={() => { setView(value); setPage(1); if (value === 'integrated') loadIntegrated() }}
+            onClick={() => switchView(value)}
           >
             {label}
           </button>
@@ -617,91 +637,98 @@ export default function MailboxesPage() {
         </section>
       )}
 
-      <section id="mailbox-create-panel" className="section mailbox-create">
-        <div className="panel-header">
-          <div>
-            <h3>创建邮箱</h3>
-            <div className="panel-caption">服务器和域名均可指定，不指定时由系统按健康节点和域名池自动分配。</div>
+      {view === 'create' && (
+        <section id="mailbox-create-panel" className="section mailbox-create">
+          <div className="panel-header">
+            <div>
+              <h3>创建邮箱</h3>
+              <div className="panel-caption">服务器和域名均可指定，不指定时由系统按健康节点和域名池自动分配。</div>
+            </div>
+            {createServerId === '0' && createDomainId === '0' && <span className="tag tag-info">自动分配</span>}
           </div>
-          {createServerId === '0' && createDomainId === '0' && <span className="tag tag-info">自动分配</span>}
-        </div>
 
-        <div className="field-grid">
-          <div className="form-group">
-            <label>邮箱服务器</label>
-            <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
-              <option value="0">自动选择服务器</option>
-              {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
-            </select>
-            {createDomainId !== '0' && <div className="form-hint">已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
-          </div>
-          <div className="form-group">
-            <label>域名</label>
-            <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
-              <option value="0">自动选择域名</option>
-              {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            {createServerId !== '0' && <div className="form-hint">已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
-          </div>
-        </div>
-
-        <div className="create-grid">
-          <form className="create-card" onSubmit={handleSingleCreate}>
-            <h4>单个创建</h4>
+          <div className="field-grid">
             <div className="form-group">
-              <label>邮箱前缀</label>
-              <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
+              <label>邮箱服务器</label>
+              <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
+                <option value="0">自动选择服务器</option>
+                {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
+              </select>
+              {createDomainId !== '0' && <div className="form-hint">已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
             </div>
             <div className="form-group">
-              <label>密码</label>
-              <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder="留空自动生成" />
+              <label>域名</label>
+              <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
+                <option value="0">自动选择域名</option>
+                {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              {createServerId !== '0' && <div className="form-hint">已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
             </div>
-            <button className="btn btn-primary" type="submit" disabled={creating || !createPrefix.trim()}>
-              {creating && createTab === 'single' && <span className="spinner" />} 创建邮箱
-            </button>
-          </form>
+          </div>
 
-          <form className="create-card" onSubmit={handleBatchCreate}>
-            <h4>批量创建</h4>
-            <div className="form-group">
-              <label>邮箱列表</label>
-              <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={7} placeholder={'airline-cz-001\nairline-cz-002\nairline-cz-003,mypassword123'} />
-              <div className="form-hint">每行一个前缀，格式为“前缀”或“前缀,密码”。</div>
-            </div>
-            <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
-              {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
-            </button>
-          </form>
-        </div>
-
-        {batchResult && (
-          <div className="batch-result">
-            <div className="panel-header">
-              <div>
-                <h3>创建结果</h3>
-                <div className="panel-caption">成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</div>
+          <div className="create-grid">
+            <form className="create-card" onSubmit={handleSingleCreate}>
+              <h4>单个创建</h4>
+              <div className="form-group">
+                <label>邮箱前缀</label>
+                <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
               </div>
-              <button className="btn btn-outline" type="button" onClick={downloadCredentialCsv}>
-                <Download size={16} /> 下载账密 CSV
+              <div className="form-group">
+                <label>密码</label>
+                <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder="留空自动生成" />
+              </div>
+              <button className="btn btn-primary" type="submit" disabled={creating || !createPrefix.trim()}>
+                {creating && createTab === 'single' && <span className="spinner" />} 创建邮箱
               </button>
-            </div>
-            <div className="result-list">
-              {(batchResult.results || []).map((r, i) => (
-                <div className="result-item" key={`${r.email_address || r.prefix}-${i}`}>
-                  <div>
-                    <strong>{r.email_address || r.prefix}</strong>
-                    <span>{r.domain || '-'} {r.server_id ? `#${r.server_id}` : ''}</span>
-                  </div>
-                  {r.password && <code>{r.password}</code>}
-                  <StatusTag status={r.status} />
-                  {r.password && <button className="icon-button compact" type="button" title="复制账密" onClick={() => copyText(`${r.email_address},${r.password}`)}><Copy size={14} /></button>}
-                  {r.error && <span className="result-error">{r.error}</span>}
-                </div>
-              ))}
-            </div>
+            </form>
+
+            <form className="create-card" onSubmit={handleBatchCreate}>
+              <h4>批量创建</h4>
+              <div className="form-group">
+                <label>邮箱列表</label>
+                <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={7} placeholder={'airline-cz-001\nairline-cz-002\nairline-cz-003,mypassword123'} />
+                <div className="form-hint">每行一个前缀，格式为“前缀”或“前缀,密码”。</div>
+              </div>
+              <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
+                {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
+              </button>
+            </form>
           </div>
-        )}
-      </section>
+
+          {batchResult && (
+            <div className="batch-result">
+              <div className="panel-header">
+                <div>
+                  <h3>创建结果</h3>
+                  <div className="panel-caption">成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</div>
+                </div>
+                <div className="row-actions">
+                  <button className="btn btn-outline" type="button" onClick={() => switchView('normal')}>
+                    查看账号集合
+                  </button>
+                  <button className="btn btn-outline" type="button" onClick={downloadCredentialCsv}>
+                    <Download size={16} /> 下载账密 CSV
+                  </button>
+                </div>
+              </div>
+              <div className="result-list">
+                {(batchResult.results || []).map((r, i) => (
+                  <div className="result-item" key={`${r.email_address || r.prefix}-${i}`}>
+                    <div>
+                      <strong>{r.email_address || r.prefix}</strong>
+                      <span>{r.domain || '-'} {r.server_id ? `#${r.server_id}` : ''}</span>
+                    </div>
+                    {r.password && <code>{r.password}</code>}
+                    <StatusTag status={r.status} />
+                    {r.password && <button className="icon-button compact" type="button" title="复制账密" onClick={() => copyText(`${r.email_address},${r.password}`)}><Copy size={14} /></button>}
+                    {r.error && <span className="result-error">{r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       {integratedModal && (
         <div className="drawer-overlay" onClick={() => setIntegratedModal(null)}>
