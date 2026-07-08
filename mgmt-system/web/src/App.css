@@ -1762,13 +1762,15 @@ textarea {
 }
 
 .email-search-panel {
+  min-width: 0;
   margin-bottom: 16px;
 }
 
 .email-search-form {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 110px auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(88px, 110px) auto auto;
   gap: 10px;
+  min-width: 0;
 }
 
 .search-input-wrap {
@@ -1793,25 +1795,47 @@ textarea {
 
 .email-workbench {
   display: grid;
-  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, clamp(320px, 34vw, 420px)) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .email-list-panel,
 .email-detail-panel {
+  min-width: 0;
   min-height: 560px;
+}
+
+.email-list-panel .panel-header,
+.email-detail-panel .panel-header {
+  min-width: 0;
+}
+
+.email-list-panel .panel-header > div,
+.email-detail-panel .panel-header > div {
+  min-width: 0;
+}
+
+.email-list-panel .panel-caption {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .email-list {
   display: grid;
   gap: 9px;
+  min-width: 0;
 }
 
 .email-list-item {
   display: grid;
   gap: 8px;
   width: 100%;
+  min-width: 0;
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1835,14 +1859,20 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .email-list-top strong {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
+}
+
+.email-list-top .tag {
+  flex: 0 0 auto;
 }
 
 .email-list-meta {
@@ -1851,33 +1881,44 @@ textarea {
 }
 
 .email-list-meta span {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.email-list-meta span:last-child {
+  flex: 0 1 auto;
+  text-align: right;
+}
+
 .email-list-item p {
   display: -webkit-box;
+  min-width: 0;
   overflow: hidden;
   color: var(--color-muted);
   font-size: 12px;
+  overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .email-pagination {
+  min-width: 0;
   margin: 14px -20px -20px;
 }
 
 .email-detail {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .email-detail-head {
   display: grid;
   gap: 12px;
+  min-width: 0;
   padding: 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1885,6 +1926,7 @@ textarea {
 }
 
 .email-detail-head h2 {
+  min-width: 0;
   overflow-wrap: anywhere;
   font-size: 20px;
   line-height: 1.25;
@@ -1894,6 +1936,7 @@ textarea {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 8px 12px;
+  min-width: 0;
   font-size: 13px;
 }
 
@@ -1923,6 +1966,7 @@ textarea {
 .attachments-panel {
   display: grid;
   gap: 10px;
+  min-width: 0;
   padding: 14px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1939,6 +1983,8 @@ textarea {
 }
 
 .email-body-card pre {
+  width: 100%;
+  min-width: 0;
   max-height: 520px;
   overflow: auto;
   padding: 12px;
@@ -1955,6 +2001,7 @@ textarea {
 
 .email-body-card iframe {
   width: 100%;
+  min-width: 0;
   min-height: 460px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -1964,6 +2011,7 @@ textarea {
 .attachment-list {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .attachment-item {
@@ -1971,21 +2019,34 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface-alt);
 }
 
+.attachment-copy {
+  min-width: 0;
+}
+
 .attachment-item strong,
 .attachment-item span {
   display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .attachment-item span {
   margin-top: 3px;
   color: var(--color-muted);
   font-size: 12px;
+}
+
+.attachment-item .btn {
+  flex: 0 0 auto;
 }
 
 .error-state strong {
@@ -2028,13 +2089,20 @@ textarea {
   min-height: 24px;
 }
 
+@media (max-width: 1180px) {
+  .email-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .email-list-panel,
+  .email-detail-panel {
+    min-height: 0;
+  }
+}
+
 @media (max-width: 1120px) {
   .mailbox-toolbar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .email-workbench {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -2064,12 +2132,20 @@ textarea {
     flex-direction: column;
   }
 
+  .attachment-copy {
+    width: 100%;
+  }
+
   .attachment-item .btn {
     width: 100%;
   }
 
   .email-meta-grid {
     grid-template-columns: 1fr;
+  }
+
+  .email-body-card iframe {
+    min-height: 360px;
   }
 }
 
@@ -2155,6 +2231,10 @@ textarea {
   .panel-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .email-list-meta span:last-child {
+    text-align: left;
   }
 }
 

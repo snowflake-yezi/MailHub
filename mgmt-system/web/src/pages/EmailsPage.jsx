@@ -293,7 +293,7 @@ export default function EmailsPage() {
           <div className="panel-header">
             <div>
               <h3>邮件列表</h3>
-              <div className="panel-caption">{query ? query : '等待输入邮箱地址'}</div>
+              <div className="panel-caption" title={query || undefined}>{query ? query : '等待输入邮箱地址'}</div>
             </div>
           </div>
 
@@ -312,12 +312,12 @@ export default function EmailsPage() {
                 onClick={() => loadMessage(msg)}
               >
                 <div className="email-list-top">
-                  <strong>{msg.subject || '(无标题)'}</strong>
+                  <strong title={msg.subject || '(无标题)'}>{msg.subject || '(无标题)'}</strong>
                   {(msg.attachments_count || 0) > 0 && <span className="tag tag-info"><Paperclip size={12} /> {msg.attachments_count}</span>}
                 </div>
                 <div className="email-list-meta">
-                  <span>{msg.from || '-'}</span>
-                  <span>{formatDate(msg.date || msg.received_at)}</span>
+                  <span title={msg.from || '-'}>{msg.from || '-'}</span>
+                  <span title={formatDate(msg.date || msg.received_at)}>{formatDate(msg.date || msg.received_at)}</span>
                 </div>
                 <p>{msg.text_preview || '无正文预览'}</p>
               </button>
@@ -353,11 +353,11 @@ export default function EmailsPage() {
           {detail && !detail._error && (
             <div className="email-detail">
               <div className="email-detail-head">
-                <h2>{detail.subject || '(无标题)'}</h2>
+                <h2 title={detail.subject || '(无标题)'}>{detail.subject || '(无标题)'}</h2>
                 <div className="email-meta-grid">
-                  <span>Message-ID</span><code>{detail.message_id || '-'}</code>
-                  <span>发件人</span><strong>{detail.from || '-'}</strong>
-                  <span>收件人</span><strong>{(detail.to || []).join(', ') || '-'}</strong>
+                  <span>Message-ID</span><code title={detail.message_id || '-'}>{detail.message_id || '-'}</code>
+                  <span>发件人</span><strong title={detail.from || '-'}>{detail.from || '-'}</strong>
+                  <span>收件人</span><strong title={(detail.to || []).join(', ') || '-'}>{(detail.to || []).join(', ') || '-'}</strong>
                   <span>时间</span><strong>{formatDate(detail.date || detail.received_at)}</strong>
                   <span>解析</span>
                   <strong>
@@ -417,9 +417,11 @@ export default function EmailsPage() {
                   <div className="attachment-list">
                     {detail.attachments.map(a => (
                       <div className="attachment-item" key={a.index}>
-                        <div>
-                          <strong>{a.filename || `attachment-${a.index}`}</strong>
-                          <span>{a.content_type || '-'} · {formatBytes(a.size)} · {a.inline ? 'inline' : (a.disposition || 'attachment')}</span>
+                        <div className="attachment-copy">
+                          <strong title={a.filename || `attachment-${a.index}`}>{a.filename || `attachment-${a.index}`}</strong>
+                          <span title={`${a.content_type || '-'} · ${formatBytes(a.size)} · ${a.inline ? 'inline' : (a.disposition || 'attachment')}`}>
+                            {a.content_type || '-'} · {formatBytes(a.size)} · {a.inline ? 'inline' : (a.disposition || 'attachment')}
+                          </span>
                         </div>
                         <a className="btn btn-sm btn-outline" href={emailAPI.attachmentUrl(detail.message_id, a.index, query)} download={a.filename || `attachment-${a.index}`}>
                           <Download size={14} /> 下载
