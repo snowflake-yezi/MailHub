@@ -120,6 +120,7 @@ function normalizeContentType(value) {
 
 function isPreviewableAttachment(attachment) {
   const type = normalizeContentType(attachment?.content_type)
+  if (type === 'image/svg+xml') return false
   return (type.startsWith('image/') && type !== 'image/svg+xml')
     || type.startsWith('text/')
     || type === 'application/pdf'
