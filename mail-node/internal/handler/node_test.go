@@ -136,6 +136,24 @@ Content-Disposition: attachment; filename="itinerary.pdf"
 Content-Transfer-Encoding: base64
 
 UERGREFUQQ==
+--mixed-boundary
+Content-Type: application/zip; name="archive.zip"
+Content-Disposition: attachment; filename="archive.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBAoAAAA=
+--mixed-boundary
+Content-Type: text/html; charset="utf-8"; name="unsafe.html"
+Content-Disposition: attachment; filename="unsafe.html"
+Content-Transfer-Encoding: base64
+
+PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==
+--mixed-boundary
+Content-Type: image/svg+xml; name="unsafe.svg"
+Content-Disposition: attachment; filename="unsafe.svg"
+Content-Transfer-Encoding: base64
+
+PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=
 --mixed-boundary--
 `, "\n", "\r\n"))
 
@@ -165,11 +183,11 @@ UERGREFUQQ==
 		t.Fatalf("attachment bytes = %q", w.Body.String())
 	}
 
-	// 2. inline 图片下载 index=1，仍按 collectAttachmentParts 的顺序与元数据对齐。
+	// 2. inline 图片下载 index=4，仍按 collectAttachmentParts 的顺序与元数据对齐（附件先于 inline）。
 	wInline := httptest.NewRecorder()
 	cInline, _ := gin.CreateTestContext(wInline)
-	cInline.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/1?mailbox="+url.QueryEscape(mailbox), nil)
-	cInline.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "1"}}
+	cInline.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/4?mailbox="+url.QueryEscape(mailbox), nil)
+	cInline.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "4"}}
 	h.GetMessageAttachment(cInline)
 
 	if wInline.Code != http.StatusOK {
@@ -179,7 +197,7 @@ UERGREFUQQ==
 		t.Fatalf("inline Content-Type = %q", ct)
 	}
 	inlineCD := wInline.Header().Get("Content-Disposition")
-	if !strings.HasPrefix(inlineCD, "inline;") || !strings.Contains(inlineCD, "filename*=UTF-8''inline-1.png") {
+	if !strings.HasPrefix(inlineCD, "inline;") || !strings.Contains(inlineCD, "filename*=UTF-8''inline-4.png") {
 		t.Fatalf("inline Content-Disposition = %q", inlineCD)
 	}
 	wantInlineBytes := []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00}
@@ -187,7 +205,69 @@ UERGREFUQQ==
 		t.Fatalf("inline bytes = %v", wInline.Body.Bytes())
 	}
 
-	// 3. 越界 index → 404
+	// 3. PDF 预览使用 inline disposition 且带 nosniff。
+	wPreview := httptest.NewRecorder()
+	cPreview, _ := gin.CreateTestContext(wPreview)
+	cPreview.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/0/preview?mailbox="+url.QueryEscape(mailbox), nil)
+	cPreview.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "0"}}
+	h.GetMessageAttachmentPreview(cPreview)
+
+	if wPreview.Code != http.StatusOK {
+		t.Fatalf("preview status = %d, body = %s", wPreview.Code, wPreview.Body.String())
+	}
+	if ct := wPreview.Header().Get("Content-Type"); !strings.Contains(ct, "application/pdf") {
+		t.Fatalf("preview Content-Type = %q", ct)
+	}
+	if cd := wPreview.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "inline;") {
+		t.Fatalf("preview Content-Disposition = %q", cd)
+	}
+	if xcto := wPreview.Header().Get("X-Content-Type-Options"); xcto != "nosniff" {
+		t.Fatalf("preview X-Content-Type-Options = %q", xcto)
+	}
+	if wPreview.Body.String() != "PDFDATA" {
+		t.Fatalf("preview bytes = %q", wPreview.Body.String())
+	}
+
+	// 4. 非图片/PDF/文本附件不允许预览，仍可走下载。
+	wZipPreview := httptest.NewRecorder()
+	cZipPreview, _ := gin.CreateTestContext(wZipPreview)
+	cZipPreview.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/1/preview?mailbox="+url.QueryEscape(mailbox), nil)
+	cZipPreview.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "1"}}
+	h.GetMessageAttachmentPreview(cZipPreview)
+
+	if wZipPreview.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("zip preview status = %d, body = %s", wZipPreview.Code, wZipPreview.Body.String())
+	}
+
+	// 5. HTML 附件只按纯文本预览，避免浏览器执行附件内容。
+	wHTMLPreview := httptest.NewRecorder()
+	cHTMLPreview, _ := gin.CreateTestContext(wHTMLPreview)
+	cHTMLPreview.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/2/preview?mailbox="+url.QueryEscape(mailbox), nil)
+	cHTMLPreview.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "2"}}
+	h.GetMessageAttachmentPreview(cHTMLPreview)
+
+	if wHTMLPreview.Code != http.StatusOK {
+		t.Fatalf("html preview status = %d, body = %s", wHTMLPreview.Code, wHTMLPreview.Body.String())
+	}
+	if ct := wHTMLPreview.Header().Get("Content-Type"); !strings.Contains(ct, "text/plain") {
+		t.Fatalf("html preview Content-Type = %q", ct)
+	}
+	if wHTMLPreview.Body.String() != "<script>alert(1)</script>" {
+		t.Fatalf("html preview body = %q", wHTMLPreview.Body.String())
+	}
+
+	// 6. SVG 不允许预览，避免可执行图片内容进入预览器。
+	wSVGPreview := httptest.NewRecorder()
+	cSVGPreview, _ := gin.CreateTestContext(wSVGPreview)
+	cSVGPreview.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/3/preview?mailbox="+url.QueryEscape(mailbox), nil)
+	cSVGPreview.Params = gin.Params{{Key: "message_id", Value: messageID}, {Key: "index", Value: "3"}}
+	h.GetMessageAttachmentPreview(cSVGPreview)
+
+	if wSVGPreview.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("svg preview status = %d, body = %s", wSVGPreview.Code, wSVGPreview.Body.String())
+	}
+
+	// 7. 越界 index → 404
 	w2 := httptest.NewRecorder()
 	c2, _ := gin.CreateTestContext(w2)
 	c2.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/9?mailbox="+url.QueryEscape(mailbox), nil)
@@ -197,7 +277,7 @@ UERGREFUQQ==
 		t.Fatalf("out-of-range index status = %d, body = %s", w2.Code, w2.Body.String())
 	}
 
-	// 4. 邮件不存在 → 404
+	// 8. 邮件不存在 → 404
 	w3 := httptest.NewRecorder()
 	c3, _ := gin.CreateTestContext(w3)
 	c3.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/0?mailbox="+url.QueryEscape(mailbox), nil)

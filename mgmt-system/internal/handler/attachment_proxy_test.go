@@ -20,6 +20,7 @@ func TestProxyAttachmentToServerPassesBinary(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Header().Set("Content-Disposition", `attachment; filename="x.pdf"; filename*=UTF-8''x.pdf`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("PDFDATA"))
 	}))
@@ -40,6 +41,9 @@ func TestProxyAttachmentToServerPassesBinary(t *testing.T) {
 	cd := w.Header().Get("Content-Disposition")
 	if !strings.Contains(cd, `filename="x.pdf"`) || !strings.Contains(cd, "filename*=UTF-8''x.pdf") {
 		t.Fatalf("Content-Disposition = %q", cd)
+	}
+	if xcto := w.Header().Get("X-Content-Type-Options"); xcto != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q", xcto)
 	}
 	if w.Body.String() != "PDFDATA" {
 		t.Fatalf("body = %q", w.Body.String())

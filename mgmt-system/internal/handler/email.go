@@ -283,6 +283,14 @@ func (h *EmailHandler) proxyEmailAttachmentDirect(c *gin.Context, srv *model.Mai
 	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
 }
 
+func (h *EmailHandler) proxyEmailAttachmentPreviewDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
+	index := c.Param("index")
+	query := url.Values{}
+	query.Set("mailbox", emailAddr)
+	path := "/internal/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(index) + "/preview?" + query.Encode()
+	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
+}
+
 // AdminGetEmailAttachment 管理后台附件下载（含域名级服务器降级查找，与 AdminGetEmailBody 同模式）。
 // GET /api/v1/admin/emails/:message_id/attachments/:index?mailbox=xxx
 func (h *EmailHandler) AdminGetEmailAttachment(c *gin.Context) {
@@ -310,6 +318,33 @@ func (h *EmailHandler) AdminGetEmailAttachment(c *gin.Context) {
 	h.proxyEmailAttachment(c, messageID, mb.EmailAddress)
 }
 
+// AdminGetEmailAttachmentPreview 管理后台附件预览（图片/PDF/文本；下载端点保持不变）。
+// GET /api/v1/admin/emails/:message_id/attachments/:index/preview?mailbox=xxx
+func (h *EmailHandler) AdminGetEmailAttachmentPreview(c *gin.Context) {
+	messageID := c.Param("message_id")
+	emailAddr := c.Query("mailbox")
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err != nil {
+		_, domainName, ok := splitEmail(emailAddr)
+		if !ok {
+			notFound(c, "invalid email: "+emailAddr)
+			return
+		}
+		srv, srvErr := h.store.FindServerByEmailDomain(domainName)
+		if srvErr != nil {
+			notFound(c, "mailbox not found and no server serves domain: "+emailAddr)
+			return
+		}
+		h.proxyEmailAttachmentPreviewDirect(c, srv, messageID, emailAddr)
+		return
+	}
+	h.proxyEmailAttachmentPreviewDirect(c, &mb.Server, messageID, mb.EmailAddress)
+}
+
 // splitEmail 将邮箱地址拆分为 local_part 和 domain。
 func splitEmail(email string) (localPart, domain string, ok bool) {
 	for i := len(email) - 1; i >= 0; i-- {
@@ -324,4 +359,5 @@ func (h *EmailHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/emails", h.AdminGetEmails)
 	r.GET("/emails/:message_id/body", h.AdminGetEmailBody)
 	r.GET("/emails/:message_id/attachments/:index", h.AdminGetEmailAttachment)
+	r.GET("/emails/:message_id/attachments/:index/preview", h.AdminGetEmailAttachmentPreview)
 }

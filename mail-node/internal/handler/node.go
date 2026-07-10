@@ -23,6 +23,8 @@ import (
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
 
+const maxAttachmentPreviewBytes = 10 * 1024 * 1024
+
 type NodeHandler struct {
 	mailboxMgr   *mailbox.Manager
 	domainMgr    *domain.Manager
@@ -379,6 +381,43 @@ func matchMessageID(candidate, target, normalizedTarget string) bool {
 // 普通附件 Content-Disposition: attachment，inline part 返回 inline（RFC 5987 兼容中文文件名）。错误路径仍返回 JSON 信封。
 // index 与 GetMessages/GetMessageBody 返回的 attachment.index 对齐（先 attachment 后 inline）。
 func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
+	part, info, inline, err := h.messageAttachmentPart(c)
+	if err != nil {
+		return
+	}
+	dispositionType := "attachment"
+	if inline {
+		dispositionType = "inline"
+	}
+	c.Header("Content-Disposition", contentDisposition(dispositionType, info.Filename))
+	c.Data(http.StatusOK, info.ContentType, part.Content)
+}
+
+// GetMessageAttachmentPreview 预览单封邮件的指定附件（按 index）。
+// GET /internal/messages/:message_id/attachments/:index/preview?mailbox=xxx@domain
+//
+// 只允许浏览器可安全内嵌的图片、PDF 和文本类内容；其余类型继续走下载端点。
+func (h *NodeHandler) GetMessageAttachmentPreview(c *gin.Context) {
+	part, info, _, err := h.messageAttachmentPart(c)
+	if err != nil {
+		return
+	}
+	if len(part.Content) > maxAttachmentPreviewBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": 1003, "message": "attachment too large for preview"})
+		return
+	}
+	previewContentType, ok := previewAttachmentContentType(info.ContentType)
+	if !ok {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"code": 1004, "message": "attachment type is not previewable"})
+		return
+	}
+
+	c.Header("Content-Disposition", contentDisposition("inline", info.Filename))
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Data(http.StatusOK, previewContentType, part.Content)
+}
+
+func (h *NodeHandler) messageAttachmentPart(c *gin.Context) (*enmime.Part, inferredPartInfo, bool, error) {
 	messageID, err := url.PathUnescape(c.Param("message_id"))
 	if err != nil {
 		messageID = c.Param("message_id")
@@ -386,50 +425,72 @@ func (h *NodeHandler) GetMessageAttachment(c *gin.Context) {
 	email := c.Query("mailbox")
 	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
 		c.JSON(400, gin.H{"code": 1002, "message": "invalid mailbox param"})
-		return
+		return nil, inferredPartInfo{}, false, fmt.Errorf("invalid mailbox param")
 	}
 
 	index, err := strconv.Atoi(c.Param("index"))
 	if err != nil || index < 0 {
 		c.JSON(400, gin.H{"code": 1002, "message": "invalid attachment index"})
-		return
+		return nil, inferredPartInfo{}, false, fmt.Errorf("invalid attachment index")
 	}
 
 	_, filePath, ok := h.findMessage(email, messageID)
 	if !ok {
 		c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
-		return
+		return nil, inferredPartInfo{}, false, fmt.Errorf("message not found")
 	}
 
 	file, err := os.Open(filePath)
 	if err != nil {
 		c.JSON(500, gin.H{"code": 5000, "message": "failed to open message file"})
-		return
+		return nil, inferredPartInfo{}, false, err
 	}
 	defer file.Close()
 
 	envelope, err := enmime.ReadEnvelope(file)
 	if err != nil {
 		c.JSON(500, gin.H{"code": 5000, "message": "failed to parse message"})
-		return
+		return nil, inferredPartInfo{}, false, err
 	}
 
 	parts := collectAttachmentParts(envelope)
 	if index >= len(parts) {
 		c.JSON(404, gin.H{"code": 2003, "message": "attachment index out of range"})
-		return
+		return nil, inferredPartInfo{}, false, fmt.Errorf("attachment index out of range")
 	}
-	part := parts[index]
 
+	part := parts[index]
 	inlineContentIDs := htmlCIDReferences(envelope.HTML)
 	inline := index >= len(envelope.Attachments) || isInlinePart(part, inlineContentIDs)
-	info := inferPartInfo(part, index, inline)
-	dispositionType := "attachment"
-	if inline {
-		dispositionType = "inline"
+	return part, inferPartInfo(part, index, inline), inline, nil
+}
+
+func previewAttachmentContentType(contentType string) (string, bool) {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		mediaType = strings.TrimSpace(contentType)
 	}
-	c.Header("Content-Disposition", contentDisposition(dispositionType, info.Filename))
-	c.Data(http.StatusOK, info.ContentType, part.Content)
+	mediaType = strings.ToLower(mediaType)
+	if strings.HasPrefix(mediaType, "image/") {
+		if mediaType == "image/svg+xml" {
+			return "", false
+		}
+		return mediaType, true
+	}
+	if strings.HasPrefix(mediaType, "text/") {
+		return "text/plain; charset=utf-8", true
+	}
+	switch mediaType {
+	case "application/pdf":
+		return mediaType, true
+	case "application/json", "application/xml", "application/xhtml+xml", "application/javascript":
+		return "text/plain; charset=utf-8", true
+	default:
+		if strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml") {
+			return "text/plain; charset=utf-8", true
+		}
+		return "", false
+	}
 }
 
 // contentDisposition 生成 RFC 5987 兼容的 Content-Disposition 头，
@@ -588,6 +649,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	rg.GET("/mailboxes/:email/messages", h.GetMessages)
 	rg.GET("/messages/:message_id", h.GetMessageBody)
 	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
+	rg.GET("/messages/:message_id/attachments/:index/preview", h.GetMessageAttachmentPreview)
 
 	// 健康 & 维护
 	rg.GET("/health", h.Health)

@@ -2151,6 +2151,107 @@ textarea {
   flex: 0 0 auto;
 }
 
+.attachment-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.attachment-preview-modal {
+  width: min(980px, 94vw);
+  max-height: 90vh;
+  display: grid;
+  gap: 14px;
+  overflow: hidden;
+  padding: 20px;
+}
+
+.attachment-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.attachment-preview-head h3 {
+  max-width: min(720px, 72vw);
+  margin: 2px 0 4px;
+  overflow: hidden;
+  color: var(--color-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-preview-head p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.attachment-preview-body {
+  min-height: 220px;
+  max-height: min(68vh, 720px);
+  min-width: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-alt);
+}
+
+.attachment-preview-frame {
+  width: 100%;
+  min-height: min(64vh, 680px);
+  border: 0;
+  background: var(--color-surface);
+}
+
+.image-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.image-frame img {
+  max-width: 100%;
+  max-height: min(62vh, 660px);
+  border-radius: 6px;
+  object-fit: contain;
+}
+
+.pdf-frame {
+  display: block;
+}
+
+.attachment-preview-text {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.attachment-preview-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.attachment-preview-text pre {
+  margin: 0;
+  max-height: min(58vh, 620px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .error-state strong {
   color: var(--color-danger);
 }
@@ -2240,6 +2341,21 @@ textarea {
 
   .attachment-item .btn {
     width: 100%;
+  }
+
+  .attachment-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .attachment-preview-modal {
+    width: 96vw;
+    max-height: 92vh;
+    padding: 16px;
+  }
+
+  .attachment-preview-head h3 {
+    max-width: 68vw;
   }
 
   .email-meta-grid {

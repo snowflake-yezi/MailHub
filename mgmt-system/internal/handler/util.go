@@ -106,6 +106,9 @@ func proxyAttachmentToServer(c *gin.Context, serverAPIHost, method, path, shared
 	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 		c.Header("Content-Disposition", cd)
 	}
+	if xcto := resp.Header.Get("X-Content-Type-Options"); xcto != "" {
+		c.Header("X-Content-Type-Options", xcto)
+	}
 
 	c.Status(resp.StatusCode)
 	// 状态码与响应头已写出，body 读取错误无法回滚；调用方据状态码/字节数判断。

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
+  Copy,
   Download,
+  Eye,
   FileText,
   Inbox,
   MailOpen,
@@ -9,6 +11,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
 
@@ -111,6 +114,96 @@ function formatBytes(value) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
+function normalizeContentType(value) {
+  return String(value || '').split(';')[0].trim().toLowerCase()
+}
+
+function isPreviewableAttachment(attachment) {
+  const type = normalizeContentType(attachment?.content_type)
+  return (type.startsWith('image/') && type !== 'image/svg+xml')
+    || type.startsWith('text/')
+    || type === 'application/pdf'
+    || type === 'application/json'
+    || type === 'application/xml'
+    || type === 'application/xhtml+xml'
+    || type.endsWith('+json')
+    || type.endsWith('+xml')
+}
+
+async function readPreviewError(resp) {
+  const contentType = resp.headers.get('content-type') || ''
+  try {
+    if (contentType.includes('application/json')) {
+      const data = await resp.json()
+      return data.message || `HTTP ${resp.status}`
+    }
+    const text = await resp.text()
+    return text || `HTTP ${resp.status}`
+  } catch {
+    return `HTTP ${resp.status}`
+  }
+}
+
+function AttachmentPreviewModal({ preview, onClose, onCopy }) {
+  if (!preview) return null
+  const name = preview.attachment?.filename || `attachment-${preview.attachment?.index}`
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal attachment-preview-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="附件预览">
+        <div className="attachment-preview-head">
+          <div>
+            <div className="drawer-kicker">Attachment preview</div>
+            <h3 title={name}>{name}</h3>
+            <p>{preview.contentType || preview.attachment?.content_type || '-'} · {formatBytes(preview.attachment?.size)}</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭预览">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="attachment-preview-body">
+          {preview.loading && <div className="empty-state"><span className="spinner" /><strong>加载预览...</strong></div>}
+          {preview.error && (
+            <div className="empty-state error-state">
+              <Paperclip size={28} />
+              <strong>无法预览</strong>
+              <span>{preview.error}</span>
+              <a className="btn btn-sm btn-outline" href={preview.downloadUrl} download={name}>
+                <Download size={14} /> 下载附件
+              </a>
+            </div>
+          )}
+          {!preview.loading && !preview.error && preview.kind === 'image' && (
+            <div className="attachment-preview-frame image-frame">
+              <img src={preview.objectUrl} alt={name} />
+            </div>
+          )}
+          {!preview.loading && !preview.error && preview.kind === 'pdf' && (
+            <iframe className="attachment-preview-frame pdf-frame" title={name} src={preview.objectUrl} />
+          )}
+          {!preview.loading && !preview.error && preview.kind === 'text' && (
+            <div className="attachment-preview-text">
+              <div className="attachment-preview-actions">
+                <button className="btn btn-sm btn-outline" type="button" onClick={() => onCopy(preview.text || '')}>
+                  <Copy size={14} /> 复制
+                </button>
+              </div>
+              <pre>{preview.text || ''}</pre>
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <a className="btn btn-outline" href={preview.downloadUrl} download={name}>
+            <Download size={15} /> 下载
+          </a>
+          <button className="btn btn-primary" type="button" onClick={onClose}>关闭</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function EmailsPage() {
   const location = useLocation()
   const appliedURLSearch = useRef('')
@@ -127,6 +220,7 @@ export default function EmailsPage() {
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [bodyView, setBodyView] = useState('text')
+  const [attachmentPreview, setAttachmentPreview] = useState(null)
 
   const totalAttachments = useMemo(
     () => messages.reduce((sum, msg) => sum + (Number(msg.attachments_count) || 0), 0),
@@ -204,6 +298,12 @@ export default function EmailsPage() {
     }
   }, [fetchMessageByID, fetchMessages, location.search, size])
 
+  useEffect(() => () => {
+    if (attachmentPreview?.objectUrl) {
+      URL.revokeObjectURL(attachmentPreview.objectUrl)
+    }
+  }, [attachmentPreview?.objectUrl])
+
   const doSearch = (e) => {
     if (e) e.preventDefault()
     fetchMessages(mailbox, 1, size)
@@ -233,6 +333,45 @@ export default function EmailsPage() {
     setError(null)
     setSelected(null)
     setDetail(null)
+    setAttachmentPreview(null)
+  }
+
+  const closeAttachmentPreview = () => {
+    setAttachmentPreview(null)
+  }
+
+  const openAttachmentPreview = async (attachment) => {
+    if (!detail?.message_id) return
+    const previewUrl = emailAPI.attachmentPreviewUrl(detail.message_id, attachment.index, query)
+    const downloadUrl = emailAPI.attachmentUrl(detail.message_id, attachment.index, query)
+    setAttachmentPreview({ attachment, downloadUrl, loading: true })
+    try {
+      const resp = await fetch(previewUrl)
+      if (!resp.ok) {
+        throw new Error(await readPreviewError(resp))
+      }
+      const contentType = normalizeContentType(resp.headers.get('content-type') || attachment.content_type)
+      const blob = await resp.blob()
+      if (contentType.startsWith('image/')) {
+        setAttachmentPreview({ attachment, downloadUrl, loading: false, kind: 'image', objectUrl: URL.createObjectURL(blob), contentType })
+        return
+      }
+      if (contentType === 'application/pdf') {
+        setAttachmentPreview({ attachment, downloadUrl, loading: false, kind: 'pdf', objectUrl: URL.createObjectURL(blob), contentType })
+        return
+      }
+      setAttachmentPreview({ attachment, downloadUrl, loading: false, kind: 'text', text: await blob.text(), contentType })
+    } catch (err) {
+      setAttachmentPreview({ attachment, downloadUrl, loading: false, error: err.message || '预览失败' })
+    }
+  }
+
+  const copyPreviewText = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Clipboard availability depends on browser permissions; preview remains usable.
+    }
   }
 
   return (
@@ -423,9 +562,16 @@ export default function EmailsPage() {
                             {a.content_type || '-'} · {formatBytes(a.size)} · {a.inline ? 'inline' : (a.disposition || 'attachment')}
                           </span>
                         </div>
-                        <a className="btn btn-sm btn-outline" href={emailAPI.attachmentUrl(detail.message_id, a.index, query)} download={a.filename || `attachment-${a.index}`}>
-                          <Download size={14} /> 下载
-                        </a>
+                        <div className="attachment-actions">
+                          {isPreviewableAttachment(a) && (
+                            <button className="btn btn-sm btn-outline" type="button" onClick={() => openAttachmentPreview(a)}>
+                              <Eye size={14} /> 预览
+                            </button>
+                          )}
+                          <a className="btn btn-sm btn-outline" href={emailAPI.attachmentUrl(detail.message_id, a.index, query)} download={a.filename || `attachment-${a.index}`}>
+                            <Download size={14} /> 下载
+                          </a>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -438,6 +584,7 @@ export default function EmailsPage() {
           )}
         </section>
       </div>
+      <AttachmentPreviewModal preview={attachmentPreview} onClose={closeAttachmentPreview} onCopy={copyPreviewText} />
     </div>
   )
 }

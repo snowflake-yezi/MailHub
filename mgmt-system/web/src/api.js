@@ -83,6 +83,9 @@ export const emailAPI = {
   attachmentUrl(id, index, mailbox) {
     return `${API_BASE}/emails/${encodeURIComponent(id)}/attachments/${index}?mailbox=${encodeURIComponent(mailbox)}`;
   },
+  attachmentPreviewUrl(id, index, mailbox) {
+    return `${API_BASE}/emails/${encodeURIComponent(id)}/attachments/${index}/preview?mailbox=${encodeURIComponent(mailbox)}`;
+  },
 };
 
 // ─── Domains (for filter dropdowns) ──────────────────────
