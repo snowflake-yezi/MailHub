@@ -1,19 +1,20 @@
 # MailHub UI 第二次优化改动设计文档
 
 > 状态：设计草案 | 日期：2026-07-08
-> 范围：管理端 UI 二次打磨 + 附件预览前后端 + 管理账号部署友好化
+> 范围：管理端 UI 二次打磨 + 邮件查询工作台布局修复 + 附件预览前后端 + 管理账号部署友好化
 > 关联：`mailhub-ui-refresh-design.md`、`mailbox-creation-consolidation-design.md`、`attachment-download-design.md`、`t6-auth-design.md`
 
 ---
 
 ## 1. 背景
 
-Phase 4 已补齐浅色/深色主题、基础 token、移动端和状态样式，但仍有四个体验缺口：
+Phase 4 已补齐浅色/深色主题、基础 token、移动端和状态样式，但仍有五个体验缺口：
 
 1. 主题按钮目前只支持浅色/深色模式，不支持自定义品牌色。
 2. 邮箱页创建表单常驻页面底部，信息结构显得拖沓，用户明确反馈“不好看”。
 3. 邮件详情的附件只支持下载；图片、PDF、文本等常见附件缺少后台内预览。
-4. 管理后台账号密码虽然已支持 `config.yaml` 的 `auth.admin_user/admin_pass`，但 Docker/环境变量覆盖、首次部署提醒、后台修改入口还不完整。
+4. 邮件查询页在查询某个邮箱后，邮件列表和邮件详情/查询区域存在挤压叠放风险，长邮箱地址、长主题、长 Message-ID 或窄屏宽度会破坏两列工作台布局。
+5. 管理后台账号密码虽然已支持 `config.yaml` 的 `auth.admin_user/admin_pass`，但缺少显式首次初始化、DB hash 事实源、旧 session 失效、忘记密码恢复和后台改密入口。
 
 ---
 
@@ -58,7 +59,22 @@ Phase 4 已补齐浅色/深色主题、基础 token、移动端和状态样式�
 - 用于预览的安全响应策略。
 - 大文件、未知类型、Office 文件等不可预览场景的降级。
 
-### 2.4 管理账号密码
+### 2.4 邮件查询工作台布局
+
+现有能力：
+
+- `EmailsPage.jsx` 已形成「顶部查询表单 + 邮件列表 + 邮件详情」的审阅器结构。
+- `.email-workbench` 使用两列 CSS Grid：左侧列表 `minmax(320px, 390px)`，右侧详情 `minmax(0, 1fr)`。
+- 列表项对主题、发件人、摘要有一定截断；详情头部对主题和元信息已有 `overflow-wrap: anywhere`。
+
+缺失：
+
+- `.email-list-panel`、`.email-detail-panel`、`.email-list-item`、`.email-list-top` 等容器缺少系统性的 `min-width: 0`，子元素在长文本下会撑开 grid/flex 容器。
+- 顶部查询表单与结果工作台的职责还不够分离，查询成功后表单、列表、详情在窄屏下容易形成视觉拥挤。
+- 邮件列表列宽是固定区间，缺少中等屏宽下的断点策略；当可用宽度不足时，应主动切换为上下布局，而不是继续挤压两列。
+- 列表项内附件标签、发件人、时间、主题之间没有完整的收缩优先级，长字段会挤占其他字段。
+
+### 2.5 管理账号密码
 
 现有能力：
 
@@ -75,10 +91,12 @@ auth:
 
 缺失：
 
-- 环境变量覆盖，方便 Docker / compose / 面板部署。
-- 默认密码安全告警或 fail-fast 策略。
+- 首次部署缺少显式 `mgmt-server admin bootstrap` 初始化流程。
+- 运行期登录仍直接依赖配置明文凭证，缺少 `admin_users` DB hash 事实源。
 - 后台修改管理员账号密码入口。
-- 部署文档中对管理账号的明确说明。
+- 改密或恢复后缺少基于 `credential_version` 的旧 session 失效策略。
+- 忘记密码时缺少显式 `mgmt-server admin reset-password` 恢复命令。
+- 部署文档中对管理账号初始化、迁移和恢复的明确说明。
 
 ---
 
@@ -87,7 +105,8 @@ auth:
 1. 外观偏好可自定义，但不破坏运维后台的可读性和状态语义。
 2. 邮箱页结构更清爽，创建操作成为明确菜单/tab，而不是底部大表单。
 3. 邮件附件支持安全预览，减少反复下载再打开的操作成本。
-4. 管理账号支持配置文件、环境变量和后台修改，适配 Docker 部署。
+4. 邮件查询页在查询邮箱、加载列表、打开详情时保持稳定的审阅器布局，不出现列表与详情/查询区域重叠。
+5. 管理账号支持显式 bootstrap、DB hash 登录、后台改密和 CLI 恢复，避免运行期环境变量覆盖密码。
 
 ---
 
@@ -98,7 +117,8 @@ auth:
 | O2-1 | 自定义主题品牌色 | P1 | 浅/深模式之外，支持色板和自定义 HEX |
 | O2-2 | 创建邮箱 tab 化 | P0 | 排在「集成邮箱」后，顶部按钮切换到该 tab |
 | O2-3 | 附件预览 | P0 | 图片/PDF/文本优先，其他类型降级下载 |
-| O2-4 | 管理账号部署友好化 | P0 | 环境变量覆盖 + 默认密码警告/阻断 + 后台改密 |
+| O2-4 | 邮件查询工作台布局修复 | P0 | 查询邮箱后列表、详情和查询表单不叠放，长文本可控收缩 |
+| O2-5 | 管理账号 Bootstrap 与恢复 | P0 | 首次初始化 + DB hash 事实源 + 后台改密 + session 失效 + CLI 恢复 |
 
 ---
 
@@ -196,13 +216,14 @@ ui.brand_color_default
 
 | 类型 | 预览方式 |
 |------|----------|
-| `image/*` | 弹窗内 `<img>` |
+| 常见位图 `image/*`（不含 SVG） | 弹窗内 `<img>` |
 | `application/pdf` | 弹窗内 `<iframe>` |
-| `text/plain` / `text/html` / `application/json` / `text/csv` | 后端读取文本或 iframe/preview endpoint |
+| `text/plain` / `text/html` / `application/json` / `text/csv` | 后端按纯文本响应，前端 `<pre>` 展示 |
 
 降级下载：
 
 - Office 文档、压缩包、未知二进制。
+- SVG 图片。
 - 超过预览大小上限的附件。
 - MIME 类型不可信或内容嗅探失败。
 
@@ -230,7 +251,8 @@ GET /internal/messages/:message_id/attachments/:index/preview?mailbox=<email>
 
 - 对允许预览的类型返回 `Content-Disposition: inline`。
 - 设置 `X-Content-Type-Options: nosniff`。
-- 对文本类限制最大字节数，例如默认 1MB。
+- HTML/XHTML/JSON/XML/JavaScript 等文本型附件统一以 `text/plain; charset=utf-8` 响应。
+- 预览响应统一限制最大字节数，当前默认 10MB。
 - 对不可预览类型返回 `415` JSON：`unsupported preview type`。
 - 对超限返回 `413` JSON：`attachment too large to preview`。
 
@@ -251,7 +273,8 @@ GET /internal/messages/:message_id/attachments/:index/preview?mailbox=<email>
 
 ### 7.4 安全边界
 
-- HTML 附件默认不执行脚本；如 iframe 预览，必须使用 `sandbox`。
+- HTML 附件按纯文本预览，不作为 HTML 执行。
+- SVG 附件不进入图片预览器，统一降级下载。
 - 不自动加载外部资源。
 - 不将附件内容内联进邮件详情 JSON。
 - 预览端点只用于 admin session；外部 API 暂不开放 preview，避免扩大暴露面。
@@ -266,114 +289,192 @@ GET /internal/messages/:message_id/attachments/:index/preview?mailbox=<email>
 
 ---
 
-## 8. 方案四：管理账号部署友好化
+## 8. 方案四：邮件查询工作台布局修复
 
-### 8.1 配置优先级
+### 8.1 布局目标
 
-建议优先级：
-
-```text
-环境变量 > config.yaml > 默认值/空值
-```
-
-新增环境变量：
+邮件查询页保持「查询条件区」和「结果审阅区」两个层级：
 
 ```text
-MAILHUB_ADMIN_USER
-MAILHUB_ADMIN_PASS
-MAILHUB_SESSION_COOKIE_SECURE
+页面标题 / 摘要指标
+查询条件条（邮箱地址、分页大小、查询/重置）
+结果审阅区：邮件列表 | 邮件详情
 ```
 
-Docker / compose 部署可直接注入：
+要求：
 
-```yaml
-environment:
-  MAILHUB_ADMIN_USER: "admin"
-  MAILHUB_ADMIN_PASS: "${MAILHUB_ADMIN_PASS}"
+- 查询条件条始终独立成行，不参与左右两列工作台布局。
+- 桌面宽屏保持左右两列：左侧列表用于扫描，右侧详情用于阅读。
+- 中等屏宽或容器不足时主动切换为上下布局：列表在上、详情在下。
+- 任何长邮箱、长主题、长 Message-ID、长附件名都只能在自己的容器内换行或截断，不允许撑开父级。
+
+### 8.2 CSS 结构调整
+
+`.email-workbench`：
+
+- 保留 grid，但列定义改为更柔性的工作台宽度：
+
+```css
+grid-template-columns: minmax(280px, clamp(320px, 34vw, 420px)) minmax(0, 1fr);
 ```
 
-### 8.2 默认密码策略
+- 增加 `min-width: 0`，确保右侧详情可收缩。
+- 在 `max-width: 1180px` 或更保守断点下切换为单列：
 
-生产模式 `server.mode=release`：
+```css
+.email-workbench {
+  grid-template-columns: 1fr;
+}
+```
 
-- `admin_pass` 为空：启动失败。
-- `admin_pass` 等于 `CHANGE-ME-ADMIN-PASSWORD` 或 `change-me-admin-password`：启动失败。
+`.email-list-panel`、`.email-detail-panel`：
 
-非 release：
+- 增加 `min-width: 0`。
+- 详情区最大宽度由父容器控制，不设会撑破布局的固定宽。
+- 单列模式下移除不必要的最小高度或降低 `min-height`，避免详情空态占据过高屏幕。
 
-- 允许启动，但日志明确告警。
+`.email-list-item`：
 
-### 8.3 后台账号设置
+- 增加 `min-width: 0`。
+- 对内部 flex 行使用 `min-width: 0` + 明确的收缩规则。
+- 主题行优先保留附件标签；主题文本用 ellipsis。
+- 发件人与时间在桌面同排，窄屏下允许换行。
 
-系统配置页新增“管理账号”模块，或新增 `/settings/account`：
+`.email-detail-head` / `.email-meta-grid`：
 
-- 当前管理员用户名展示。
-- 修改用户名。
-- 修改密码：当前密码、新密码、确认密码。
-- 修改成功后清理当前 session，要求重新登录。
+- 保留 `overflow-wrap: anywhere`。
+- Message-ID、收件人列表、长邮箱地址使用可复制但不会撑宽的 code/文本样式。
 
-### 8.4 存储决策
+### 8.3 查询态交互
 
-第一阶段：
+查询成功后：
 
-- 启动凭证仍来自配置/环境变量。
-- 后台修改写入 DB `system_configs`，优先级高于 config.yaml 但低于显式环境变量。
+- 查询条仍停留在结果上方，便于更换 mailbox 或调整 page size。
+- 邮件列表标题展示当前 mailbox，并对长邮箱做截断，完整值放 `title`。
+- 结果为空、接口失败、加载中状态都占据列表列内部，不跨列覆盖详情。
+- 若通过 URL 参数 `?mailbox=` 自动查询，页面加载后不滚动到详情区，避免用户误以为列表被遮挡。
 
-第二阶段可选：
+选择邮件后：
 
-- 独立 `admin_users` 表，支持多管理员、密码 hash、审计日志。
+- 桌面：右侧详情就地更新。
+- 单列：详情位于列表下方；可以在列表项点击后滚动到详情标题，或提供轻量“返回列表”锚点。
+- Message-ID 深链但没有列表时，详情区展示详情/错误态，左侧列表显示“由深链打开”的空态，不把空白列表压在详情上。
 
-### 8.5 密码安全
+### 8.4 视觉约束
 
-- DB 中不保存明文管理密码，保存 bcrypt hash。
-- config/env 明文密码只作为首次启动或覆盖来源。
-- 登录时兼容：
-  - 若 DB hash 存在，优先验证 DB hash。
-  - 若显式环境变量存在，优先环境变量。
+- 不新增嵌套卡片；查询条、列表面板、详情面板保持同级 section。
+- 列表项高度允许随摘要两行增长，但 hover/active 不改变布局尺寸。
+- 按钮文字和附件标签不得压缩到不可读；必要时标签换到下一行。
+- 移动端不使用横向滚动承载主布局，只有正文 `<pre>` 和 HTML iframe 内部可独立滚动。
 
-### 8.6 验收
+### 8.5 验收
 
-- Docker 环境变量可覆盖配置文件账号密码。
-- release 模式不能使用默认占位密码启动。
-- 后台可修改密码，修改后旧 session 失效。
-- 部署文档明确说明如何设置 `MAILHUB_ADMIN_PASS`。
+- 输入普通邮箱查询后，列表和详情不重叠。
+- 输入超长邮箱地址、超长主题、超长 Message-ID 后，页面宽度不被撑开。
+- 1366px、1024px、768px、390px 宽度下均无横向页面滚动。
+- 加载中、查询失败、空列表、已选中邮件、Message-ID 深链五种状态布局稳定。
+- HTML 正文 iframe、Raw 元信息 `<pre>`、附件列表各自滚动或换行，不挤压列表列。
 
 ---
 
-## 9. 实施顺序
+## 9. 方案五：管理账号 Bootstrap 与恢复
 
-1. `O2-2` 创建邮箱 tab 化：纯前端，收益最大，风险低。
-2. `O2-1` 自定义主题品牌色：前端局部改动，复用现有 token。
-3. `O2-3` 附件预览：前后端联动，需测试 MIME、安全和大文件。
-4. `O2-4` 管理账号部署友好化：涉及安全和部署，最后做完整验证。
+O2-P5 的详细方案以 `ui-second-optimization-p5-admin-bootstrap-design.md` 为准。本节只保留总设计口径。
+
+### 9.1 运行期事实源
+
+- 管理员密码不作为普通运行期配置。
+- `mgmt-server serve` 不根据 env/config 创建、覆盖或重置管理员密码。
+- 运行期登录只验证 DB 中 `admin_users.password_hash`。
+- `config.yaml` 中的 `auth.admin_user/admin_pass` 仅作为旧部署迁移来源，不再作为长期登录事实源。
+
+### 9.2 首次初始化
+
+首次部署通过显式 CLI 完成管理员初始化：
+
+```text
+mgmt-server admin bootstrap --username <user> --password-file <path>
+```
+
+- bootstrap 只允许在未初始化状态执行。
+- 成功后写入 `admin_users` 和 `system_state.admin_bootstrap=completed`。
+- 重复 bootstrap 返回 already initialized，不覆盖既有管理员密码。
+
+### 9.3 恢复与改密
+
+- 忘记密码时使用 `mgmt-server admin reset-password` 显式恢复。
+- 后台系统配置页新增“管理账号”模块，支持修改当前管理员密码。
+- CLI 恢复和后台改密都递增 `credential_version`。
+- session 中记录登录时的 `credential_version`；版本不一致时旧 session 失效。
+
+### 9.4 环境变量策略
+
+- 不提供 `MAILHUB_ADMIN_PASS` 这类运行期密码覆盖能力。
+- 安装期如需环境变量，只允许被 `admin bootstrap` / `admin reset-password` CLI 显式读取。
+- `MAILHUB_SESSION_COOKIE_SECURE` 可继续作为 session cookie 安全属性配置。
+
+### 9.5 验收
+
+- `mgmt-server admin bootstrap` 可完成首次管理员初始化。
+- `mgmt-server serve` 不会根据 env/config 创建或重置管理员。
+- DB hash 成为唯一运行期登录事实源。
+- 后台改密和 `admin reset-password` 后旧 session 失效。
+- 部署文档说明首次初始化、旧配置迁移和忘记密码恢复流程。
 
 ---
 
-## 10. 测试计划
+## 10. Phase 拆分与实施顺序
+
+详细 phase 计划见：`ui-second-optimization-phase-plan.md`。
+
+本次二次优化不一次性全改，按可独立验收、可独立发布的粒度拆分：
+
+1. `O2-P0` 基线核对与验收样例：先固定长文本、窄屏、深链、空态/失败态等回归样例。
+2. `O2-P1` 邮件查询工作台布局修复（`O2-4`）：优先解决当前最影响使用的列表/详情/查询区挤压叠放问题。
+3. `O2-P2` 创建邮箱入口 tab 化（`O2-2`）：只调整邮箱页信息结构和创建入口。
+4. `O2-P3` 主题品牌色偏好（`O2-1`）：纯前端增强，复用现有主题 token。
+5. `O2-P4` 附件安全预览（`O2-3`）：前后端联动，新增 preview 端点，保持下载端点兼容。
+6. `O2-P5` 管理账号 Bootstrap 与恢复（`O2-5`）：涉及安全、CLI、session 失效和部署说明，最后单独验证。
+
+---
+
+## 11. 测试计划
 
 - 前端构建：`pnpm build`。
 - 邮箱页：账号集合、回收站、集成邮箱、创建邮箱四个 tab 切换。
+- 邮件查询页布局：
+  - 普通邮箱查询后列表/详情不重叠。
+  - 超长邮箱地址、超长主题、超长 Message-ID。
+  - 加载中、查询失败、空列表、选中邮件、Message-ID 深链。
+  - 桌面 1366px、窄桌面 1024px、平板 768px、移动 390px。
+  - 页面主体无横向滚动；只有正文代码块/iframe 可在内部滚动。
 - 主题：浅色/深色 + 4 个预设色 + 自定义 HEX + 重置。
 - 附件预览：
   - PNG/JPEG。
   - PDF。
   - text/plain。
+  - HTML/JSON 按纯文本展示。
+  - SVG 降级。
   - zip 或 unknown 二进制降级。
   - 大于上限的附件降级。
 - 认证：
-  - config.yaml 登录。
-  - 环境变量覆盖登录。
-  - release 默认密码阻断。
+  - `mgmt-server admin bootstrap` 首次初始化。
+  - `mgmt-server serve` 不根据 env/config 覆盖管理员密码。
+  - DB hash 登录。
   - 后台改密后旧 session 失效。
+  - `mgmt-server admin reset-password` 恢复后旧密码不可登录。
 
 ---
 
-## 11. 风险
+## 12. 风险
 
 | 风险 | 应对 |
 |------|------|
 | 自定义色导致对比度不足 | 对品牌色做基础亮度校验，不合格提示 |
-| 预览 HTML 附件执行脚本 | iframe sandbox，默认不开放脚本 |
+| 邮件查询页断点切换影响桌面效率 | 只在容器不足或中等屏宽以下切单列，宽屏保留左右审阅器 |
+| 长字段截断影响排障复制 | UI 截断但保留 `title` 或详情区完整可复制文本 |
+| 预览 HTML 附件执行脚本 | HTML 附件按纯文本响应和展示 |
+| SVG 图片执行脚本或外部资源 | SVG 不作为图片预览，降级下载 |
 | 大附件预览占用内存 | 预览大小上限，下载走流式接口 |
-| 环境变量与后台 DB 凭证冲突 | 明确优先级并在 UI 中提示“环境变量覆盖中” |
+| 运行期环境变量覆盖与后台改密互相冲突 | 不提供运行期管理员密码覆盖；安装和恢复必须走显式 CLI |
 | 创建 tab 改动影响批量结果展示 | 保留 create view 状态，切换前不清空结果 |
