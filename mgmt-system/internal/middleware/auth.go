@@ -47,6 +47,23 @@ func AuthRequired(store *store.Store) gin.HandlerFunc {
 	}
 }
 
+func hasScope(scopes, required string) bool {
+	if required == "" {
+		return false
+	}
+
+	for _, item := range strings.Split(scopes, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if item == "*" || item == required {
+			return true
+		}
+	}
+	return false
+}
+
 // RequireScope 检查 Token 权限范围
 func RequireScope(scope string) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -61,8 +78,7 @@ func RequireScope(scope string) gin.HandlerFunc {
 		token := tokenVal.(*model.ApiToken)
 
 		// 简单 scope 检查：支持 "*" 通配和精确匹配
-		scopes := token.Scopes // 实际中用逗号分隔的字符串
-		if scopes == "*" || strings.Contains(scopes, scope) {
+		if hasScope(token.Scopes, scope) {
 			c.Next()
 			return
 		}

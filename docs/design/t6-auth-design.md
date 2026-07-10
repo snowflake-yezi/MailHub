@@ -177,7 +177,7 @@ auth:
       scopes: ["email:read"]
 ```
 
-Scope 存储为逗号分隔字符串，检查逻辑：`scopes == "*"` 通配 或 `strings.Contains(scopes, scope)` 精确匹配。
+Scope 存储为逗号分隔字符串。检查时先按逗号拆分并 `TrimSpace`，跳过空项；任一完整项为 `*` 或与所需 scope 完全相等时放行，不做子串匹配。
 
 ---
 
