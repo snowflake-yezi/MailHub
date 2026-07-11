@@ -585,6 +585,8 @@ PUT /api/v1/admin/account
 
 ### 14.1 Docker Compose
 
+当前实际部署资产已落地到 `mgmt-system/Dockerfile` 与 `deploy/docker/compose.yaml`，操作步骤见 `docs/control-plane-deployment.md`。下方片段保留设计结构说明。
+
 ```yaml
 services:
   mailhub-bootstrap:

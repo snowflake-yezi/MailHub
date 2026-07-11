@@ -1,0 +1,31 @@
+server:
+  port: 8080
+  mode: release
+
+database:
+  driver: mysql
+  # Compose injects the real DSN through MAILHUB_DATABASE_DSN.
+  dsn: ""
+
+auth:
+  # Compose injects the real value through MAILHUB_SHARED_SECRET.
+  shared_secret: ""
+  admin_user: ""
+  admin_pass: ""
+  tokens:
+    - name: ticket-center
+      token: sk-ticket-CHANGE-ME
+      scopes: ["mailbox:create", "mailbox:read"]
+    - name: llm-system
+      token: sk-llm-CHANGE-ME
+      scopes: ["email:read"]
+
+domains:
+  - name: example.com
+
+default_retention_days: 30
+
+filter:
+  reload_interval: 30
+  default_action: pass
+  default_flag_subject_prefix: "[疑似]"

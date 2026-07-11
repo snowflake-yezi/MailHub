@@ -66,3 +66,9 @@ docs/design/phase1b-intl-deploy-log.md
 # === 本地/测试配置与编译产物 ===
 mail-node/config.t5a.local.yaml
 mail-node/mail-node.t5*
+
+# === Docker 本地密钥 ===
+deploy/docker/.env
+deploy/docker/secrets/*
+!deploy/docker/secrets/.gitkeep
+!deploy/docker/secrets/admin_password.example

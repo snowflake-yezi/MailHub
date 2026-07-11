@@ -1,0 +1,74 @@
+name: mailhub
+
+x-mailhub-environment: &mailhub-environment
+  CONFIG_PATH: /etc/mailhub/config.yaml
+  MAILHUB_DATABASE_DSN: email_sys:${MAILHUB_DB_PASSWORD:?set MAILHUB_DB_PASSWORD in .env}@tcp(db:3306)/email_mgmt?charset=utf8mb4&parseTime=true&loc=Local
+  MAILHUB_SHARED_SECRET: ${MAILHUB_SHARED_SECRET:?set MAILHUB_SHARED_SECRET in .env}
+  TZ: ${TZ:-Asia/Shanghai}
+
+x-mailhub-service: &mailhub-service
+  image: ${MAILHUB_IMAGE:-mailhub-mgmt:local}
+  build:
+    context: ../..
+    dockerfile: mgmt-system/Dockerfile
+  restart: "no"
+  environment: *mailhub-environment
+  volumes:
+    - ./mgmt-config.yaml:/etc/mailhub/config.yaml:ro
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: email_mgmt
+      MARIADB_USER: email_sys
+      MARIADB_PASSWORD: ${MAILHUB_DB_PASSWORD:?set MAILHUB_DB_PASSWORD in .env}
+      MARIADB_ROOT_PASSWORD: ${MAILHUB_DB_ROOT_PASSWORD:?set MAILHUB_DB_ROOT_PASSWORD in .env}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - mailhub-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  bootstrap:
+    <<: *mailhub-service
+    command: ["admin", "bootstrap", "--must-change-password"]
+    environment:
+      <<: *mailhub-environment
+      MAILHUB_BOOTSTRAP_ADMIN_USERNAME: ${MAILHUB_ADMIN_USERNAME:-admin}
+      MAILHUB_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/mailhub_admin_password
+    secrets:
+      - mailhub_admin_password
+
+  mgmt:
+    <<: *mailhub-service
+    command: ["serve"]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${MAILHUB_HTTP_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  mailhub-db:
+
+secrets:
+  mailhub_admin_password:
+    file: ./secrets/admin_password

@@ -1,0 +1,17 @@
+.git
+.gocache*
+.idea
+.vscode
+build
+node_modules
+**/node_modules
+**/*.log
+**/*.tar.gz
+**/*.zip
+**/*.exe
+**/config.yaml
+**/config.prod.yaml
+deploy/docker/.env
+deploy/docker/secrets
+tmp_*
+MailHub.png

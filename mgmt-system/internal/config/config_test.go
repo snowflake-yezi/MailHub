@@ -1,0 +1,25 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLoadAppliesDockerSecretOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte("server:\n  mode: release\ndatabase:\n  dsn: yaml-dsn\nauth:\n  shared_secret: yaml-secret\ndomains:\n  - name: example.com\ndefault_retention_days: 30\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MAILHUB_DATABASE_DSN", "env-dsn")
+	t.Setenv("MAILHUB_SHARED_SECRET", "env-secret")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Database.DSN != "env-dsn" || cfg.Auth.SharedSecret != "env-secret" {
+		t.Fatalf("overrides not applied: dsn=%q secret=%q", cfg.Database.DSN, cfg.Auth.SharedSecret)
+	}
+}

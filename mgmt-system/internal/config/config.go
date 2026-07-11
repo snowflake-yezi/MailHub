@@ -9,12 +9,12 @@ import (
 
 // Config 全局配置结构
 type Config struct {
-	Server                ServerConfig         `yaml:"server"`
-	Database              DatabaseConfig       `yaml:"database"`
-	Auth                  AuthConfig           `yaml:"auth"`
-	Domains               []DomainConfig       `yaml:"domains"`
-	DefaultRetentionDays  int                  `yaml:"default_retention_days"`
-	Filter                FilterConfig         `yaml:"filter"`
+	Server               ServerConfig   `yaml:"server"`
+	Database             DatabaseConfig `yaml:"database"`
+	Auth                 AuthConfig     `yaml:"auth"`
+	Domains              []DomainConfig `yaml:"domains"`
+	DefaultRetentionDays int            `yaml:"default_retention_days"`
+	Filter               FilterConfig   `yaml:"filter"`
 }
 
 type ServerConfig struct {
@@ -45,9 +45,9 @@ type DomainConfig struct {
 }
 
 type FilterConfig struct {
-	ReloadInterval            int    `yaml:"reload_interval"`
-	DefaultAction             string `yaml:"default_action"`
-	DefaultFlagSubjectPrefix  string `yaml:"default_flag_subject_prefix"`
+	ReloadInterval           int    `yaml:"reload_interval"`
+	DefaultAction            string `yaml:"default_action"`
+	DefaultFlagSubjectPrefix string `yaml:"default_flag_subject_prefix"`
 }
 
 // Load 从文件加载配置
@@ -72,6 +72,16 @@ func Load(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	// Docker and orchestrated deployments can inject secrets without rendering
+	// them into the mounted YAML file. These variables do not include admin
+	// credentials; administrator bootstrap remains an explicit CLI operation.
+	if value := os.Getenv("MAILHUB_DATABASE_DSN"); value != "" {
+		cfg.Database.DSN = value
+	}
+	if value := os.Getenv("MAILHUB_SHARED_SECRET"); value != "" {
+		cfg.Auth.SharedSecret = value
 	}
 
 	return cfg, nil
