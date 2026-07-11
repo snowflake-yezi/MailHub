@@ -724,9 +724,10 @@ export default function MailboxesPage() {
                   {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
                 </button>
                 <input ref={csvInputRef} className="visually-hidden" type="file" accept=".csv,.txt,text/csv,text/plain" onChange={handleCsvUpload} />
-                <button className="btn btn-outline" type="button" disabled={creating || uploading} onClick={() => csvInputRef.current?.click()}>
+                <button className="btn btn-outline" type="button" title="支持 CSV 或 TXT 文件" disabled={creating || uploading} onClick={() => csvInputRef.current?.click()}>
                   {uploading ? <span className="spinner" /> : <Upload size={16} />} 上传文件
                 </button>
+                <span className="upload-format-hint">支持 .csv / .txt</span>
               </div>
             </form>
           </div>
