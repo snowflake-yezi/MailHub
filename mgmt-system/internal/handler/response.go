@@ -57,20 +57,24 @@ func notFound(c *gin.Context, msg string) {
 	})
 }
 
+func fail(c *gin.Context, status, code int, msg string) {
+	c.JSON(status, Response{Code: code, Message: msg, RequestID: uuid.New().String()[:8]})
+}
+
 // 错误码
 const (
-	ErrCodeParamMissing   = 1001
-	ErrCodeParamInvalid   = 1002
-	ErrCodeUnauthorized   = 1003
-	ErrCodeInvalidToken   = 1004
+	ErrCodeParamMissing      = 1001
+	ErrCodeParamInvalid      = 1002
+	ErrCodeUnauthorized      = 1003
+	ErrCodeInvalidToken      = 1004
 	ErrCodeInsufficientScope = 1005
 
-	ErrCodeNoServer       = 2001
-	ErrCodeServerCreate   = 2002
-	ErrCodeNotFound       = 2003
-	ErrCodeBusiness       = 2004 // 业务规则限制（如：服务器有邮箱不能删除）
+	ErrCodeNoServer     = 2001
+	ErrCodeServerCreate = 2002
+	ErrCodeNotFound     = 2003
+	ErrCodeBusiness     = 2004 // 业务规则限制（如：服务器有邮箱不能删除）
 
-	ErrCodeExternalFail   = 3001
+	ErrCodeExternalFail = 3001
 
-	ErrCodeInternal       = 5000
+	ErrCodeInternal = 5000
 )

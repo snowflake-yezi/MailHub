@@ -47,6 +47,9 @@ export const serverAPI = {
   remove(id) { return request(`/servers/${id}`, { method: 'DELETE' }); },
   domains(id) { return get(`/servers/${id}/domains`); },
   addDomain(id, data) { return request(`/servers/${id}/domains`, { method: 'POST', body: JSON.stringify(data) }); },
+  configs(id) { return get(`/servers/${id}/configs`); },
+  updateConfig(id, key, value) { return request(`/servers/${id}/configs/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ value: String(value) }) }); },
+  resetConfig(id, key) { return request(`/servers/${id}/configs/${encodeURIComponent(key)}`, { method: 'DELETE' }); },
 };
 
 // ─── Integrated Mailboxes (转发目标池) ───────────────────

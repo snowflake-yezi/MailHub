@@ -151,6 +151,9 @@ func main() {
 	apiAdmin.POST("/configs/batch", configH.BatchUpdate)
 	apiAdmin.POST("/configs/:key/reset", configH.ResetConfig)
 	apiAdmin.POST("/configs/reload", configH.ReloadNode)
+	apiAdmin.GET("/servers/:id/configs", configH.GetServerConfigs)
+	apiAdmin.PUT("/servers/:id/configs/:key", configH.PutServerConfig)
+	apiAdmin.DELETE("/servers/:id/configs/:key", configH.DeleteServerConfig)
 	apiAdmin.GET("/account", accountH.Get)
 	apiAdmin.PUT("/account", accountH.Update)
 
@@ -178,6 +181,7 @@ func main() {
 	// Dynamic config pull (mail-node)
 	internal.GET("/configs", configH.ListConfigsInternal)
 	internal.POST("/configs/reload", configH.ReloadNodeInternal)
+	internal.POST("/servers/:id/config-snapshot", configH.ReportServerConfigSnapshot)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

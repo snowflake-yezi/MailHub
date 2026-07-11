@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   CircleOff,
   Database,
+  Settings2,
   Pencil,
   Plus,
   Power,
@@ -29,6 +30,94 @@ const EMPTY_FORM = {
   capacity: 5000,
   heartbeat_interval: 30,
   status: 'healthy',
+}
+
+const TRASH_RETENTION_KEY = 'lifecycle.trash_retention_hours'
+
+function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
+  const [data, setData] = useState(null)
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const result = await serverAPI.configs(server.id)
+      setData(result)
+      const item = result.items?.[0]
+      setValue(item?.override_value ?? item?.global_value ?? '')
+    } catch (error) {
+      onToast({ type: 'error', message: '节点配置加载失败: ' + error.message })
+    }
+  }, [onToast, server.id])
+
+  useEffect(() => { loadConfig() }, [loadConfig])
+  const item = data?.items?.[0]
+
+  const save = async (event) => {
+    event.preventDefault()
+    setSaving(true)
+    try {
+      await serverAPI.updateConfig(server.id, TRASH_RETENTION_KEY, value)
+      onToast({ type: 'success', message: '节点覆盖已保存，重启 mail-node 后生效' })
+      await loadConfig()
+      onChanged()
+    } catch (error) {
+      onToast({ type: 'error', message: error.message })
+    } finally { setSaving(false) }
+  }
+
+  const reset = async () => {
+    setSaving(true)
+    try {
+      await serverAPI.resetConfig(server.id, TRASH_RETENTION_KEY)
+      onToast({ type: 'success', message: '已恢复跟随全局，重启 mail-node 后生效' })
+      await loadConfig()
+      onChanged()
+    } catch (error) {
+      onToast({ type: 'error', message: error.message })
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <aside className="drawer" onClick={event => event.stopPropagation()} aria-label="节点配置">
+        <div className="drawer-header">
+          <div className="drawer-title-with-icon">
+            <span className="module-icon"><Settings2 size={18} /></span>
+            <div><div className="drawer-kicker">Node config</div><h2>节点配置</h2></div>
+          </div>
+          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
+        </div>
+        {!item ? <div className="drawer-body loading-panel"><span className="spinner" /> 加载配置...</div> : (
+          <form className="drawer-body" onSubmit={save}>
+            <div className="node-config-identity"><strong>{data.server_name}</strong><code>{data.api_host}</code></div>
+            <section className="node-config-section">
+              <h3>生命周期</h3>
+              <div className="config-facts">
+                <div><span>全局默认</span><strong>{item.global_value} 小时</strong></div>
+                <div><span>节点覆盖</span><strong>{item.override_value ? `${item.override_value} 小时` : '无'}</strong></div>
+                <div><span>实际生效</span><strong>{item.effective_value ? `${item.effective_value} 小时` : '未上报'}</strong></div>
+                <div><span>配置来源</span><strong>{item.source === 'server_override' ? '节点覆盖' : item.source === 'global' ? '全局配置' : item.source === 'local_config' ? '本地配置' : '未知'}</strong></div>
+              </div>
+              <div className={`config-apply-status ${item.status}`}>
+                {item.status === 'pending_restart' ? '覆盖值与实际值不同，等待节点重启' : item.status === 'applied' ? `已应用 · ${formatDate(item.reported_at)}` : '节点尚未上报配置'}
+              </div>
+              <div className="form-group">
+                <label>回收站保留时间（小时）</label>
+                <input type="number" min="1" max="8760" value={value} onChange={event => setValue(event.target.value)} required />
+                <div className="form-hint">控制软删除目录物理清理前的保留窗口。此项需要重启 mail-node。</div>
+              </div>
+            </section>
+            <div className="drawer-footer">
+              <button className="btn btn-outline" type="button" onClick={reset} disabled={saving || !item.override_value}><RotateCcw size={15} /> 恢复全局</button>
+              <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+              <button className="btn btn-primary" type="submit" disabled={saving}>{saving && <span className="spinner" />} 保存覆盖</button>
+            </div>
+          </form>
+        )}
+      </aside>
+    </div>
+  )
 }
 
 function Toast({ message, type, onClose }) {
@@ -202,6 +291,7 @@ export default function ServersPage() {
   const [drawerMode, setDrawerMode] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [configServer, setConfigServer] = useState(null)
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
@@ -403,6 +493,7 @@ export default function ServersPage() {
                 <th>心跳</th>
                 <th>探测</th>
                 <th>失败</th>
+                <th>节点配置</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -454,7 +545,13 @@ export default function ServersPage() {
                       </span>
                     </td>
                     <td>
+                      {server.config_summary?.effective_value
+                        ? <div className="config-summary"><strong>{server.config_summary.effective_value} 小时</strong><span>{server.config_summary.status === 'pending_restart' ? '等待重启' : server.config_summary.has_override ? '已覆盖' : '跟随全局'}</span></div>
+                        : <span className="muted-text">未上报</span>}
+                    </td>
+                    <td>
                       <div className="row-actions">
+                        <button className="icon-button compact" type="button" title="节点配置" onClick={() => setConfigServer(server)}><Settings2 size={15} /></button>
                         <button className="icon-button compact" type="button" title="编辑" onClick={() => openEdit(server)}>
                           <Pencil size={15} />
                         </button>
@@ -471,7 +568,7 @@ export default function ServersPage() {
               })}
               {visibleServers.length === 0 && (
                 <tr>
-                  <td colSpan={9}>
+                  <td colSpan={10}>
                     <div className="empty-state">
                       <Database size={28} />
                       <strong>{searchQuery ? '没有匹配的服务器节点' : '暂无服务器节点'}</strong>
@@ -503,6 +600,7 @@ export default function ServersPage() {
           onDelete={() => askDelete(form)}
         />
       )}
+      {configServer && <NodeConfigDrawer server={configServer} onClose={() => setConfigServer(null)} onChanged={() => load(true)} onToast={setToast} />}
       {confirm && <ConfirmDialog {...confirm} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>

@@ -31,7 +31,42 @@ type MailServer struct {
 	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 
 	// Domains 该服务器绑定的 active 域名，仅用于列表展示，不落库（transient）。
-	Domains []Domain `gorm:"-" json:"domains,omitempty"`
+	Domains       []Domain             `gorm:"-" json:"domains,omitempty"`
+	ConfigSummary *ServerConfigSummary `gorm:"-" json:"config_summary,omitempty"`
+}
+
+// ServerConfigSummary is the node-level configuration status shown in server lists.
+type ServerConfigSummary struct {
+	EffectiveValue string     `json:"effective_value"`
+	Source         string     `json:"source"`
+	HasOverride    bool       `json:"has_override"`
+	Status         string     `json:"status"`
+	ReportedAt     *time.Time `json:"reported_at,omitempty"`
+}
+
+// ServerConfigOverride stores an explicit value for one mail-node.
+type ServerConfigOverride struct {
+	ID          uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServerID    uint64    `gorm:"not null;uniqueIndex:uk_server_config" json:"server_id"`
+	ConfigKey   string    `gorm:"size:128;not null;uniqueIndex:uk_server_config" json:"config_key"`
+	ConfigValue string    `gorm:"type:text;not null" json:"config_value"`
+	ValueType   string    `gorm:"size:32;not null" json:"value_type"`
+	UpdatedBy   string    `gorm:"size:128" json:"updated_by,omitempty"`
+	CreatedAt   time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// ServerConfigSnapshot stores the last effective value reported by a mail-node.
+type ServerConfigSnapshot struct {
+	ID              uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServerID        uint64     `gorm:"not null;uniqueIndex:uk_server_snapshot" json:"server_id"`
+	ConfigKey       string     `gorm:"size:128;not null;uniqueIndex:uk_server_snapshot" json:"config_key"`
+	EffectiveValue  string     `gorm:"type:text;not null" json:"effective_value"`
+	Source          string     `gorm:"size:32;not null" json:"source"`
+	Reloadable      bool       `gorm:"not null;default:false" json:"reloadable"`
+	RequiresRestart bool       `gorm:"not null;default:false" json:"requires_restart"`
+	AppliedAt       *time.Time `json:"applied_at,omitempty"`
+	ReportedAt      time.Time  `gorm:"not null;index" json:"reported_at"`
 }
 
 // MailboxAccount 邮箱账号资产，维度为 server + domain + mailbox + credential。

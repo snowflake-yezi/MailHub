@@ -1,11 +1,13 @@
 # 节点配置可观测与覆盖设计文档
 
-> 状态：设计草案，NC-P0 现状核对未完成 | 日期：2026-07-08
+> 状态：P1 第一阶段已实现（NC-P0/NC-1 至 NC-6） | 日期：2026-07-11
 > 背景：当前系统配置是全局维度，管理后台看不到每个 mail-node 的实际配置与差异。
 > 结论：不建议把节点配置直接塞进现有「系统配置」页面；应新增服务器维度的「节点配置」能力，系统配置继续作为全局默认事实源。
 > 现状校准（2026-07-10）：系统已有专用节点级 `mail_servers.heartbeat_interval`，但没有通用 override/snapshot 框架。本文示例中的 `lifecycle.retention_days` 不是当前真实配置键；现有 mgmt 默认值是 `general.default_retention_days`，mail-node 删除回收配置是 `lifecycle.trash_retention_hours`。进入 NC-P1/NC-P2 前，必须先确认“邮件保留天数”的业务语义、配置所有权和最终键名。
 >
 > **术语约束：** 除非明确标为“当前实现”，本文所有 `lifecycle.retention_days`、`heartbeat.interval` 和相关 API JSON 都是设计示意，**不是现有 API、数据库或配置合约**。实施必须先完成 NC-P0，并以确认后的 canonical key 替换示意键；不得机械照抄本文示例。
+
+> **NC-P0 结论（2026-07-11）：** 首个节点覆盖项采用 `lifecycle.trash_retention_hours`，单位小时，表示 mail-node 软删除目录物理清理前的保留窗口，属于节点运行配置且当前需要重启生效。`general.default_retention_days` 仅表示创建邮箱时写入账号的默认业务保留天数，所有权在 mgmt-system，不是节点运行配置，不纳入节点覆盖。核对同时发现 mail-node 曾将 `trash_retention_hours` 按分钟解析，现已改为按小时解析。
 
 ---
 

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,20 +17,31 @@ type RemoteConfig struct {
 	configs map[string]string
 	mgmtURL string
 	secret  string
+	nodeID  uint64
+	sources map[string]string
 }
 
 // NewRemoteConfig 创建远程配置客户端。mgmtURL 为 mgmt-system 地址（不含路径），secret 为共享密钥。
-func NewRemoteConfig(mgmtURL, secret string) *RemoteConfig {
+func NewRemoteConfig(mgmtURL, secret string, nodeID ...uint64) *RemoteConfig {
+	id := uint64(0)
+	if len(nodeID) > 0 {
+		id = nodeID[0]
+	}
 	return &RemoteConfig{
 		configs: make(map[string]string),
+		sources: make(map[string]string),
 		mgmtURL: mgmtURL,
 		secret:  secret,
+		nodeID:  id,
 	}
 }
 
 // PullAll 从 mgmt-system 拉取全量配置并替换本地缓存。
 func (rc *RemoteConfig) PullAll() error {
 	url := fmt.Sprintf("%s/api/v1/internal/configs", rc.mgmtURL)
+	if rc.nodeID != 0 {
+		url += "?server_id=" + strconv.FormatUint(rc.nodeID, 10)
+	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -52,6 +64,7 @@ func (rc *RemoteConfig) PullAll() error {
 		Code int `json:"code"`
 		Data struct {
 			Configs map[string]string `json:"configs"`
+			Sources map[string]string `json:"sources"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -63,8 +76,61 @@ func (rc *RemoteConfig) PullAll() error {
 
 	rc.mu.Lock()
 	rc.configs = apiResp.Data.Configs
+	rc.sources = apiResp.Data.Sources
 	rc.mu.Unlock()
 
+	return nil
+}
+
+// Source returns where the effective remote value came from.
+func (rc *RemoteConfig) Source(key string) string {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	if source := rc.sources[key]; source != "" {
+		return source
+	}
+	return "local_config"
+}
+
+// ReportSnapshot confirms the value actually applied by this process.
+func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) error {
+	if rc.nodeID == 0 {
+		return nil
+	}
+	payload := struct {
+		ReportedAt time.Time `json:"reported_at"`
+		Items      []struct {
+			ConfigKey      string    `json:"config_key"`
+			EffectiveValue string    `json:"effective_value"`
+			Source         string    `json:"source"`
+			AppliedAt      time.Time `json:"applied_at"`
+		} `json:"items"`
+	}{ReportedAt: time.Now().UTC()}
+	payload.Items = append(payload.Items, struct {
+		ConfigKey      string    `json:"config_key"`
+		EffectiveValue string    `json:"effective_value"`
+		Source         string    `json:"source"`
+		AppliedAt      time.Time `json:"applied_at"`
+	}{key, value, rc.Source(key), appliedAt.UTC()})
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode config snapshot: %w", err)
+	}
+	url := fmt.Sprintf("%s/api/v1/internal/servers/%d/config-snapshot", rc.mgmtURL, rc.nodeID)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build snapshot request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", rc.secret)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("report config snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("snapshot status %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -149,6 +215,16 @@ func (rc *RemoteConfig) GetDurationMinutes(key string, defaultVal time.Duration)
 	if v, ok := rc.get(key); ok && v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return time.Duration(n) * time.Minute
+		}
+	}
+	return defaultVal
+}
+
+// GetDurationHours obtains an integer hour duration.
+func (rc *RemoteConfig) GetDurationHours(key string, defaultVal time.Duration) time.Duration {
+	if v, ok := rc.get(key); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Hour
 		}
 	}
 	return defaultVal

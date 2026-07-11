@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,7 +49,7 @@ func main() {
 	}
 
 	// 从 mgmt-system 拉取动态配置（覆盖 YAML 中的硬编码默认值）
-	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret)
+	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret, cfg.Node.ID)
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -99,8 +100,9 @@ func main() {
 
 	// 初始化生命周期管理器（安全软删除 + 垃圾回收 + 重启对账）
 	// 超时/间隔参数优先用远程配置，0 值触发默认值回退
+	trashRetention := remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", 24*time.Hour)
 	lifecycle := forward.NewLifecycle(mailboxMgr, fwdSvc,
-		remoteCfg.GetDurationMinutes("lifecycle.trash_retention_hours", 24*time.Hour),
+		trashRetention,
 		remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute),
 		time.Duration(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500))*time.Millisecond,
 		remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute),
@@ -113,6 +115,9 @@ func main() {
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
 	lifecycle.StartGC(ctx)
+	if err := remoteCfg.ReportSnapshot("lifecycle.trash_retention_hours", strconv.Itoa(int(trashRetention/time.Hour)), time.Now()); err != nil {
+		log.Printf("[config] WARNING: failed to report config snapshot: %v", err)
+	}
 
 	// 重启自愈：向 mgmt 拉取属于本节点的 DELETING 状态任务并恢复执行
 	if cfg.Node.ID != 0 {

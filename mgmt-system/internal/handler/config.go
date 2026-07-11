@@ -3,6 +3,7 @@ package handler
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -269,8 +270,28 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 	// 返回简化的 KV map。内部接口可额外下发敏感运行时配置；这些值不进入 system_configs，
 	// 避免在后台配置页暴露邮箱密码。
 	result := make(map[string]string, len(configs)+3)
+	sources := make(map[string]string, len(configs))
 	for _, cfg := range configs {
 		result[cfg.ConfigKey] = cfg.ConfigValue
+		sources[cfg.ConfigKey] = "global"
+	}
+	if rawServerID := strings.TrimSpace(c.Query("server_id")); rawServerID != "" {
+		serverID, parseErr := strconv.ParseUint(rawServerID, 10, 64)
+		if parseErr != nil || serverID == 0 {
+			fail(c, http.StatusBadRequest, 1001, "invalid server_id")
+			return
+		}
+		overrides, overrideErr := h.store.ListServerConfigOverrides(serverID)
+		if overrideErr != nil {
+			fail(c, http.StatusInternalServerError, 5000, "failed to list server config overrides")
+			return
+		}
+		for _, override := range overrides {
+			if _, supported := nodeConfigDefinitions[override.ConfigKey]; supported {
+				result[override.ConfigKey] = override.ConfigValue
+				sources[override.ConfigKey] = "server_override"
+			}
+		}
 	}
 	if integrated, account, err := h.store.GetActiveIntegratedMailboxCredentials(); err == nil {
 		result["forward.target_address"] = integrated.EmailAddress
@@ -280,7 +301,7 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
-		"data": gin.H{"configs": result},
+		"data": gin.H{"configs": result, "sources": sources},
 	})
 }
 

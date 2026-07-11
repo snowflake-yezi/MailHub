@@ -2491,6 +2491,69 @@ textarea {
   }
 }
 
+.config-summary {
+  display: grid;
+  gap: 2px;
+  min-width: 76px;
+}
+
+.config-summary span,
+.node-config-identity code {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.node-config-identity {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.node-config-section {
+  display: grid;
+  gap: 18px;
+}
+
+.node-config-section h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.config-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-facts > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.config-facts span {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.config-apply-status {
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  background: var(--color-bg-subtle);
+  border-radius: 6px;
+}
+
+.config-apply-status.pending_restart {
+  color: var(--color-warning);
+}
+
+@media (max-width: 560px) {
+  .config-facts { grid-template-columns: 1fr; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

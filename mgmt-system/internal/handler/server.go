@@ -87,6 +87,7 @@ func (h *ServerHandler) ListServers(c *gin.Context) {
 	if bindings, berr := h.store.ListActiveServerDomains(); berr == nil {
 		attachDomains(list, bindings)
 	}
+	h.store.AttachServerConfigSummaries(list, trashRetentionKey, h.store.GetConfig(trashRetentionKey, "24"))
 	success(c, "success", list)
 }
 
