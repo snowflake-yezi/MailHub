@@ -1,7 +1,9 @@
-    # T9 邮箱生命周期对接 — 设计文档
+# T9 邮箱生命周期对接 — 设计文档
 
-> 版本: v1.0 | 日期: 2026-06-27 | 状态: 待评审
+> 版本: v1.1 | 日期: 2026-07-11 | 状态: 已实现并部署；T9 restore 已补齐
 > 依赖: T6 鉴权 / T7 心跳 / T8 邮件查询
+
+> **阅读说明：** 本文保留 T9 实现前的设计与验收依据。`soft_deleted → active` 恢复路径已在后续 `t9-restore-design.md` 中实现并部署，正文内“可选/T10 范围/未实现”的历史表述不代表当前状态。
 
 ---
 
@@ -17,7 +19,7 @@ mail-node 侧 `forward/lifecycle.go` 已完整实现安全删除协议：
 
 | 缺口 | 现象 | 影响 |
 |------|------|------|
-| `/api/v1/internal/sync/deleting` 未实现 | mail-node 重启 Pull 返回 404 | 重启丢排空任务，无法自愈 |
+| `/api/v1/internal/sync/deleting` 未实现（实现前） | mail-node 重启 Pull 返回 404 | 重启丢排空任务，无法自愈 |
 | `DisableMailbox` 只写 DB | 管理员停用账号后 mail-node 不知情 | 邮箱继续收信转发，生命周期形同虚设 |
 | 无 GC 调度器 | `FindExpiredMailboxes`/`RecycleMailbox` 写了从不调用 | 过期邮箱不会自动回收 |
 

@@ -143,6 +143,8 @@ cp mail-node/config.example.yaml mail-node/config.yaml
 - `forward.smtp_*`：转发用 SMTP 连接参数；转发目标地址由后台“集成邮箱”管理，并同步到动态配置。
 - `dkim.*`、`postfix.*`、`maildir.*`：数据面落地 Postfix / Dovecot / OpenDKIM 所需路径。
 
+> 当前版本仍从 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 读取后台管理员凭据。这是正在收口的 P0 限制；[O2-P5 管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) 会迁移到数据库 hash、显式 bootstrap 与恢复 CLI。在该功能发布前，请继续按当前配置方式部署。
+
 ### 3. 构建
 
 ```bash
@@ -155,7 +157,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 
 ### 4. 部署
 
-完整部署步骤、systemd 模板、Nginx、Postfix、Dovecot、OpenDKIM、Roundcube 配置见 [部署指南](docs/design/deployment-guide.md)。
+新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 与 Roundcube 部署步骤见 [数据面部署指南](docs/design/deployment-guide.md)。控制面基础配置见本页和 `mgmt-system/config.example.yaml`。
 
 ---
 
@@ -167,7 +169,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 |------|------|
 | [架构概览](docs/architecture-overview.md) | 当前组件职责、数据模型、接口流向、状态机 |
 | [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
-| [部署指南](docs/design/deployment-guide.md) | 生产部署步骤和配置说明 |
+| [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |
 
 ### 当前专题设计
 
@@ -181,6 +183,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 服务器-域名绑定、DKIM、DNS 清单 |
 | [鉴权体系设计](docs/design/t6-auth-design.md) | Session、Bearer scope、Shared-Secret |
 | [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、被动心跳、状态升降级 |
+| [管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) | 当前 P0：管理员凭据迁移、首次初始化、改密与恢复 |
 
 ### 历史/规划记录
 
@@ -210,3 +213,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | MIME 结构化解析、正文查询、附件下载 | 已完成 |
 | 回收站、恢复、purge、重启删除任务恢复 | 已完成 |
 | inline 图片 MIME / filename / 后缀兼容 | 已完成 |
+
+### 当前待办
+
+| 优先级 | 事项 | 状态 |
+|--------|------|------|
+| P0 | 管理账号 Bootstrap 与恢复（O2-P5） | 已有详细设计，待实施 |
+| P1 | 节点配置可观测与通用覆盖 | 设计草案；先完成 NC-P0 的保留期语义、所有权和真实键名核对 |
+| 候选 | 外部创建邮箱 API 支持指定 `server_id` | 尚未排期，需先确认调用方权限与节点分配策略 |

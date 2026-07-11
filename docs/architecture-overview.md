@@ -292,6 +292,8 @@ Scope 当前取值：
 - `email:read`
 - `*`
 
+> 当前限制：后台管理员仍由 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 校验。数据库 hash、显式 bootstrap、后台改密与恢复 CLI 属于待实施的 O2-P5；在其完成前，不应把 YAML 凭据描述为已废弃。
+
 ---
 
 ## 7. 动态配置与热加载
@@ -301,6 +303,8 @@ Scope 当前取值：
 - mail-node 启动时拉取全部配置，运行中可通过 `/internal/configs/reload` 刷新。
 - 过滤规则保存后，mgmt-system 会通知 mail-node `/internal/filters/reload`。
 - 集成邮箱激活后，mgmt-system 同步 `forward.target_address` 并通知 mail-node 重载；SMTP 用户名/密码在发送前从 active 集成邮箱动态读取。
+
+> 当前限制：`system_configs` 是全局运行参数事实源，不是通用的单节点覆盖框架。现有 `mail_servers.heartbeat_interval` 是专用节点字段；节点实际配置快照、通用 override 与重置能力仍待 P1 实施，且必须先完成 NC-P0 的保留期语义和真实键名核对。
 
 ---
 

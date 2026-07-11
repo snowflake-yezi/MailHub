@@ -1,8 +1,10 @@
 # MailHub UI 第二次优化改动设计文档
 
-> 状态：设计草案 | 日期：2026-07-08
+> 状态：O2-P1 至 O2-P4 已实现；O2-P5 仍为详细设计草案 | 最后校准：2026-07-11
 > 范围：管理端 UI 二次打磨 + 邮件查询工作台布局修复 + 附件预览前后端 + 管理账号部署友好化
 > 关联：`mailhub-ui-refresh-design.md`、`mailbox-creation-consolidation-design.md`、`attachment-download-design.md`、`t6-auth-design.md`
+
+> **阅读说明：** 第 1 至第 5 节保留二次优化开始前的五项缺口描述和方案取舍。O2-P1（工作台布局）、O2-P2（创建邮箱 tab）、O2-P3（品牌色）和 O2-P4（附件安全预览）均已完成；当前仅 O2-P5 管理账号 Bootstrap 与恢复待实施。
 
 ---
 

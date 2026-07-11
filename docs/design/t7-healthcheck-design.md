@@ -1,6 +1,8 @@
 ﻿# T7 健康检查与节点心跳 设计文档
 
-> 状态：已评审，实现中 | 日期：2026-06-26 | 决策已确认：D-1 心跳不写 status、D-2 探测失败含 draining 一并降 down、D-4 阈值 30s/3/5/90s、D-3 计数落 DB、D-5 一次探测成功即恢复 | 依据：`REQUIREMENTS_ANALYSIS.md` §2.1.3、`phase3-mgmt-completion-plan.md` §4.4 / §6 T7、2026-06-26 代码审查
+> 状态：已实现并部署（2026-06-26） | 决策：D-1 心跳不写 status、D-2 探测失败含 draining 一并降 down、D-4 阈值 30s/3/5/90s、D-3 计数落 DB、D-5 一次探测成功即恢复 | 依据：`REQUIREMENTS_ANALYSIS.md` §2.1.3、`docs/architecture-overview.md`
+
+> **阅读说明：** 本文保留 T7 实现前问题与设计过程；主动探测、真实心跳、状态升降级和分配摘除均已上线。
 
 ---
 

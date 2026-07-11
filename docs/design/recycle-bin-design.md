@@ -1,8 +1,10 @@
 # 邮箱回收站（Recycle Bin）设计文档
 
-> 版本: v0.1（待实现） | 日期: 2026-07-01
+> 版本: v0.2 | 状态: 已实现并发布（2026-07-06） | 最后校准：2026-07-11
 > 依据：用户需求「邮箱管理增加回收站，删除的可恢复邮箱进回收站单独展示」、`docs/design/t9-restore-design.md`、`docs/design/t9-lifecycle-design.md §5.4`、本次代码核查
 > 范畴：仅前端展示分离 + 一个手动彻底删除端点。删除（→`soft_deleted`）、恢复（→`active`）、lifecycle GC（→`purged`）链路均已交付，零改动。
+
+> **阅读说明：** 下文“唯一缺口”是实现前背景。邮箱集合与回收站状态已分离，恢复和 purge 操作均已接通。
 
 ---
 
@@ -14,7 +16,7 @@
 - 恢复：`RestoreMailbox`（`handler/mailbox.go:340`）+ store `RestoreMailbox`（`store.go:582`，带 `status=soft_deleted` 守卫）
 - GC：mail-node `.trash` 24h 物理清除；mgmt `FindExpiredSoftDeleted`（`store.go:610`）按 retention 标 `purged`
 
-**唯一缺口是展示层**：邮箱管理页 `MailboxesPage`（`handler/admin.go:66`）默认 `status=""`（全部）查询，`ListMailboxesWithFilter`（`store.go:473`）仅支持「等于单状态」、无排除能力，导致 `soft_deleted`/`purged` 邮箱与正常 `active` 邮箱混排在同一台账。运维无法一眼区分"在用"与"已删除可恢复"。
+**实现前唯一缺口是展示层**：邮箱管理页 `MailboxesPage`（`handler/admin.go:66`）默认 `status=""`（全部）查询，`ListMailboxesWithFilter`（`store.go:473`）仅支持「等于单状态」、无排除能力，导致 `soft_deleted`/`purged` 邮箱与正常 `active` 邮箱混排在同一台账。运维无法一眼区分"在用"与"已删除可恢复"。
 
 ### 1.1 运维价值
 

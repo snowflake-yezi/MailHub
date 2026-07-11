@@ -1,6 +1,8 @@
 # Phase 1 详细设计
 
-> 版本: v1.0 | 日期: 2026-06-17 | 状态: 待评审
+> 版本: v1.0 | 日期: 2026-06-17 | 状态: 历史初始设计记录；Phase 1 已完成
+
+> 当前实现请以 `README.md`、`docs/architecture-overview.md` 和 `docs/api/external-api.md` 为准；本文保留当时的设计过程，不作为当前任务队列。
 
 ---
 

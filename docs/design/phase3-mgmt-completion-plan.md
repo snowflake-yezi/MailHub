@@ -1,7 +1,9 @@
 # mgmt-system 控制面缺口定版（Phase 3）
 
-> 版本: v0.4 | 日期: 2026-06-26 | 状态: **T4/T5/T6/T7 已闭环，mgmt 国际机已部署；下一批 T8/T9/T10**
-> 依据: `REQUIREMENTS_ANALYSIS.md` §2.1 / §2.4 / §4 + context.md 最新状态
+> 版本: v0.5 | 日期: 2026-07-11 | 状态: **历史规划归档；Phase 3 T1–T10 已完成。**
+> 依据: `REQUIREMENTS_ANALYSIS.md` §2.1 / §2.4 / §4、`docs/architecture-overview.md` 与当前代码
+
+> **阅读说明：** 本文保留 Phase 3 开工前的缺口分析、设计取舍和验收记录。下方“现状/目标/工作量”中的未实施措辞是历史快照，不是当前任务队列；当前待办以 `README.md`、`REQUIREMENTS_ANALYSIS.md` 和 `context.md` 顶部为准。
 
 ---
 
@@ -20,16 +22,16 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 | # | 功能（需求条目） | 现状 | 目标 | 优先级 |
 |---|------------------|------|------|--------|
 | C1 | 邮箱账号集合管理（§2.1.1/§2.1.6） | ✅ T1/T2/T3 已完成 | 账号台账含账密/域名/服务器/状态，支持筛选 | ✅ 已完成 |
-| C2 | 邮件 MIME 预处理（§2.4/§2.2.4） | 裸透传 mail-node 原始响应 | 结构化 `{subject,body,attachments}` | 🔴 P0 → T8 |
+| C2 | 邮件 MIME 预处理（§2.4/§2.2.4） | ✅ T8 已完成：mail-node 就地解析，mgmt 提供结构化查询、附件下载与安全预览 | 结构化 `{subject,body,attachments}` | ✅ 已完成 |
 | C3 | 服务器健康检查（§2.1.3） | ✅ T7 已完成 | 主动探测 + 超时降级 + 自动摘除 | ✅ 已完成 |
 | C4 | 域名感知负载分配（§2.1.3） | ✅ T4/T5 已完成 | server_domains + 按域名筛 + 最闲分配 | ✅ 已完成 |
-| C5 | 邮箱生命周期状态机（§2.1.5） | 3 态，无 GC，DELETE 不下发 | 四态 + 定时 GC + 重新启用 | 🟡 P1 → T9 |
+| C5 | 邮箱生命周期状态机（§2.1.5） | ✅ T9/restore 已完成：四态、GC、重启恢复与回迁均已接通 | 四态 + 定时 GC + 重新启用 | ✅ 已完成 |
 | C6 | 鉴权体系（§4.4） | ✅ T6 已完成 | 后台 session + Bearer Scope + Shared-Secret | ✅ 已完成 |
 | C7 | 域名管理（§2.1.6） | ✅ T4/T5 已完成 | 服务器域名池 + Postfix/DKIM + DNS 清单 | ✅ 已完成 |
-| C8 | 批量幂等 / 缺失页面 / 停用下发 等 | 部分修复 | filter 主动推送、停用下发等收尾 | 🟢 P2 → T10 |
+| C8 | 批量幂等 / 缺失页面 / 停用下发 等 | ✅ T10 收尾已完成 | filter 主动推送、停用下发等收尾 | ✅ 已完成 |
 | E1 | 订单-邮箱 N:M 映射扩展（§2.1.2） | 暂缓 | 后续按扩展方案评审 | 🟢 扩展 |
 | O1 | mgmt 部署国际机 | ✅ 已完成（2026-06-25） | MariaDB + Nginx + systemd | ✅ 已完成 |
-| O2 | inet_protocols / 临时机清理 / Let's Encrypt | — | 运维收尾 | 🟢 → T10 |
+| O2 | inet_protocols / 临时机清理 / Let's Encrypt | TLS 部署文档已完成；IPv4、Let's Encrypt 和临时机清理仍为独立运维候选 | 运维收尾 | 🟢 候选 |
 
 **优先级结论**：
 - **近期只做 mgmt-system 控制面**。mail-node 数据面主链路已基本完整，不作为 Phase 3 主短板。
@@ -53,8 +55,8 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 | 域名管理 | T4/T5 已完成：`server_domains` 表 + 域名池 CRUD + Postfix 虚拟域 + DKIM + DNS 清单 | ✅ |
 | 鉴权 | T6 已完成：Session 登录 + Bearer Token Scope + Shared-Secret 内部互信，已部署国际机 | ✅ |
 | Scope | T6 已修复：`RequireScope` 类型断言改为 `*model.ApiToken`，缺失/错误 scope 正确返回 403 | ✅ |
-| 邮件查询 | 调整为按邮箱维度查询；T8 MIME 结构化预处理为当前待实施项 | 🔜 |
-| 生命周期 | 四态/停收/软删/GC 流程待 T9 对接 | 🔜 |
+| 邮件查询 | T8 已完成：按邮箱维度提供 MIME 结构化列表/正文，附件下载与安全预览已接通 | ✅ |
+| 生命周期 | T9 与 restore 已完成：四态、停收、软删、GC、重启恢复和回迁均已接通 | ✅ |
 | 健康检查 | T7 已完成：主动探测 + 心跳 + 降级摘除 + DB 落库 + 仪表盘可观测 | ✅ |
 
 ---

@@ -168,7 +168,7 @@ type ServerDomain struct {
 - 远端 RemoveDomain 成功后，将 `ServerDomain.status=inactive` 或删除绑定；建议 MVP 软停用，保留同步记录。
 - 对 `Domain` 全局表不做硬删，仅当所有服务器都不再绑定时可置为 `inactive`。
 - **重新添加同名域名**（命中 `inactive` 绑定，2026-06-25 修复）：`BindServerDomain` 用 `Assign(...).FirstOrCreate`，命中旧记录时把 `status` 拉回 `active` 并将 `sync_status/postfix_status/dkim_status` 重置为 `pending`、清空 `dkim_selector/dkim_public_key`，再由 `AddServerDomain` 调远端刷成最新结果；远程失败时落 `active + sync_failed`（不再静默卡 `inactive`）。
-- **状态语义**：`server_domains` 的 `sync_status/postfix_status/dkim_status` 是「添加域名那次」远端操作的**本地快照**，非实时查远程；无定时 reconcile，刷新只能靠重新 add。主动探测属 T7（未实现）。
+- **状态语义**：`server_domains` 的 `sync_status/postfix_status/dkim_status` 是「添加域名那次」远端操作的**本地快照**，非实时查远程；无定时 reconcile，刷新只能靠重新 add。T7 已提供节点可达性主动探测，但不负责 Postfix/DKIM 配置 reconcile。
 
 ### 4.4 服务器管理页改造（宝塔式 UI）
 - 服务器列表每行新增「域名池」入口；域名池页面是 T4/T5 的主入口，优先级高于单独的全局域名 CRUD 页。

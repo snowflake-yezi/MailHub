@@ -1,6 +1,8 @@
 # inline 图片文件后缀解析修复设计
 
-> 状态：待实现 | 日期：2026-07-06 | 关联：`docs/design/t8-mime-preprocessing-design.md`、`docs/design/attachment-download-design.md`
+> 状态：已实现并完成真实浏览器验收（2026-07-10） | 关联：`docs/design/t8-mime-preprocessing-design.md`、`docs/design/attachment-download-design.md`
+
+> **实现结果：** safe HTML、CID 映射、iframe sandbox、文件名/后缀和 Content-Type 魔数推断均已落地；SVG 与压缩包维持仅下载降级。
 
 ---
 

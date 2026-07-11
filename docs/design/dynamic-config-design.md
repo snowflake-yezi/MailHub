@@ -1,6 +1,8 @@
 # 动态配置化设计文档
 
-> 状态：已确认 | 日期：2026-07-02
+> 状态：已实现并部署 | 最后校准：2026-07-11
+
+> **范围边界：** 本文的 `system_configs` 是全局运行参数体系；通用节点级 snapshot/override 尚未实现，见 `node-config-visibility-design.md`。
 
 ## 1. 背景
 

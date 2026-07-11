@@ -1,6 +1,8 @@
 # 邮件附件下载设计
 
-> 版本: v1.0 | 日期: 2026-07-02 | 状态: 已确认，实施中
+> 版本: v1.1 | 日期: 2026-07-11 | 状态: 已实现并验收
+
+> **实现结果：** mail-node 二进制流端点、mgmt 代理、管理端下载入口、safe HTML 预览与 inline 资源映射均已完成；OSS 化仍是延期演进。
 
 > 衔接：邮件查询主线见 `docs/design/t8-mime-preprocessing-design.md`；管理后台邮件页见 `mgmt-system/template/admin/emails.html`。本设计补齐 t8 之后遗留的「附件只见元数据、拿不到内容」缺口。
 

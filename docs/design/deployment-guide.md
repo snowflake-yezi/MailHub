@@ -1,8 +1,10 @@
 # 数据面部署指南：DNS + Postfix + Dovecot + OpenDKIM + mail-node
 
-> 域名：`example.com` | 服务器 IP：`203.0.113.20` | 日期：2026-06-26
+> 域名：`example.com` | 服务器 IP：`203.0.113.20` | 最后校准：2026-07-11
 >
-> **本文为新机部署的实操步骤，配置项占位值说明详见项目根目录 `DEPLOY.md`。**
+> **本文覆盖新 mail-node 的数据面部署。** 控制面基础配置见 [README](../../README.md) 与 `mgmt-system/config.example.yaml`；不要依赖未纳入版本控制的根目录 `DEPLOY.md`。
+>
+> 当前版本的管理后台凭据仍由 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 提供。数据库化 bootstrap、后台改密和恢复 CLI 属于待实施的 [O2-P5](ui-second-optimization-p5-admin-bootstrap-design.md)，发布前请按当前配置方式部署。
 >
 > 实在不行直接让ai来帮忙部署
 

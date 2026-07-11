@@ -1,6 +1,6 @@
 # 服务器管理体验打磨设计文档
 
-> 状态：待评审 | 日期：2026-06-29 | 决策摘要：SP-1 注册时 SMTP/IMAP 自动推导、SP-2 编辑弹窗保留可选覆盖、SP-3 列表 SMTP/IMAP 两列换为「关联域名」一列、SP-4 域名列只展示 active 绑定并折叠、SP-5 ListServers 批量查询避免 N+1、SP-6' 心跳间隔迁到 mgmt 动态下发（默认 30，后台可调）、SP-7 interval clamp 5–600s 防异常值 | 依据：`context.md`「下次会话」当前待办、`memory/phase2-forward-status.md`、`server.go` / `servers.html` / `store.go` 现状
+> 状态：已实现并发布（2026-06-30） | 决策摘要：SP-1 注册时 SMTP/IMAP 自动推导、SP-2 编辑弹窗保留可选覆盖、SP-3 列表 SMTP/IMAP 两列换为「关联域名」一列、SP-4 域名列只展示 active 绑定并折叠、SP-5 ListServers 批量查询避免 N+1、SP-6' 心跳间隔迁到 mgmt 动态下发（默认 30，后台可调）、SP-7 interval clamp 5–600s 防异常值
 
 ---
 

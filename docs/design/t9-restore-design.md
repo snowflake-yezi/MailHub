@@ -1,8 +1,10 @@
 # T9 邮箱恢复（restore）设计文档
 
-> 版本: v0.2（已评审，RS-1~RS-5 确认） | 日期: 2026-06-30
-> 依据：`context.md:426/329/182/298/325`（restore 为 T9 唯一缺口、当前最优先实施①）、`docs/design/t9-lifecycle-design.md §5.4`、本次代码核查
-> 范畴：补全 `t9-lifecycle-design.md` 四态状态机中标"可选"的 `soft_deleted → active` 回迁路径。T9 删除闭环（active→deleting→soft_deleted→purged）已完整交付（commit `6f538c5`），本设计只补其逆操作。
+> 版本: v0.3 | 日期: 2026-07-11 | 状态: 已实现并部署
+> 依据：`docs/design/t9-lifecycle-design.md §5.4`、当前代码与 `docs/architecture-overview.md`
+> 范畴：补全 `t9-lifecycle-design.md` 四态状态机中的 `soft_deleted → active` 回迁路径。T9 删除闭环（active→deleting→soft_deleted→purged）与本 restore 逆操作均已交付。
+
+> **阅读说明：** 下文“唯一缺口/未实现/本期”描述的是实现前背景；恢复接口、`.trash` 回迁、配置重建与前端入口均已完成。
 
 ---
 
@@ -14,7 +16,7 @@
 - mail-node：`forward.Lifecycle.MoveToTrash`（`forward/lifecycle.go:45`）摘除 Postfix/Dovecot → 排空 → `os.Rename` 到 `.trash/`
 - GC：mail-node `.trash` 24h 物理清除（`forward/lifecycle.go:106`）；mgmt `FindExpiredSoftDeleted`（`store.go:568`）按 retention 标 purged
 
-**唯一缺口**：`soft_deleted → active` 完全未实现。`t9-lifecycle-design.md:120` 将其标为"可选，T10 范围"，但生命周期四态若只能单向（删得掉、找不回），运维误删后 24h 内无法自救——故补齐为正式能力。
+**实现前唯一缺口**：`soft_deleted → active` 完全未实现。`t9-lifecycle-design.md:120` 将其标为"可选，T10 范围"，但生命周期四态若只能单向（删得掉、找不回），运维误删后 24h 内无法自救——故补齐为正式能力。
 
 ### 1.1 运维价值
 
