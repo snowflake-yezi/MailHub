@@ -248,7 +248,7 @@ mail-node-intl · 141.11.2.143:8081
 
 ---
 
-## 7. 数据模型建议
+## 7. 当前数据模型
 
 ### 7.1 `server_config_overrides`
 
@@ -302,7 +302,7 @@ unique(server_id, config_key)
 
 ## 8. API 设计
 
-> 以下接口和 JSON 是 NC-P0 后的目标形态。示例中的 `<retention-key>` 是占位符，不可在 NC-P0 前实现或对外承诺。
+> 以下接口已在 P1 第一阶段实现。当前唯一开放覆盖的 canonical key 为 `lifecycle.trash_retention_hours`；后续配置项继续复用相同契约。
 
 ### 8.1 管理后台 API
 

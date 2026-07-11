@@ -19,7 +19,7 @@ flowchart TB
         web["React 管理后台<br/>邮箱 / 邮件 / 服务器 / 域名 / 过滤 / 配置 / 集成邮箱"]
         api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 规则配置热加载"]
-        db[("MySQL / MariaDB<br/>mailbox_accounts<br/>order_mailbox_mappings<br/>mail_servers<br/>domains / server_domains<br/>filter_rules / api_tokens<br/>system_configs / integrated_mailboxes")]
+        db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / domains<br/>server_config overrides / snapshots<br/>system_configs / admin_users<br/>filter_rules / api_tokens")]
     end
 
     subgraph nodes["mail-node 数据面集群"]
@@ -96,6 +96,12 @@ flowchart TB
 | `api_tokens` | `token`, `scopes`, `enabled`, `last_used_at` | 外部 API Bearer token。scope 按逗号分隔后精确匹配。 |
 | `system_configs` | `config_key`, `config_value`, `value_type`, `category`, `reloadable` | 动态配置源。 |
 | `integrated_mailboxes` | `email_address`, `display_name`, `is_active` | 集成邮箱转发目标池；全局只有一个 active。 |
+| `admin_users` | `username`, `password_hash`, `credential_version`, `status` | 管理后台数据库身份和凭据版本。 |
+| `server_config_overrides` | `server_id`, `config_key`, `config_value`, `value_type` | 单节点显式配置覆盖；同一节点和键唯一。 |
+| `server_config_snapshots` | `server_id`, `config_key`, `effective_value`, `source`, `requires_restart`, `reported_at` | mail-node 实际配置上报快照。 |
+| `system_state` | `key`, `value`, `updated_at` | bootstrap 等系统内部状态。 |
+
+完整 14 张表及字段定义见 [控制面数据库字典](database-schema.md)。
 
 ### 2.3 对外 API
 
@@ -304,7 +310,7 @@ Scope 当前取值：
 - 过滤规则保存后，mgmt-system 会通知 mail-node `/internal/filters/reload`。
 - 集成邮箱激活后，mgmt-system 同步 `forward.target_address` 并通知 mail-node 重载；SMTP 用户名/密码在发送前从 active 集成邮箱动态读取。
 
-> 当前限制：`system_configs` 是全局运行参数事实源，不是通用的单节点覆盖框架。现有 `mail_servers.heartbeat_interval` 是专用节点字段；节点实际配置快照、通用 override 与重置能力仍待 P1 实施，且必须先完成 NC-P0 的保留期语义和真实键名核对。
+> 当前实现：`system_configs` 是全局默认事实源，`server_config_overrides` 保存单节点覆盖，`server_config_snapshots` 保存节点实际上报值和来源。P1 第一阶段已支持 `lifecycle.trash_retention_hours` 的覆盖、重置和待重启状态；`mail_servers.heartbeat_interval` 仍保留为专用节点字段。
 
 ---
 

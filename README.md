@@ -186,6 +186,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | 文档 | 用途 |
 |------|------|
 | [架构概览](docs/architecture-overview.md) | 当前组件职责、数据模型、接口流向、状态机 |
+| [数据库字典](docs/database-schema.md) | 当前 14 张控制面表、字段、关系、状态值和中文注释 |
 | [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
 | [控制面部署指南](docs/control-plane-deployment.md) | Docker Compose、systemd、管理员 bootstrap、升级和恢复 |
 | [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |

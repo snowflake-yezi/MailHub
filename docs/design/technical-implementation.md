@@ -41,7 +41,13 @@ filter_rules
 api_tokens
 system_configs
 integrated_mailboxes
+admin_users
+system_state
+server_config_overrides
+server_config_snapshots
 ```
+
+完整表结构、字段语义、关系和生产中文 COMMENT 见 [控制面数据库字典](../database-schema.md)。
 
 ### 2.2 数据面文件
 
