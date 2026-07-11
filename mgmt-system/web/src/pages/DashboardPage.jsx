@@ -167,7 +167,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="hero-actions">
-          <Link className="btn btn-primary" to="/mailboxes">
+          <Link className="btn btn-primary" to="/mailboxes?view=create">
             <MailPlus size={17} /> 创建邮箱
           </Link>
           <Link className="btn btn-outline" to="/emails">

@@ -119,10 +119,41 @@ func (h *MailboxHandler) UploadMailboxCSV(c *gin.Context) {
 		return
 	}
 
+	serverID, err := parseOptionalFormUint(c, "server_id")
+	if err != nil {
+		badRequest(c, ErrCodeParamInvalid, err.Error())
+		return
+	}
+	domainID, err := parseOptionalFormUint(c, "domain_id")
+	if err != nil {
+		badRequest(c, ErrCodeParamInvalid, err.Error())
+		return
+	}
+	for i := range items {
+		if items[i].ServerID == 0 {
+			items[i].ServerID = serverID
+		}
+		if items[i].DomainID == 0 {
+			items[i].DomainID = domainID
+		}
+	}
+
 	results := h.processBatchCreate(items)
 	summary := batchSummary(items, results)
 	summary["file"] = header.Filename
 	success(c, "upload processed", summary)
+}
+
+func parseOptionalFormUint(c *gin.Context, key string) (uint64, error) {
+	value := strings.TrimSpace(c.PostForm(key))
+	if value == "" || value == "0" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || parsed == 0 {
+		return 0, fmt.Errorf("invalid %s %q", key, value)
+	}
+	return parsed, nil
 }
 
 func (h *MailboxHandler) processBatchCreate(items []BatchCreateItem) []BatchCreateResult {

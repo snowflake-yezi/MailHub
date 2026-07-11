@@ -3,7 +3,9 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -73,6 +75,39 @@ func TestMailboxListFilterFromQuerySeparatesTrashView(t *testing.T) {
 			}
 			if got.ServerID != tt.wantServerID {
 				t.Fatalf("ServerID = %d, want %d", got.ServerID, tt.wantServerID)
+			}
+		})
+	}
+}
+
+func TestParseOptionalFormUint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name    string
+		value   string
+		want    uint64
+		wantErr bool
+	}{
+		{name: "missing uses automatic allocation", value: "", want: 0},
+		{name: "zero uses automatic allocation", value: "0", want: 0},
+		{name: "valid id", value: "42", want: 42},
+		{name: "invalid id", value: "server-1", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			form := url.Values{"server_id": {tt.value}}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/mailboxes/upload", strings.NewReader(form.Encode()))
+			c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			got, err := parseOptionalFormUint(c, "server_id")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("value = %d, want %d", got, tt.want)
 			}
 		})
 	}

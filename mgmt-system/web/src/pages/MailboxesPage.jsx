@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import {
   ArchiveRestore,
@@ -13,6 +13,7 @@ import {
   RotateCcw,
   Send,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react'
 import { mailboxAPI, serverAPI, domainAPI, integratedMailboxAPI } from '../api'
@@ -132,7 +133,9 @@ export default function MailboxesPage() {
   const [batchText, setBatchText] = useState('')
   const [createTab, setCreateTab] = useState('single')
   const [creating, setCreating] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const [batchResult, setBatchResult] = useState(null)
+  const csvInputRef = useRef(null)
 
   const [pwdModal, setPwdModal] = useState(null)
   const [pwdSaving, setPwdSaving] = useState(false)
@@ -283,6 +286,33 @@ export default function MailboxesPage() {
       return buildCreateItem(prefix, rest.join(','))
     })
     submitCreateItems(createItems)
+  }
+
+  const handleCsvUpload = async (event) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!/\.(csv|txt)$/i.test(file.name)) {
+      setToast({ type: 'error', message: '仅支持 CSV 或 TXT 文件' })
+      return
+    }
+    setCreateTab('upload')
+    setUploading(true)
+    setBatchResult(null)
+    try {
+      const result = await mailboxAPI.upload(
+        file,
+        parseInt(createServerId, 10) || 0,
+        parseInt(createDomainId, 10) || 0,
+      )
+      setBatchResult(result)
+      setToast({ type: 'success', message: `文件导入完成：成功 ${result.success || 0}，失败 ${result.failed || 0}` })
+      load(true)
+    } catch (e) {
+      setToast({ type: 'error', message: '文件导入失败: ' + e.message })
+    } finally {
+      setUploading(false)
+    }
   }
 
   const downloadCredentialCsv = () => {
@@ -687,11 +717,17 @@ export default function MailboxesPage() {
               <div className="form-group">
                 <label>邮箱列表</label>
                 <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={7} placeholder={'airline-cz-001\nairline-cz-002\nairline-cz-003,mypassword123'} />
-                <div className="form-hint">每行一个前缀，格式为“前缀”或“前缀,密码”。</div>
+                <div className="form-hint">每行一个前缀；文件格式为 prefix,password,domain_id,server_id，后 3 列可省略。</div>
               </div>
-              <button className="btn btn-primary" type="submit" disabled={creating || !batchText.trim()}>
-                {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
-              </button>
+              <div className="create-actions">
+                <button className="btn btn-primary" type="submit" disabled={creating || uploading || !batchText.trim()}>
+                  {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
+                </button>
+                <input ref={csvInputRef} className="visually-hidden" type="file" accept=".csv,.txt,text/csv,text/plain" onChange={handleCsvUpload} />
+                <button className="btn btn-outline" type="button" disabled={creating || uploading} onClick={() => csvInputRef.current?.click()}>
+                  {uploading ? <span className="spinner" /> : <Upload size={16} />} 上传文件
+                </button>
+              </div>
             </form>
           </div>
 

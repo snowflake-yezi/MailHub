@@ -96,6 +96,8 @@ prefix2,
 
 ### 4.4 结果展示与 CSV 下载
 
+CSV/TXT 导入入口位于批量创建操作右侧。每行格式为 `prefix,password,domain_id,server_id`，后 3 列均可省略；未填写 `domain_id` 或 `server_id` 时继承创建页面当前选择，文件中的显式值优先。上传继续复用 `POST /api/v1/admin/mailboxes/upload` 和统一 `MailboxCreator`。
+
 单个创建：
 
 - 展示邮箱地址、密码、同步状态、服务器 ID、域名。

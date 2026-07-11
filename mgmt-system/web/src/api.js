@@ -2,8 +2,9 @@ const API_BASE = '/api/v1/admin';
 
 async function request(path, options = {}) {
   const url = `${API_BASE}${path}`;
+  const isFormData = options.body instanceof FormData;
   const config = {
-    headers: { 'Content-Type': 'application/json' },
+    headers: isFormData ? {} : { 'Content-Type': 'application/json' },
     ...options,
   };
 
@@ -73,6 +74,13 @@ export const filterAPI = {
 export const mailboxAPI = {
   list(params) { return get('/mailboxes', params); },
   batchCreate(items) { return request('/mailboxes/batch', { method: 'POST', body: JSON.stringify(items) }); },
+  upload(file, serverId = 0, domainId = 0) {
+    const form = new FormData();
+    form.append('file', file);
+    if (serverId) form.append('server_id', String(serverId));
+    if (domainId) form.append('domain_id', String(domainId));
+    return request('/mailboxes/upload', { method: 'POST', body: form });
+  },
   updatePassword(id, password) { return request(`/mailboxes/${id}`, { method: 'PUT', body: JSON.stringify({ password }) }); },
   remove(id) { return request(`/mailboxes/${id}/delete`, { method: 'POST' }); },
   restore(id) { return request(`/mailboxes/${id}/restore`, { method: 'POST' }); },
