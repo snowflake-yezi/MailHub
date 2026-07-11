@@ -3,125 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{.title}}</title>
-    <style>
-        :root {
-            --bg: #f0f2f5;
-            --panel: #ffffff;
-            --text: #20242a;
-            --muted: #6b7280;
-            --brand: #1f4f46;
-            --brand-hover: #173d36;
-            --line: #d4d9df;
-            --danger: #a82424;
-            --danger-bg: #fdecec;
-            --shadow: 0 10px 30px rgba(28, 39, 49, 0.1);
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: var(--bg);
-            color: var(--text);
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-        .login-card {
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 12px;
-            box-shadow: var(--shadow);
-            padding: 40px;
-            width: 360px;
-            max-width: 95vw;
-        }
-        .login-header {
-            text-align: center;
-            margin-bottom: 28px;
-        }
-        .login-header h1 {
-            font-size: 22px;
-            font-weight: 750;
-            color: var(--brand);
-        }
-        .login-header p {
-            color: var(--muted);
-            font-size: 13px;
-            margin-top: 6px;
-        }
-        .form-group {
-            margin-bottom: 16px;
-        }
-        .form-group label {
-            display: block;
-            color: #4b5563;
-            font-size: 12px;
-            font-weight: 700;
-            margin-bottom: 5px;
-        }
-        input {
-            height: 40px;
-            width: 100%;
-            border: 1px solid var(--line);
-            border-radius: 6px;
-            background: #fff;
-            color: var(--text);
-            font-size: 14px;
-            padding: 0 12px;
-            outline: none;
-        }
-        input:focus {
-            border-color: var(--brand);
-            box-shadow: 0 0 0 3px rgba(31, 79, 70, 0.12);
-        }
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 100%;
-            height: 42px;
-            border: 0;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 15px;
-            font-weight: 650;
-            background: var(--brand);
-            color: #fff;
-        }
-        .btn:hover { background: var(--brand-hover); }
-        .error-msg {
-            background: var(--danger-bg);
-            color: var(--danger);
-            border: 1px solid #f0c5c5;
-            border-radius: 6px;
-            padding: 10px 12px;
-            font-size: 13px;
-            margin-bottom: 16px;
-        }
-    </style>
+    <title>{{.title}} · MailHub</title>
+    <script>
+        (() => {
+            const root = document.documentElement;
+            const stored = localStorage.getItem('mailhub.theme');
+            root.dataset.theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            const brand = localStorage.getItem('mailhub.brandColor');
+            if (/^#[0-9a-f]{6}$/i.test(brand || '')) root.style.setProperty('--saved-brand', brand);
+        })();
+    </script>
+    <link rel="stylesheet" href="/static/login.css">
 </head>
 <body>
-    <div class="login-card">
-        <div class="login-header">
-            <h1>邮箱管理系统</h1>
-            <p>管理后台 — 请登录</p>
-        </div>
-        {{if .error}}
-        <div class="error-msg">{{.error}}</div>
-        {{end}}
-        <form method="POST" action="/admin/login">
-            <input type="hidden" name="next" value="{{.next}}">
-            <div class="form-group">
-                <label>用户名</label>
-                <input type="text" name="username" placeholder="请输入用户名" required autofocus>
+    <main class="login-shell">
+        <section class="login-brand" aria-labelledby="brand-name">
+            <div class="brand-lockup">
+                <img src="/static/admin-app/mailhub.png" alt="" width="72" height="72">
+                <div>
+                    <h1 id="brand-name">MailHub</h1>
+                    <p>邮件运维控制台</p>
+                </div>
             </div>
-            <div class="form-group">
-                <label>密码</label>
-                <input type="password" name="password" placeholder="请输入密码" required>
+            <div class="brand-context">
+                <strong>邮件、节点与策略统一管理</strong>
+                <span>系统状态 · 账号安全 · 可观测</span>
             </div>
-            <button type="submit" class="btn">登 录</button>
-        </form>
-    </div>
+        </section>
+
+        <section class="login-workspace">
+            <button class="theme-toggle" type="button" id="theme-toggle" aria-label="切换深浅主题" title="切换深浅主题">
+                <span class="theme-icon-light" aria-hidden="true">☀</span>
+                <span class="theme-icon-dark" aria-hidden="true">☾</span>
+            </button>
+
+            <div class="login-panel">
+                <header class="login-header">
+                    <span class="login-kicker">管理员入口</span>
+                    <h2>管理后台登录</h2>
+                    <p>使用管理员账号继续访问控制台</p>
+                </header>
+
+                {{if .error}}
+                <div class="login-alert" role="alert">{{.error}}</div>
+                {{end}}
+
+                <form method="POST" action="/admin/login" id="login-form">
+                    <input type="hidden" name="next" value="{{.next}}">
+                    <div class="login-field">
+                        <label for="username">用户名</label>
+                        <input id="username" type="text" name="username" value="{{.username}}" placeholder="请输入管理员用户名" autocomplete="username" required {{if not .error}}autofocus{{end}} {{if not .initialized}}disabled{{end}}>
+                    </div>
+                    <div class="login-field">
+                        <label for="password">密码</label>
+                        <div class="password-control">
+                            <input id="password" type="password" name="password" placeholder="请输入密码" autocomplete="current-password" required {{if .error}}autofocus{{end}} {{if not .initialized}}disabled{{end}}>
+                            <button type="button" id="password-toggle" aria-label="显示密码" title="显示密码" {{if not .initialized}}disabled{{end}}>◉</button>
+                        </div>
+                    </div>
+                    <button type="submit" class="login-submit" id="login-submit" {{if not .initialized}}disabled{{end}}>
+                        <span class="login-spinner" aria-hidden="true"></span>
+                        <span class="submit-label">登录控制台</span>
+                    </button>
+                </form>
+
+                <p class="login-help">无法登录？请联系部署管理员通过恢复命令重置密码。</p>
+                <p class="login-guard">仅限授权管理员访问</p>
+            </div>
+        </section>
+    </main>
+    <script src="/static/login.js" defer></script>
 </body>
 </html>

@@ -1725,6 +1725,41 @@ textarea {
   background: var(--color-soft-fill);
 }
 
+.account-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(320px, 1.3fr) auto;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 18px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.account-main { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.account-main h3 { font-size: 16px; }
+.account-main p { margin-top: 5px; color: var(--color-muted); font-size: 12px; }
+.account-meta { display: grid; grid-template-columns: minmax(120px, .7fr) minmax(180px, 1.3fr); gap: 12px; }
+.account-meta div { min-width: 0; padding: 10px 12px; border-left: 2px solid var(--color-brand-soft); }
+.account-meta span { display: block; color: var(--color-muted); font-size: 11px; }
+.account-meta strong { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 13px; }
+.account-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.account-modal-header span { color: var(--color-brand-strong); font-size: 11px; font-weight: 700; }
+.account-modal-header h3 { margin: 3px 0 0; }
+.inline-alert { margin-bottom: 16px; padding: 10px 12px; border: 1px solid #f5c0c4; border-radius: 6px; color: #a22229; background: #ffe9ea; font-size: 13px; }
+
+@media (max-width: 1050px) {
+  .account-panel { grid-template-columns: 1fr auto; }
+  .account-meta { grid-column: 1 / -1; grid-row: 2; }
+}
+
+@media (max-width: 620px) {
+  .account-panel { grid-template-columns: 1fr; }
+  .account-meta { grid-column: auto; grid-template-columns: 1fr; }
+  .account-panel > .btn { width: 100%; }
+}
+
 .phase-tabs button {
   min-height: 32px;
   padding: 5px 12px;

@@ -4,10 +4,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/model"
 )
 
 // Default session settings (fallback when not configured).
@@ -19,9 +21,11 @@ const (
 
 // Session holds admin session data.
 type Session struct {
-	Username  string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	AdminUserID       uint64
+	Username          string
+	CredentialVersion int
+	CreatedAt         time.Time
+	ExpiresAt         time.Time
 }
 
 // IsExpired returns true if the session has expired.
@@ -71,7 +75,7 @@ func (sm *SessionManager) Duration() time.Duration {
 }
 
 // CreateSession creates a new session for the given username. Returns the token.
-func (sm *SessionManager) CreateSession(username string) (string, error) {
+func (sm *SessionManager) CreateSession(adminUserID uint64, username string, credentialVersion int) (string, error) {
 	token, err := sm.generateToken()
 	if err != nil {
 		return "", err
@@ -80,9 +84,8 @@ func (sm *SessionManager) CreateSession(username string) (string, error) {
 	now := time.Now()
 	sm.mu.Lock()
 	sm.sessions[token] = &Session{
-		Username:  username,
-		CreatedAt: now,
-		ExpiresAt: now.Add(sm.duration),
+		AdminUserID: adminUserID, Username: username, CredentialVersion: credentialVersion,
+		CreatedAt: now, ExpiresAt: now.Add(sm.duration),
 	}
 	sm.mu.Unlock()
 
@@ -123,36 +126,54 @@ func (sm *SessionManager) DestroySession(token string) {
 
 // AdminAuthRequired validates the admin session cookie.
 // For page requests it redirects to /admin/login. For API requests it returns 401 JSON.
-func AdminAuthRequired(sm *SessionManager) gin.HandlerFunc {
+type AdminCredentialReader interface {
+	GetByID(id uint64) (*model.AdminUser, error)
+}
+
+func AdminAuthRequired(sm *SessionManager, credentials AdminCredentialReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, _ := c.Cookie(sm.CookieName())
 		session := sm.ValidateSession(token)
 
 		if session == nil {
-			// API requests: return 401 JSON
-			if isAPIRequest(c) {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"code": 1003, "message": "authentication required",
-				})
-				return
-			}
-			// Page requests: redirect to login
-			next := c.Request.URL.Path
-			if c.Request.URL.RawQuery != "" {
-				next += "?" + c.Request.URL.RawQuery
-			}
-			redirectURL := "/admin/login"
-			if next != "" && next != "/" {
-				redirectURL += "?next=" + next // URL encoding handled by browser
-			}
-			c.Redirect(http.StatusFound, redirectURL)
-			c.Abort()
+			rejectAdminRequest(c, sm, token)
 			return
 		}
 
-		c.Set("admin_user", session.Username)
+		user, err := credentials.GetByID(session.AdminUserID)
+		if err != nil || user.Status != "active" || user.CredentialVersion != session.CredentialVersion {
+			rejectAdminRequest(c, sm, token)
+			return
+		}
+
+		c.Set("admin_user", user.Username)
+		c.Set("admin_user_id", user.ID)
 		c.Next()
 	}
+}
+
+func rejectAdminRequest(c *gin.Context, sm *SessionManager, token string) {
+	if token != "" {
+		sm.DestroySession(token)
+	}
+	// API requests: return 401 JSON
+	if isAPIRequest(c) {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+			"code": 1003, "message": "authentication required",
+		})
+		return
+	}
+	// Page requests: redirect to login
+	next := c.Request.URL.Path
+	if c.Request.URL.RawQuery != "" {
+		next += "?" + c.Request.URL.RawQuery
+	}
+	redirectURL := "/admin/login"
+	if next != "" && next != "/" {
+		redirectURL += "?next=" + url.QueryEscape(next)
+	}
+	c.Redirect(http.StatusFound, redirectURL)
+	c.Abort()
 }
 
 // isAPIRequest returns true if the request is for an API endpoint.

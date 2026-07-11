@@ -119,6 +119,27 @@ type ApiToken struct {
 	LastUsedAt *time.Time `json:"last_used_at"`
 }
 
+// AdminUser is the database-backed management console identity.
+type AdminUser struct {
+	ID                 uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Username           string     `gorm:"uniqueIndex;size:191;not null" json:"username"`
+	PasswordHash       string     `gorm:"size:255;not null" json:"-"`
+	PasswordAlgo       string     `gorm:"size:32;not null;default:bcrypt" json:"-"`
+	MustChangePassword bool       `gorm:"not null;default:false" json:"must_change_password"`
+	CredentialVersion  int        `gorm:"not null;default:1" json:"-"`
+	Status             string     `gorm:"type:enum('active','disabled');not null;default:active;index" json:"status"`
+	PasswordChangedAt  *time.Time `json:"password_changed_at"`
+	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
+// SystemState records one-way initialization state separately from user rows.
+type SystemState struct {
+	Key       string    `gorm:"primaryKey;size:128" json:"key"`
+	Value     string    `gorm:"type:text;not null" json:"value"`
+	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+}
+
 // ServerDomain 服务器与域名的 M:N 绑定，记录该服务器对该域的远端同步状态
 // （Postfix virtual_mailbox_domains + DKIM）。分配器只使用 status=active 且
 // postfix_status=synced 的绑定。详见 docs/design/t4-t5-server-domain-pool-design.md。
@@ -168,7 +189,7 @@ type IntegratedMailbox struct {
 }
 
 // TableName 指定表名
-func (SystemConfig) TableName() string         { return "system_configs" }
+func (SystemConfig) TableName() string        { return "system_configs" }
 func (OrderMailbox) TableName() string        { return "order_mailboxes" }
 func (MailboxAccount) TableName() string      { return "mailbox_accounts" }
 func (OrderMailboxMapping) TableName() string { return "order_mailbox_mappings" }
@@ -178,3 +199,5 @@ func (ApiToken) TableName() string            { return "api_tokens" }
 func (Domain) TableName() string              { return "domains" }
 func (ServerDomain) TableName() string        { return "server_domains" }
 func (IntegratedMailbox) TableName() string   { return "integrated_mailboxes" }
+func (AdminUser) TableName() string           { return "admin_users" }
+func (SystemState) TableName() string         { return "system_state" }

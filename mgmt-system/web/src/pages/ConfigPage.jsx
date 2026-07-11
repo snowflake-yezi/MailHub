@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Activity,
   BellRing,
@@ -6,6 +7,7 @@ import {
   Database,
   HardDrive,
   HeartPulse,
+  KeyRound,
   MailCheck,
   RotateCcw,
   Save,
@@ -14,9 +16,10 @@ import {
   SlidersHorizontal,
   TimerReset,
   Undo2,
+  UserRound,
   X,
 } from 'lucide-react'
-import { configAPI } from '../api'
+import { accountAPI, configAPI } from '../api'
 
 const CATEGORY_META = {
   forward: { label: '邮件转发引擎', desc: '控制 union 转发目标、重试与链路行为。', icon: MailCheck },
@@ -111,6 +114,101 @@ function ModulePanel({ group, onConfigure }) {
         </button>
       </div>
     </article>
+  )
+}
+
+function AccountPanel({ account, onEdit }) {
+  return (
+    <section className="account-panel">
+      <div className="account-main">
+        <span className="module-icon"><UserRound size={20} /></span>
+        <div>
+          <div className="module-title-row">
+            <h3>管理账号</h3>
+            {account.must_change_password && <span className="tag tag-warning">需要修改密码</span>}
+          </div>
+          <p>管理登录身份与恢复后的凭据状态。</p>
+        </div>
+      </div>
+      <div className="account-meta">
+        <div><span>当前用户名</span><strong>{account.username}</strong></div>
+        <div><span>最近改密</span><strong>{account.password_changed_at ? new Date(account.password_changed_at).toLocaleString() : '尚无记录'}</strong></div>
+      </div>
+      <button className="btn btn-outline" type="button" onClick={onEdit}>
+        <KeyRound size={16} /> 账号设置
+      </button>
+    </section>
+  )
+}
+
+function AccountDialog({ account, onClose }) {
+  const [username, setUsername] = useState(account.username)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setError('')
+    if (newPassword !== confirmPassword) {
+      setError('两次输入的新密码不一致')
+      return
+    }
+    setSaving(true)
+    try {
+      await accountAPI.update({
+        username: username.trim(),
+        current_password: currentPassword,
+        new_password: newPassword,
+      })
+      window.location.assign('/admin/logout')
+    } catch (e) {
+      setError(e.message)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal account-modal" onClick={e => e.stopPropagation()}>
+        <div className="account-modal-header">
+          <div>
+            <span>账号安全</span>
+            <h3>管理账号设置</h3>
+          </div>
+          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
+        </div>
+        {error && <div className="inline-alert" role="alert">{error}</div>}
+        <form onSubmit={submit}>
+          <div className="form-group">
+            <label htmlFor="account-username">用户名</label>
+            <input id="account-username" value={username} onChange={e => setUsername(e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label htmlFor="account-current-password">当前密码</label>
+            <input id="account-current-password" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required />
+          </div>
+          <div className="form-group">
+            <label htmlFor="account-new-password">新密码</label>
+            <input id="account-new-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" placeholder="留空表示不修改密码" />
+            <div className="form-hint">生产环境至少 12 位，不能使用常见弱密码或与用户名相同。</div>
+          </div>
+          <div className="form-group">
+            <label htmlFor="account-confirm-password">确认新密码</label>
+            <input id="account-confirm-password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" disabled={!newPassword} />
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+            <button className="btn btn-primary" type="submit" disabled={saving}>
+              {saving ? <span className="spinner" /> : <Save size={16} />}
+              保存并重新登录
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   )
 }
 
@@ -267,12 +365,15 @@ function ConfigDrawer({ group, onSave, onReset, onClose }) {
 }
 
 export default function ConfigPage() {
+	const [searchParams, setSearchParams] = useSearchParams()
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeGroup, setActiveGroup] = useState(null)
   const [toast, setToast] = useState(null)
   const [confirm, setConfirm] = useState(null)
   const [reloading, setReloading] = useState(false)
+  const [account, setAccount] = useState(null)
+  const [accountOpen, setAccountOpen] = useState(false)
 
   const loadConfigs = useCallback(async () => {
     try {
@@ -286,6 +387,22 @@ export default function ConfigPage() {
   }, [])
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
+
+  useEffect(() => {
+    accountAPI.get().then(data => {
+      setAccount(data)
+      if (data.must_change_password || searchParams.get('account') === 'required') setAccountOpen(true)
+    }).catch(e => setToast({ type: 'error', message: '加载管理账号失败: ' + e.message }))
+  }, [searchParams])
+
+  const closeAccount = () => {
+    setAccountOpen(false)
+    if (searchParams.has('account')) {
+      const next = new URLSearchParams(searchParams)
+      next.delete('account')
+      setSearchParams(next, { replace: true })
+    }
+  }
 
   const stats = useMemo(() => {
     const totalParams = groups.reduce((sum, group) => sum + group.items.length, 0)
@@ -401,6 +518,8 @@ export default function ConfigPage() {
         </div>
       </div>
 
+      {account && <AccountPanel account={account} onEdit={() => setAccountOpen(true)} />}
+
       {groups.length > 0 ? (
         <div className="module-grid">
           {groups.map(group => (
@@ -424,6 +543,7 @@ export default function ConfigPage() {
         />
       )}
       {confirm && <ConfirmDialog {...confirm} />}
+      {accountOpen && account && <AccountDialog account={account} onClose={closeAccount} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
   )

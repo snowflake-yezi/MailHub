@@ -116,3 +116,11 @@ export const configAPI = {
     return request('/configs/reload', { method: 'POST' });
   },
 };
+
+// ─── Administrator Account ─────────────────────────────
+export const accountAPI = {
+  get() { return request('/account'); },
+  update(data) {
+    return request('/account', { method: 'PUT', body: JSON.stringify(data) });
+  },
+};

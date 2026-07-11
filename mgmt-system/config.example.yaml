@@ -9,8 +9,10 @@ database:
 
 auth:
   shared_secret: "CHANGE-ME-USE-LONG-RANDOM-STRING"
-  admin_user: "admin"
-  admin_pass: "CHANGE-ME-ADMIN-PASSWORD"
+  # Deprecated compatibility fields. Runtime login uses admin_users in the DB.
+  # Initialize with: mgmt-server admin bootstrap --username admin --password-file <path>
+  admin_user: ""
+  admin_pass: ""
   tokens:
     - name: "出票中心"
       token: "sk-ticket-CHANGE-ME"

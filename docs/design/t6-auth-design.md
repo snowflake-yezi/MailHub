@@ -1,6 +1,6 @@
 ﻿# T6 鉴权体系设计文档
 
-> 状态：已实现并合并至 `main` | 日期：2026-06-26；外部 API scope 精确匹配修复已于 2026-07-10 部署
+> 状态：已实现并合并至 `main` | 最后校准：2026-07-11；O2-P5 已将管理员凭据迁移到数据库 hash，并补齐 bootstrap、改密和恢复
 
 ---
 
@@ -62,13 +62,13 @@ flowchart TB
 - **理由**：2C2G 低配服务器，运维人员 ≤ 3 人，session 量极小；重启丢失可接受
 - **Cookie**：`mgmt_session`，HttpOnly，**Path=/**，24h 过期
   - ⚠️ Path 必须为 `/`（不能是 `/admin`）：admin API 在 `/api/v1/admin/*`，cookie 需同时覆盖页面 `/admin/*` 和 API 路径。早期误设 `/admin` 导致后台所有 AJAX 401（部署期发现并修复）
-- **凭证**：配置文件 `auth.admin_user` / `auth.admin_pass`
+- **凭证**：`admin_users.password_hash`（bcrypt）；`system_state.admin_bootstrap` 记录是否完成初始化
 
 ### 3.2 SessionManager
 
 **文件**：`mgmt-system/internal/middleware/session.go`
 
-- `CreateSession(username) → token`：crypto/rand 生成 32 字节 hex token
+- `CreateSession(admin_user_id, username, credential_version) → token`：crypto/rand 生成 32 字节 hex token
 - `ValidateSession(token) → *Session`：查 map + 过期检查（过期自动清理）
 - `DestroySession(token)`：登出时删除
 - GC goroutine：每 30 分钟扫描清理过期 session
@@ -81,8 +81,8 @@ GET /admin/login
   → 无 session → 渲染 login.html（含 next 参数）
 
 POST /admin/login
-  → constant-time compare username + password
-  → 匹配 → CreateSession → SetCookie → 302 next|/admin/
+  → 查询 admin_users + bcrypt 校验
+  → 匹配 → CreateSession(user/version) → SetCookie → 302 next|/admin/
   → 不匹配 → 重新渲染 login.html + 错误提示
 
 GET|POST /admin/logout
@@ -91,16 +91,17 @@ GET|POST /admin/logout
 
 ### 3.4 AdminAuthRequired 中间件
 
-- 页面请求（`/admin/*`）：无 session → 302 `/admin/login?next=<原url>`
-- API 请求（`/api/v1/admin/*`）：无 session → 401 JSON
+- 页面请求（`/admin/*`）：无 session、账号禁用或凭据版本变化 → 302 `/admin/login?next=<原url>`
+- API 请求（`/api/v1/admin/*`）：上述状态返回 401 JSON
 
-### 3.5 配置
+### 3.5 初始化与恢复
 
-```yaml
-auth:
-  admin_user: "admin"
-  admin_pass: "change-me-admin-password"
+```bash
+mgmt-server admin bootstrap --username admin --password-file <path>
+mgmt-server admin reset-password --username admin --password-file <path>
 ```
+
+生产模式未初始化时 `serve` 拒绝启动。后台“系统配置 → 管理账号”支持修改用户名与密码；修改凭据后旧 Session 失效。旧 `auth.admin_user/admin_pass` 字段不再参与运行期登录。
 
 ---
 

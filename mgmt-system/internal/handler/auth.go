@@ -1,24 +1,24 @@
 package handler
 
 import (
-	"crypto/subtle"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/middleware"
+	"github.com/ticket/email-mgmt-system/internal/service"
 )
 
 type AuthHandler struct {
-	adminUser    string
-	adminPass    string
+	credentials  *service.AdminCredentialService
 	sessionMgr   *middleware.SessionManager
 	cookieSecure bool
 }
 
-func NewAuthHandler(adminUser, adminPass string, sm *middleware.SessionManager, cookieSecure bool) *AuthHandler {
+func NewAuthHandler(credentials *service.AdminCredentialService, sm *middleware.SessionManager, cookieSecure bool) *AuthHandler {
 	return &AuthHandler{
-		adminUser:    adminUser,
-		adminPass:    adminPass,
+		credentials:  credentials,
 		sessionMgr:   sm,
 		cookieSecure: cookieSecure,
 	}
@@ -28,16 +28,22 @@ func NewAuthHandler(adminUser, adminPass string, sm *middleware.SessionManager, 
 func (h *AuthHandler) LoginPage(c *gin.Context) {
 	// Already logged in? Redirect to admin dashboard.
 	token, _ := c.Cookie(h.sessionMgr.CookieName())
-	if s := h.sessionMgr.ValidateSession(token); s != nil {
-		c.Redirect(http.StatusFound, "/admin/")
-		return
+	if session := h.sessionMgr.ValidateSession(token); session != nil {
+		if user, err := h.credentials.GetByID(session.AdminUserID); err == nil && user.Status == "active" && user.CredentialVersion == session.CredentialVersion {
+			c.Redirect(http.StatusFound, "/admin/")
+			return
+		}
+		h.sessionMgr.DestroySession(token)
 	}
 
-	next := c.Query("next")
+	next := safeAdminRedirect(c.Query("next"))
+	bootstrapped, _ := h.credentials.IsBootstrapped()
 	c.HTML(http.StatusOK, "login.html", gin.H{
-		"title": "管理后台登录",
-		"next":  next,
-		"error": "",
+		"title":       "管理后台登录",
+		"next":        next,
+		"error":       "",
+		"initialized": bootstrapped,
+		"username":    "",
 	})
 }
 
@@ -45,27 +51,43 @@ func (h *AuthHandler) LoginPage(c *gin.Context) {
 func (h *AuthHandler) LoginAction(c *gin.Context) {
 	username := c.PostForm("username")
 	password := c.PostForm("password")
-	next := c.PostForm("next")
-
-	// Constant-time comparison to prevent timing attacks.
-	userMatch := subtle.ConstantTimeCompare([]byte(username), []byte(h.adminUser)) == 1
-	passMatch := subtle.ConstantTimeCompare([]byte(password), []byte(h.adminPass)) == 1
-
-	if !userMatch || !passMatch {
-		c.HTML(http.StatusUnauthorized, "login.html", gin.H{
-			"title": "管理后台登录",
-			"next":  next,
-			"error": "用户名或密码错误",
+	next := safeAdminRedirect(c.PostForm("next"))
+	bootstrapped, bootstrapErr := h.credentials.IsBootstrapped()
+	if bootstrapErr != nil || !bootstrapped {
+		c.HTML(http.StatusServiceUnavailable, "login.html", gin.H{
+			"title": "管理后台登录", "next": next, "username": username,
+			"initialized": false, "error": "系统尚未初始化，请联系部署管理员",
 		})
 		return
 	}
 
-	token, err := h.sessionMgr.CreateSession(username)
+	user, err := h.credentials.Verify(username, password)
+	if err != nil {
+		if !errors.Is(err, service.ErrInvalidCredentials) {
+			c.HTML(http.StatusInternalServerError, "login.html", gin.H{
+				"title": "管理后台登录", "next": next, "username": username,
+				"initialized": true, "error": "暂时无法登录，请稍后重试",
+			})
+			return
+		}
+		c.HTML(http.StatusUnauthorized, "login.html", gin.H{
+			"title":       "管理后台登录",
+			"next":        next,
+			"error":       "用户名或密码错误",
+			"initialized": true,
+			"username":    username,
+		})
+		return
+	}
+
+	token, err := h.sessionMgr.CreateSession(user.ID, user.Username, user.CredentialVersion)
 	if err != nil {
 		c.HTML(http.StatusInternalServerError, "login.html", gin.H{
-			"title": "管理后台登录",
-			"next":  next,
-			"error": "创建会话失败，请重试",
+			"title":       "管理后台登录",
+			"next":        next,
+			"error":       "创建会话失败，请重试",
+			"initialized": true,
+			"username":    username,
 		})
 		return
 	}
@@ -76,16 +98,26 @@ func (h *AuthHandler) LoginAction(c *gin.Context) {
 		token,
 		int(h.sessionMgr.Duration().Seconds()),
 		"/", // path (covers /admin/* pages AND /api/v1/admin/* APIs)
-		"",     // domain (auto)
+		"",  // domain (auto)
 		h.cookieSecure,
-		true,   // httpOnly
+		true, // httpOnly
 	)
 
-	redirectURL := "/admin/"
-	if next != "" {
-		redirectURL = next
+	redirectURL := next
+	if user.MustChangePassword {
+		redirectURL = "/admin/config?account=required"
+	} else if redirectURL == "" {
+		redirectURL = "/admin/"
 	}
 	c.Redirect(http.StatusFound, redirectURL)
+}
+
+func safeAdminRedirect(next string) string {
+	next = strings.TrimSpace(next)
+	if (next == "/admin" || strings.HasPrefix(next, "/admin/") || strings.HasPrefix(next, "/admin?")) && !strings.HasPrefix(next, "//") {
+		return next
+	}
+	return ""
 }
 
 // LogoutAction destroys the session and redirects to login.

@@ -136,14 +136,32 @@ cp mail-node/config.example.yaml mail-node/config.yaml
 关键配置：
 
 - `database.dsn`：控制面数据库连接。
-- `auth.admin_user` / `auth.admin_pass`：后台登录账号。
+- 管理员凭据：通过 `mgmt-server admin bootstrap` 写入数据库 hash；`auth.admin_user` / `auth.admin_pass` 已废弃且不参与运行期登录。
 - `auth.shared_secret`：mgmt-system 与 mail-node 必须一致。
 - `auth.tokens`：外部 API token 与 scope。
 - `management.api_url`：mail-node 访问 mgmt-system 的地址。
 - `forward.smtp_*`：转发用 SMTP 连接参数；转发目标地址由后台“集成邮箱”管理，并同步到动态配置。
 - `dkim.*`、`postfix.*`、`maildir.*`：数据面落地 Postfix / Dovecot / OpenDKIM 所需路径。
 
-> 当前版本仍从 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 读取后台管理员凭据。这是正在收口的 P0 限制；[O2-P5 管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) 会迁移到数据库 hash、显式 bootstrap 与恢复 CLI。在该功能发布前，请继续按当前配置方式部署。
+首次启动控制面前初始化管理员：
+
+```bash
+./mgmt-server admin bootstrap \
+  --config ./config.yaml \
+  --username admin \
+  --password-file /run/secrets/mailhub_initial_admin_password \
+  --must-change-password
+
+./mgmt-server serve
+```
+
+忘记密码时使用 `admin reset-password` 显式恢复。生产模式未完成 bootstrap 时，`serve` 会拒绝启动；运行期登录只验证数据库中的 bcrypt hash。完整迁移与恢复口径见 [O2-P5 管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md)。
+
+已有部署可执行一次性迁移命令读取旧配置凭据；该路径只在未初始化时生效，并强制首次登录改密：
+
+```bash
+./mgmt-server admin bootstrap-from-config --config ./config.yaml
+```
 
 ### 3. 构建
 
@@ -183,7 +201,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 服务器-域名绑定、DKIM、DNS 清单 |
 | [鉴权体系设计](docs/design/t6-auth-design.md) | Session、Bearer scope、Shared-Secret |
 | [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、被动心跳、状态升降级 |
-| [管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) | 当前 P0：管理员凭据迁移、首次初始化、改密与恢复 |
+| [管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) | 管理员首次初始化、数据库登录、后台改密、CLI 恢复与登录页 UI |
 
 ### 历史/规划记录
 
@@ -213,11 +231,11 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | MIME 结构化解析、正文查询、附件下载 | 已完成 |
 | 回收站、恢复、purge、重启删除任务恢复 | 已完成 |
 | inline 图片 MIME / filename / 后缀兼容 | 已完成 |
+| 管理账号 Bootstrap、数据库登录、后台改密与 CLI 恢复 | 已完成 |
 
 ### 当前待办
 
 | 优先级 | 事项 | 状态 |
 |--------|------|------|
-| P0 | 管理账号 Bootstrap 与恢复（O2-P5） | 已有详细设计，待实施 |
 | P1 | 节点配置可观测与通用覆盖 | 设计草案；先完成 NC-P0 的保留期语义、所有权和真实键名核对 |
 | 候选 | 外部创建邮箱 API 支持指定 `server_id` | 尚未排期，需先确认调用方权限与节点分配策略 |

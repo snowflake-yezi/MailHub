@@ -4,7 +4,8 @@
 >
 > **本文覆盖新 mail-node 的数据面部署。** 控制面基础配置见 [README](../../README.md) 与 `mgmt-system/config.example.yaml`；不要依赖未纳入版本控制的根目录 `DEPLOY.md`。
 >
-> 当前版本的管理后台凭据仍由 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 提供。数据库化 bootstrap、后台改密和恢复 CLI 属于待实施的 [O2-P5](ui-second-optimization-p5-admin-bootstrap-design.md)，发布前请按当前配置方式部署。
+> 管理后台凭据由数据库 bcrypt hash 管理。首次安装先执行 `mgmt-server admin bootstrap`，恢复密码使用 `admin reset-password`；`config.yaml` 的旧管理员字段不参与运行期登录。完整流程见 [O2-P5](ui-second-optimization-p5-admin-bootstrap-design.md)。
+> 旧版本升级可执行一次 `mgmt-server admin bootstrap-from-config --config <path>` 迁移原配置密码；迁移账号会被标记为首次登录必须改密。
 >
 > 实在不行直接让ai来帮忙部署
 

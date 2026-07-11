@@ -292,7 +292,7 @@ Scope 当前取值：
 - `email:read`
 - `*`
 
-> 当前限制：后台管理员仍由 `config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 校验。数据库 hash、显式 bootstrap、后台改密与恢复 CLI 属于待实施的 O2-P5；在其完成前，不应把 YAML 凭据描述为已废弃。
+后台管理员由 `admin_users` 的 bcrypt hash 校验；`system_state.admin_bootstrap` 独立记录初始化状态。首次安装使用 `mgmt-server admin bootstrap`，忘记密码使用 `admin reset-password`；后台改密或 CLI 恢复会递增 `credential_version`，使旧 Session 立即失效。`config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 仅保留兼容字段，不参与运行期登录。
 
 ---
 

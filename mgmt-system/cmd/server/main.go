@@ -21,6 +21,15 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		if err := runAdminCommand(os.Args[2:]); err != nil {
+			log.Fatalf("Admin command failed: %v", err)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] != "serve" {
+		log.Fatalf("Unknown command %q (expected serve or admin)", os.Args[1])
+	}
 	// Load config
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
@@ -39,6 +48,14 @@ func main() {
 	db, err := store.New(cfg.Database.DSN, cfg.Server.Mode)
 	if err != nil {
 		log.Fatalf("Failed to connect database: %v", err)
+	}
+	credentials := service.NewAdminCredentialService(db, cfg.Server.Mode)
+	bootstrapped, err := credentials.IsBootstrapped()
+	if err != nil {
+		log.Fatalf("Failed to read admin bootstrap state: %v", err)
+	}
+	if cfg.Server.Mode == "release" && !bootstrapped {
+		log.Fatal("Admin account is not initialized; run 'mgmt-server admin bootstrap' before serve")
 	}
 
 	// Seed data
@@ -81,7 +98,11 @@ func main() {
 	sessionMgr := middleware.NewSessionManager(sessionDuration, sessionCookieName, sessionGCInterval)
 
 	cookieSecure := db.GetConfigBool("session.cookie_secure", false)
-	authH := handler.NewAuthHandler(cfg.Auth.AdminUser, cfg.Auth.AdminPass, sessionMgr, cookieSecure)
+	if value := os.Getenv("MAILHUB_SESSION_COOKIE_SECURE"); value != "" {
+		cookieSecure = value == "1" || value == "true" || value == "TRUE"
+	}
+	authH := handler.NewAuthHandler(credentials, sessionMgr, cookieSecure)
+	accountH := handler.NewAccountHandler(credentials)
 
 	// Set Gin mode
 	if cfg.Server.Mode == "release" {
@@ -106,7 +127,7 @@ func main() {
 	authGroup.POST("/logout", authH.LogoutAction)
 
 	// ---- Admin pages (Session auth) ----
-	adminAuth := middleware.AdminAuthRequired(sessionMgr)
+	adminAuth := middleware.AdminAuthRequired(sessionMgr, credentials)
 	protectedPages := r.Group("/admin")
 	protectedPages.Use(adminAuth)
 	adminH.RegisterProtectedRoutes(protectedPages)
@@ -130,6 +151,8 @@ func main() {
 	apiAdmin.POST("/configs/batch", configH.BatchUpdate)
 	apiAdmin.POST("/configs/:key/reset", configH.ResetConfig)
 	apiAdmin.POST("/configs/reload", configH.ReloadNode)
+	apiAdmin.GET("/account", accountH.Get)
+	apiAdmin.PUT("/account", accountH.Update)
 
 	// ---- External API v1 (Bearer Token auth + Scope) ----
 	api := r.Group("/api/v1")

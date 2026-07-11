@@ -60,6 +60,8 @@ func New(dsn string, mode string) (*Store, error) {
 		&model.ServerDomain{},
 		&model.SystemConfig{},
 		&model.IntegratedMailbox{},
+		&model.AdminUser{},
+		&model.SystemState{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}

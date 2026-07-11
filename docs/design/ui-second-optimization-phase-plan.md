@@ -1,6 +1,6 @@
 # MailHub UI 第二次优化 Phase 拆分计划
 
-> 状态：O2-P0 至 O2-P4 已完成；O2-P5 为当前待实施 P0 | 最后校准：2026-07-11
+> 状态：O2-P0 至 O2-P5 已完成；节点配置可观测为下一项 P1 | 最后校准：2026-07-11
 > 来源：`ui-second-optimization-design.md`  
 > 原则：每个 phase 独立开发、独立验收、可单独发布；不把 UI、附件、安全配置一次性混改。
 
@@ -25,7 +25,7 @@
 | O2-P2 | 创建邮箱入口 tab 化 | O2-2 | 前端 React + CSS | P0 | 已完成 |
 | O2-P3 | 主题品牌色偏好 | O2-1 | 前端 React + CSS token | P1 | 已完成 |
 | O2-P4 | 附件安全预览 | O2-3 | 前后端联动 | P0 | 已完成，真实浏览器验收已于 2026-07-10 通过 |
-| O2-P5 | 管理账号 Bootstrap 与恢复 | O2-5 | 后端认证 + CLI + 前端设置页 + 文档 | P0 | 待实现，建议最后做 |
+| O2-P5 | 管理账号 Bootstrap、恢复与登录页一体化 | O2-5 | 后端认证 + CLI + 登录页 UI + 前端设置页 + 文档 | P0 | 已完成，待部署验收 |
 
 ---
 
@@ -373,8 +373,7 @@ GET /internal/messages/:message_id/attachments/:index/preview?mailbox=<email>
 
 ## 11. 当前推荐下一步
 
-O2-P0 到 O2-P4 已完成，当前推荐进入 **O2-P5 管理账号 Bootstrap 与恢复**：
+O2-P0 到 O2-P5 已完成，当前推荐进入 **节点配置可观测与通用覆盖的 NC-P0 现状核对**：
 
-- 以 `ui-second-optimization-p5-admin-bootstrap-design.md` 作为实现事实源。
-- 先做 O2-P5A 数据模型与 `admin bootstrap`，再改登录与 session 失效。
-- O2-P4 附件安全预览已完成真实浏览器验收，不阻塞 O2-P5 开始。
+- 先确认保留期业务语义、配置所有权与 canonical key。
+- O2-P5 已完成代码、自动化测试与登录页真实浏览器验收，部署前按设计文档执行旧配置迁移。
