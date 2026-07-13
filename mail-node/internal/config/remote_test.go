@@ -178,3 +178,25 @@ func TestReportSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReportSnapshotsSendsAllAppliedValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Items []struct {
+				ConfigKey string `json:"config_key"`
+			} `json:"items"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if len(body.Items) != 2 {
+			t.Fatalf("snapshot items = %d, want 2", len(body.Items))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	rc := NewRemoteConfig(server.URL, "secret", 7)
+	if err := rc.ReportSnapshots(map[string]string{"forward.scan_interval": "5", "lifecycle.gc_interval_minutes": "60"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}

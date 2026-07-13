@@ -50,6 +50,8 @@ func main() {
 
 	// 从 mgmt-system 拉取动态配置（覆盖 YAML 中的硬编码默认值）
 	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret, cfg.Node.ID)
+	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
+	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -108,13 +110,14 @@ func main() {
 		remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute),
 		remoteCfg,
 	)
+	remoteCfg.RegisterAfterApplyHook(fwdSvc.AfterApplyConfig)
+	remoteCfg.RegisterAfterApplyHook(lifecycle.AfterApplyConfig)
 
 	// 启动后台转发扫描
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
-		retention := remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention)
-		if err := remoteCfg.ReportSnapshot("lifecycle.trash_retention_hours", strconv.Itoa(int(retention/time.Hour)), time.Now()); err != nil {
+		if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
 			log.Printf("[config] post-apply snapshot failed: %v", err)
 		}
 	})
@@ -125,7 +128,7 @@ func main() {
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
 	lifecycle.StartGC(ctx)
-	if err := remoteCfg.ReportSnapshot("lifecycle.trash_retention_hours", strconv.Itoa(int(trashRetention/time.Hour)), time.Now()); err != nil {
+	if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
 		log.Printf("[config] WARNING: failed to report config snapshot: %v", err)
 	}
 
@@ -180,6 +183,19 @@ func main() {
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start: %v", err)
 	}
+}
+
+func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) error {
+	values := map[string]string{
+		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
+		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
+		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),
+		"lifecycle.trash_retention_hours":  strconv.Itoa(int(remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention) / time.Hour)),
+		"lifecycle.gc_interval_minutes":    strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute) / time.Minute)),
+		"lifecycle.drain_timeout_minutes":  strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute) / time.Minute)),
+		"lifecycle.drain_poll_interval_ms": strconv.Itoa(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500)),
+	}
+	return remoteCfg.ReportSnapshots(values, time.Now())
 }
 
 // discoverServerID 向 mgmt 查询或自动注册本节点的 server_id。

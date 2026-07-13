@@ -65,11 +65,18 @@ func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 	for _, cfg := range defaultConfigs() {
 		configs[cfg.Key] = cfg
 	}
-	if configs["forward.scan_interval"].Reloadable {
-		t.Fatal("forward.scan_interval must remain non-reloadable until its ticker can be rebuilt")
-	}
-	if !configs["lifecycle.trash_retention_hours"].Reloadable {
-		t.Fatal("lifecycle.trash_retention_hours must be reloadable")
+	for _, key := range []string{
+		"forward.scan_interval",
+		"forward.max_email_size",
+		"forward.body_preview_size",
+		"lifecycle.trash_retention_hours",
+		"lifecycle.gc_interval_minutes",
+		"lifecycle.drain_timeout_minutes",
+		"lifecycle.drain_poll_interval_ms",
+	} {
+		if !configs[key].Reloadable {
+			t.Fatalf("%s must be reloadable after NC-P2 runtime apply support", key)
+		}
 	}
 }
 

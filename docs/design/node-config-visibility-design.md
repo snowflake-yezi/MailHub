@@ -1,6 +1,6 @@
 # 节点配置可观测与覆盖设计文档
 
-> **状态：v3 评审修订版（2026-07-13）** ｜ 在 v2 代码事实审计基础上，补齐可靠下发、应用确认、配置版本与实施顺序。
+> **状态：v3 实施中（NC-P0 至 NC-P2 已完成，2026-07-13）** ｜ 已完成可靠下发、版本确认与首批运行参数热应用闭环。
 > **v2 起因：** 评审时质疑「清理回收站为什么也要重启节点」，深挖后发现 v1 把 `reloadable` / `requires_restart` 当成「人工填的元数据」，与代码实现严重脱节，并暴露多个真 bug。本次修订以**代码事实**为基准重新定义热加载语义。
 > **v3 起因：** v2 仍把「刷新 remoteCfg」与「组件确认应用」连接得不够严密，且错误地把定时 snapshot 当成通知丢失的恢复手段。v3 引入 `desired_revision` / `applied_revision`、组件级 `Apply` 和定时拉取自愈。
 > **阅读指引：** 第 3.5 / 3.6 节定义生效语义；第 8 节定义版本模型；第 11–13 节是应用协议、状态机与最终实施顺序。
@@ -149,11 +149,11 @@ reloadable = false  ⟺  当前只能 restart_process，或热应用路径尚未
 - **对比**：全局配置页 reload 按钮（`config.go:207`）、集成邮箱变更（`integrated_mailbox.go:126`）、filter 规则变更（`filter.go:84`）都正确触发了 reload——唯独节点覆盖漏了。
 - **修复**：PUT/DELETE 写库后通知目标节点，通知带超时且响应准确返回 `reload_dispatched`；通知失败不回滚已保存配置。
 
-### 4.2 🟡 `scan_interval` 标记与实现矛盾（标记已纠正，热加载待 NC-P2）
+### 4.2 ✅ `scan_interval` 标记与实现矛盾（NC-P2 已修复）
 
-- 原实现将 `forward.scan_interval` 标为 `Reloadable: true`；NC-P0 已暂时纠正为 false。
-- 但 `service.go:128` 的 ticker 是 `time.NewTicker(s.cfg.ScanInterval)` **启动时固化**，reload 不会重建 ticker。
-- **后果**：运维改扫描间隔 → 点 reload → 提示成功 → 实际间隔没变。标记撒了谎。
+- NC-P0 曾将 `forward.scan_interval` 暂时纠正为 false，避免能力标记超前于实现。
+- NC-P2 改为可重置 timer：Apply 阶段先校验新值，revision 提交后的 after-Apply 再唤醒扫描循环并按新间隔重建 timer。
+- schema 与 `system_configs.reloadable` 已翻回 true，并有 Apply 拒绝、运行时读取和 timer 重置信号测试。
 
 ### 4.3 🔴 `reloadable` 标记整体不可信
 
@@ -176,12 +176,13 @@ reloadable = false  ⟺  当前只能 restart_process，或热应用路径尚未
 | `forward.target_address` | `service.go:99` currentTarget | 实时读 | ✅ | true | 保持 | — |
 | `forward.smtp_user/pass` | `service.go:110` currentSMTPAuth | 实时读 | ✅ | — | 保持 | — |
 | `filter.*`（规则） | `engine.StartAutoSync` | 独立同步 | ✅ | true | 保持 | — |
-| **`forward.scan_interval`** | `service.go:128` ticker | 固化 | ❌ | false（P0 已纠正） | reload hook + ticker 重建 | 中 |
-| `forward.max_email_size` | `service.go:224` s.cfg | 固化 | ❌ | false | 改实时读 | 低 |
-| `forward.body_preview_size` | `service.go:224` s.cfg | 固化 | ❌ | false | 改实时读 | 低 |
+| **`forward.scan_interval`** | `service.go` timer | after-Apply 重建 | ✅ | true（P2） | 已完成 | 中 |
+| `forward.max_email_size` | `service.go` currentMaxEmailSize | read-through | ✅ | true（P2） | 已完成 | 低 |
+| `forward.body_preview_size` | `service.go` currentBodyPreviewSize | read-through | ✅ | true（P2） | 已完成 | 低 |
 | **`lifecycle.trash_retention_hours`** | `lifecycle.go:289` currentTrashRetention | read-through | ✅ | true（P0 已完成） | 保持 | — |
-| `lifecycle.gc_interval_minutes` | `lifecycle.go:251` ticker | 固化 | ❌ | false | ticker 重建 | 中 |
-| `lifecycle.drain_timeout_minutes` | 启动注入 | 固化 | ❌ | false | 改实时读 | 低 |
+| `lifecycle.gc_interval_minutes` | `lifecycle.go` timer | after-Apply 重建 | ✅ | true（P2） | 已完成 | 中 |
+| `lifecycle.drain_timeout_minutes` | `currentDrainTimeout` | read-through | ✅ | true（P2） | 已完成 | 低 |
+| `lifecycle.drain_poll_interval_ms` | `currentDrainPollInterval` | read-through | ✅ | true（P2） | 已完成 | 低 |
 | `healthcheck.*`（mgmt 侧） | `scheduler.go:82` | 实时读(30s TTL) | ✅ | — | 保持 | — |
 | 进程级（域名/DKIM/端口） | Postfix/Dovecot | — | ❌ | — | **真·需重启** | — |
 
@@ -373,19 +374,16 @@ func (l *Lifecycle) purgeExpiredTrash() {
 }
 ```
 
-逐项改造（对应第 5 节）：
+NC-P2 已按以下策略完成逐项改造（对应第 5 节）：
 
-- **低成本（read-through）**：`trash_retention_hours`、`max_email_size`、`body_preview_size`、`drain_timeout_minutes`。
-- **中成本（需 ticker 重建）**：`scan_interval`、`gc_interval_minutes`。两种方案：
-  - 方案 A：reload 时关闭旧 ticker、用新间隔重建（需给 Service/Lifecycle 加 `RestartLoop` 方法）。
-  - 方案 B：固定短心跳 ticker（如 1 min），每次 tick 实时读间隔并决定是否执行——实现简单但精度受限。
-  - 推荐方案 A，保持语义清晰。
+- **read-through**：`trash_retention_hours`、`max_email_size`、`body_preview_size`、`drain_timeout_minutes`、`drain_poll_interval_ms`。
+- **reload hook + after-Apply timer 重建**：`scan_interval`、`gc_interval_minutes`。Apply Hook 负责拒绝非法值，after-Apply 在新 revision 已提交后通知循环停止旧 timer 并按新间隔重建。
 
 Apply 协调器必须先完成全量校验，再依次/分组应用；任一组件失败时不提交新 `applied_revision`。对无法回滚的组件，需要在实现任务中明确幂等与部分失败恢复策略。
 
 ### 11.4 NC-11 配套：Apply 成功后上报 snapshot
 
-`ReportSnapshot` 当前仅在启动调用一次（`main.go:118`）。改造后只能在所有组件 Apply 成功、原子提交 `applied_revision` 后上报；内容从各组件 snapshot provider 读取实际 applied state。仅 `PullAll` 成功不得上报为 applied。
+NC-P2 已增加批量 `ReportSnapshots`：启动完成及所有组件 Apply 成功、原子提交 `applied_revision` 后，上报本阶段 7 个运行参数的实际读取值。管理端按统一 schema 过滤 snapshot，不再把“是否允许节点覆盖”错误地当作“是否允许上报”。
 
 ### 11.5 NC-12：boot_id 上报
 
@@ -450,11 +448,13 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 - [x] [NC-14] 建立 Apply/after-Apply 协调器，串行化 Pull+Apply 并拒绝 revision 倒退。
 - [x] 普通全量测试与 `go test -race ./...` 通过。
 
-### NC-P2：热应用闭环
+### NC-P2：热应用闭环（已完成，2026-07-13）
 
-- [NC-11] 按第 5 节逐项实现 read-through / reload hook。
-- [NC-11] ticker 重建完成并有 Apply 测试后，把能力标记翻回 true。
-- [NC-11] Apply 成功后提交 revision 并上报真实 snapshot。
+- [x] [NC-11] 按第 5 节实现 5 项 read-through 与 2 项 reload hook。
+- [x] [NC-11] 扫描与 GC 循环改为可重置 timer，能力标记翻回 true。
+- [x] [NC-11] Apply 前校验非法值，失败时保留上一 applied revision。
+- [x] [NC-11] Apply 成功提交 revision 后，批量上报 7 项真实 snapshot。
+- [x] 两个 Go 模块普通全量测试、`go test -race ./...`、`go vet ./...` 与 Web 生产构建通过。
 
 ### NC-P3：重启可观测与状态机
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type Lifecycle struct {
 	drainTimeout      time.Duration
 	drainPollInterval time.Duration
 	gcInterval        time.Duration
+	gcReset           chan struct{}
 }
 
 // NewLifecycle 创建生命周期管理器。timeout/intervals 为 0 时会使用默认值。
@@ -52,11 +54,60 @@ func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTi
 		drainTimeout:      drainTimeout,
 		drainPollInterval: drainPollInterval,
 		gcInterval:        gcInterval,
+		gcReset:           make(chan struct{}, 1),
 	}
 	if len(remoteCfg) > 0 {
 		lifecycle.remoteCfg = remoteCfg[0]
 	}
 	return lifecycle
+}
+
+func (l *Lifecycle) currentDrainTimeout() time.Duration {
+	if l.remoteCfg == nil {
+		return l.drainTimeout
+	}
+	return l.remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", l.drainTimeout)
+}
+
+func (l *Lifecycle) currentDrainPollInterval() time.Duration {
+	if l.remoteCfg == nil {
+		return l.drainPollInterval
+	}
+	milliseconds := l.remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", int(l.drainPollInterval/time.Millisecond))
+	if milliseconds <= 0 {
+		return l.drainPollInterval
+	}
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
+func (l *Lifecycle) currentGCInterval() time.Duration {
+	if l.remoteCfg == nil {
+		return l.gcInterval
+	}
+	return l.remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", l.gcInterval)
+}
+
+func (l *Lifecycle) ApplyConfig(current, next map[string]string) error {
+	return ValidateLifecycleConfig(current, next)
+}
+
+func ValidateLifecycleConfig(_, next map[string]string) error {
+	for _, key := range []string{"lifecycle.trash_retention_hours", "lifecycle.gc_interval_minutes", "lifecycle.drain_timeout_minutes", "lifecycle.drain_poll_interval_ms"} {
+		if value, ok := next[key]; ok {
+			number, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || number <= 0 {
+				return fmt.Errorf("%s must be a positive integer", key)
+			}
+		}
+	}
+	return nil
+}
+
+func (l *Lifecycle) AfterApplyConfig(_, _ uint64) {
+	select {
+	case l.gcReset <- struct{}{}:
+	default:
+	}
 }
 
 func (l *Lifecycle) currentTrashRetention() time.Duration {
@@ -99,7 +150,7 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 	}
 
 	// ② Wait for active forwarding jobs to drain.
-	l.waitForActiveJobs(l.drainTimeout)
+	l.waitForActiveJobs(l.currentDrainTimeout())
 
 	// ③ Atomically move to .trash/
 	if err := os.MkdirAll(l.trashBase, 0700); err != nil {
@@ -250,7 +301,7 @@ func (l *Lifecycle) waitForActiveJobs(timeout time.Duration) {
 		if l.fwdSvc.ActiveJobs() == 0 {
 			return // drained
 		}
-		time.Sleep(l.drainPollInterval)
+		time.Sleep(l.currentDrainPollInterval())
 	}
 	log.Printf("[lifecycle] wait for active jobs timed out after %v (forcing continue)", timeout)
 }
@@ -261,16 +312,25 @@ func (l *Lifecycle) StartGC(ctx context.Context) {
 	go func() {
 		// Run immediately on start, then at configured interval
 		l.purgeExpiredTrash()
-		ticker := time.NewTicker(l.gcInterval)
-		defer ticker.Stop()
+		timer := time.NewTimer(l.currentGCInterval())
+		defer timer.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
 				log.Println("[lifecycle] GC stopped")
 				return
-			case <-ticker.C:
+			case <-timer.C:
 				l.purgeExpiredTrash()
+				timer.Reset(l.currentGCInterval())
+			case <-l.gcReset:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(l.currentGCInterval())
 			}
 		}
 	}()

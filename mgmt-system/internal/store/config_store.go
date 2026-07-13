@@ -206,9 +206,9 @@ type seedConfig struct {
 func defaultConfigs() []seedConfig {
 	configs := []seedConfig{
 		// ── forward（邮件转发引擎）── mail-node ──
-		{Key: "forward.scan_interval", Value: "5", Type: "int", Category: "forward", Label: "扫描间隔（秒）", Desc: "Maildir 新邮件扫描频率", Default: "5", Reloadable: false},
-		{Key: "forward.max_email_size", Value: "10485760", Type: "int", Category: "forward", Label: "最大邮件大小（字节）", Desc: "单封邮件最大处理字节数，默认 10MB", Default: "10485760", Reloadable: false},
-		{Key: "forward.body_preview_size", Value: "65536", Type: "int", Category: "forward", Label: "正文预览大小（字节）", Desc: "过滤时读取的正文预览上限，默认 64KB", Default: "65536", Reloadable: false},
+		{Key: "forward.scan_interval", Value: "5", Type: "int", Category: "forward", Label: "扫描间隔（秒）", Desc: "Maildir 新邮件扫描频率", Default: "5", Reloadable: true},
+		{Key: "forward.max_email_size", Value: "10485760", Type: "int", Category: "forward", Label: "最大邮件大小（字节）", Desc: "单封邮件最大处理字节数，默认 10MB", Default: "10485760", Reloadable: true},
+		{Key: "forward.body_preview_size", Value: "65536", Type: "int", Category: "forward", Label: "正文预览大小（字节）", Desc: "过滤时读取的正文预览上限，默认 64KB", Default: "65536", Reloadable: true},
 		{Key: "forward.smtp_dial_timeout", Value: "15", Type: "int", Category: "forward", Label: "SMTP 拨号超时（秒）", Desc: "连接 SMTP 服务器的超时时间", Default: "15", Reloadable: false},
 		{Key: "forward.tls_insecure_skip", Value: "true", Type: "bool", Category: "forward", Label: "跳过 TLS 证书验证", Desc: "true=跳过 SMTP TLS 证书验证（仅内网环境）", Default: "true", Reloadable: false},
 		{Key: "forward.tls_min_version", Value: "12", Type: "int", Category: "forward", Label: "TLS 最低版本", Desc: "SMTP STARTTLS 最低 TLS 版本（12=1.2, 13=1.3）", Default: "12", Reloadable: false},
@@ -221,9 +221,9 @@ func defaultConfigs() []seedConfig {
 
 		// ── lifecycle（生命周期管理）── 双端 ──
 		{Key: "lifecycle.trash_retention_hours", Value: "24", Type: "int", Category: "lifecycle", Label: "回收站保留时间（小时）", Desc: "超过此时间的 .trash 目录将被物理清除", Default: "24", Reloadable: true},
-		{Key: "lifecycle.gc_interval_minutes", Value: "60", Type: "int", Category: "lifecycle", Label: "GC 执行间隔（分钟）", Desc: "回收站垃圾回收执行间隔", Default: "60", Reloadable: false},
-		{Key: "lifecycle.drain_timeout_minutes", Value: "5", Type: "int", Category: "lifecycle", Label: "排空超时（分钟）", Desc: "删除前等待活跃转发排空的超时时间", Default: "5", Reloadable: false},
-		{Key: "lifecycle.drain_poll_interval_ms", Value: "500", Type: "int", Category: "lifecycle", Label: "排空轮询间隔（毫秒）", Desc: "检查活跃转发数是否归零的轮询间隔", Default: "500", Reloadable: false},
+		{Key: "lifecycle.gc_interval_minutes", Value: "60", Type: "int", Category: "lifecycle", Label: "GC 执行间隔（分钟）", Desc: "回收站垃圾回收执行间隔", Default: "60", Reloadable: true},
+		{Key: "lifecycle.drain_timeout_minutes", Value: "5", Type: "int", Category: "lifecycle", Label: "排空超时（分钟）", Desc: "删除前等待活跃转发排空的超时时间", Default: "5", Reloadable: true},
+		{Key: "lifecycle.drain_poll_interval_ms", Value: "500", Type: "int", Category: "lifecycle", Label: "排空轮询间隔（毫秒）", Desc: "检查活跃转发数是否归零的轮询间隔", Default: "500", Reloadable: true},
 		{Key: "lifecycle.delete_watchdog_minutes", Value: "15", Type: "int", Category: "lifecycle", Label: "删除看门狗超时（分钟）", Desc: "超过此时间的 deleting 任务将被重新下发", Default: "15", Reloadable: false},
 		{Key: "lifecycle.schedule_interval_minutes", Value: "5", Type: "int", Category: "lifecycle", Label: "调度间隔（分钟）", Desc: "mgmt-system 生命周期 scheduler 执行间隔", Default: "5", Reloadable: false},
 

@@ -213,9 +213,6 @@ func (h *ConfigHandler) ReportServerConfigSnapshot(c *gin.Context) {
 	filtered := make([]model.ServerConfigSnapshot, 0, len(req.Items))
 	for _, item := range req.Items {
 		definition, supported := configschema.Get(item.ConfigKey)
-		if supported && !definition.NodeOverridable {
-			supported = false
-		}
 		if !supported {
 			continue
 		}

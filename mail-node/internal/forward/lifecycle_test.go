@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,50 @@ import (
 	mailconfig "github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
+
+func TestLifecycleReadsReloadedRuntimeValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+			"configs": map[string]string{
+				"lifecycle.gc_interval_minutes":    "2",
+				"lifecycle.drain_timeout_minutes":  "3",
+				"lifecycle.drain_poll_interval_ms": "25",
+			},
+			"sources": map[string]string{}, "desired_revision": 1,
+		}})
+	}))
+	defer server.Close()
+	remoteCfg := mailconfig.NewRemoteConfig(server.URL, "secret")
+	if err := remoteCfg.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	base := t.TempDir()
+	usersFile, vmailboxFile := setupConfigFiles(t)
+	lifecycle := NewLifecycle(newTestManager(t, base, usersFile, vmailboxFile), &Service{}, 0, time.Minute, time.Second, time.Minute, remoteCfg)
+	if got := lifecycle.currentGCInterval(); got != 2*time.Minute {
+		t.Fatalf("GC interval = %v, want 2m", got)
+	}
+	if got := lifecycle.currentDrainTimeout(); got != 3*time.Minute {
+		t.Fatalf("drain timeout = %v, want 3m", got)
+	}
+	if got := lifecycle.currentDrainPollInterval(); got != 25*time.Millisecond {
+		t.Fatalf("drain poll interval = %v, want 25ms", got)
+	}
+	lifecycle.AfterApplyConfig(1, 1)
+	select {
+	case <-lifecycle.gcReset:
+	default:
+		t.Fatal("after apply did not request GC timer reset")
+	}
+}
+
+func TestLifecycleApplyRejectsInvalidRuntimeValue(t *testing.T) {
+	lifecycle := &Lifecycle{}
+	if err := lifecycle.ApplyConfig(nil, map[string]string{"lifecycle.gc_interval_minutes": "bad"}); err == nil {
+		t.Fatal("ApplyConfig() error = nil, want invalid interval rejection")
+	}
+}
 
 func TestPurgeExpiredTrashUsesReloadedRetention(t *testing.T) {
 	retention := "48"

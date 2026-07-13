@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,7 @@ type Service struct {
 	engine    *filter.Engine
 	mgr       *mailbox.Manager
 	remoteCfg *config.RemoteConfig // 动态配置，用于热加载转发目标 target_address
+	scanReset chan struct{}
 
 	mu         sync.Mutex
 	activeJobs int // count of files currently being processed
@@ -91,6 +93,55 @@ func New(cfg ForwardConfig, engine *filter.Engine, mgr *mailbox.Manager, remoteC
 		engine:    engine,
 		mgr:       mgr,
 		remoteCfg: remoteCfg,
+		scanReset: make(chan struct{}, 1),
+	}
+}
+
+func (s *Service) currentScanInterval() time.Duration {
+	seconds := s.cfg.ScanInterval
+	if s.remoteCfg != nil {
+		seconds = s.remoteCfg.GetInt("forward.scan_interval", seconds)
+	}
+	if seconds <= 0 {
+		seconds = 5
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (s *Service) currentMaxEmailSize() int64 {
+	if s.remoteCfg == nil {
+		return s.cfg.MaxEmailSize
+	}
+	return s.remoteCfg.GetInt64("forward.max_email_size", s.cfg.MaxEmailSize)
+}
+
+func (s *Service) currentBodyPreviewSize() int64 {
+	if s.remoteCfg == nil {
+		return s.cfg.BodyPreviewSize
+	}
+	return s.remoteCfg.GetInt64("forward.body_preview_size", s.cfg.BodyPreviewSize)
+}
+
+func (s *Service) ApplyConfig(current, next map[string]string) error {
+	return ValidateForwardConfig(current, next)
+}
+
+func ValidateForwardConfig(_, next map[string]string) error {
+	for _, key := range []string{"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size"} {
+		if value, ok := next[key]; ok {
+			number, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || number <= 0 {
+				return fmt.Errorf("%s must be a positive integer", key)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) AfterApplyConfig(_, _ uint64) {
+	select {
+	case s.scanReset <- struct{}{}:
+	default:
 	}
 }
 
@@ -125,11 +176,11 @@ func (s *Service) ActiveJobs() int {
 
 // Start 启动后台扫描循环（阻塞，应放在 goroutine 中调用）
 func (s *Service) Start(ctx context.Context) {
-	ticker := time.NewTicker(time.Duration(s.cfg.ScanInterval) * time.Second)
-	defer ticker.Stop()
+	timer := time.NewTimer(s.currentScanInterval())
+	defer timer.Stop()
 
 	log.Printf("[forward] service started (scan_interval=%ds, max_size=%dMB, target=%s)",
-		s.cfg.ScanInterval, s.cfg.MaxEmailSize/(1024*1024), s.currentTarget())
+		int(s.currentScanInterval()/time.Second), s.currentMaxEmailSize()/(1024*1024), s.currentTarget())
 
 	// Immediate first scan
 	s.scanAndLog()
@@ -139,8 +190,17 @@ func (s *Service) Start(ctx context.Context) {
 		case <-ctx.Done():
 			log.Println("[forward] service stopped")
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			s.scanAndLog()
+			timer.Reset(s.currentScanInterval())
+		case <-s.scanReset:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(s.currentScanInterval())
 		}
 	}
 }
@@ -221,7 +281,7 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	start := time.Now()
 
 	// 1. Read headers + body preview for filtering
-	headers, bodyPreview, err := readForFiltering(filePath, s.cfg.MaxEmailSize, s.cfg.BodyPreviewSize)
+	headers, bodyPreview, err := readForFiltering(filePath, s.currentMaxEmailSize(), s.currentBodyPreviewSize())
 	if err != nil {
 		// Oversized or unparseable → move to cur/ to avoid re-scan
 		moveToCur(filePath)

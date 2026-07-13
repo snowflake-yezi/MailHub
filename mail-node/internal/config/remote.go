@@ -228,6 +228,11 @@ func (rc *RemoteConfig) Source(key string) string {
 
 // ReportSnapshot confirms the value actually applied by this process.
 func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) error {
+	return rc.ReportSnapshots(map[string]string{key: value}, appliedAt)
+}
+
+// ReportSnapshots confirms a set of values actually applied by this process.
+func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time.Time) error {
 	if rc.nodeID == 0 {
 		return nil
 	}
@@ -243,12 +248,14 @@ func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) e
 		} `json:"items"`
 	}{ReportedAt: time.Now().UTC()}
 	payload.DesiredRevision, payload.AppliedRevision = rc.Revisions()
-	payload.Items = append(payload.Items, struct {
-		ConfigKey      string    `json:"config_key"`
-		EffectiveValue string    `json:"effective_value"`
-		Source         string    `json:"source"`
-		AppliedAt      time.Time `json:"applied_at"`
-	}{key, value, rc.Source(key), appliedAt.UTC()})
+	for key, value := range values {
+		payload.Items = append(payload.Items, struct {
+			ConfigKey      string    `json:"config_key"`
+			EffectiveValue string    `json:"effective_value"`
+			Source         string    `json:"source"`
+			AppliedAt      time.Time `json:"applied_at"`
+		}{key, value, rc.Source(key), appliedAt.UTC()})
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode config snapshot: %w", err)
