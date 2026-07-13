@@ -121,6 +121,20 @@ func main() {
 			log.Printf("[config] post-apply snapshot failed: %v", err)
 		}
 	})
+	if cfg.Node.ID == 0 {
+		go startDiscoveryRetry(ctx, 5*time.Second, func() (uint64, error) {
+			return discoverServerID(cfg)
+		}, func(nodeID uint64) {
+			remoteCfg.SetNodeID(nodeID)
+			log.Printf("[discovery] server_id recovered: %d", nodeID)
+			if err := remoteCfg.Reload(); err != nil {
+				log.Printf("[discovery] node config reload after recovery failed: %v", err)
+			} else if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
+				log.Printf("[discovery] config snapshot after recovery failed: %v", err)
+			}
+			go lifecycle.PullDeletingTasks(cfg.Management.APIURL, nodeID, cfg.SharedSecret)
+		})
+	}
 	go remoteCfg.StartPolling(ctx, time.Minute, func(err error) {
 		log.Printf("[config] periodic pull failed: %v", err)
 	})
@@ -256,6 +270,39 @@ func discoverServerID(cfg *config.Config) (uint64, error) {
 	return result.Data.ServerID, nil
 }
 
+func startDiscoveryRetry(ctx context.Context, interval time.Duration, discover func() (uint64, error), onDiscovered func(uint64)) {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	backoff := interval
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		nodeID, err := discover()
+		if err != nil {
+			log.Printf("[discovery] retry failed: %v", err)
+			backoff *= 2
+			if backoff > time.Minute {
+				backoff = time.Minute
+			}
+			timer.Reset(backoff)
+			continue
+		}
+		if nodeID == 0 {
+			log.Printf("[discovery] retry returned empty server_id")
+			timer.Reset(backoff)
+			continue
+		}
+		onDiscovered(nodeID)
+		return
+	}
+}
+
 // clampHeartbeat 把心跳间隔约束到合法区间；区间外（含 0/负）返回 fallback（SP-7）。
 // 区间边界从远程配置读取，默认 [5, 600] 秒。remoteCfg 为 nil 时使用默认值。
 func clampHeartbeat(v, fallback int, remoteCfg *config.RemoteConfig) int {
@@ -284,7 +331,8 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 
 	// beat 上报一次心跳，返回 mgmt 下发的期望间隔；失败或非法时返回 0（调用方沿用当前值）。
 	beat := func() int {
-		if cfg.Node.ID == 0 {
+		nodeID := remoteCfg.NodeID()
+		if nodeID == 0 {
 			return 0 // discovery failed, skip heartbeat
 		}
 		load := 0
@@ -292,7 +340,7 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 			load = mailboxMgr.ActiveCount()
 		}
 		body, _ := json.Marshal(map[string]interface{}{
-			"server_id":        cfg.Node.ID,
+			"server_id":        nodeID,
 			"status":           "alive", // 仅表示本地进程自检 OK；mgmt 不据此覆盖 status
 			"load":             load,
 			"node_name":        cfg.Node.Name,

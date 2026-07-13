@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 func TestClampHeartbeat(t *testing.T) {
 	tests := []struct {
@@ -18,5 +24,32 @@ func TestClampHeartbeat(t *testing.T) {
 		if got := clampHeartbeat(tc.v, tc.fallback, nil); got != tc.want {
 			t.Fatalf("clampHeartbeat(%d, %d) = %d, want %d", tc.v, tc.fallback, got, tc.want)
 		}
+	}
+}
+
+func TestStartDiscoveryRetryRecoversAfterManagementStarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var attempts atomic.Int32
+	discovered := make(chan uint64, 1)
+	go startDiscoveryRetry(ctx, time.Millisecond, func() (uint64, error) {
+		if attempts.Add(1) < 3 {
+			return 0, errors.New("management unavailable")
+		}
+		return 42, nil
+	}, func(nodeID uint64) {
+		discovered <- nodeID
+	})
+
+	select {
+	case nodeID := <-discovered:
+		if nodeID != 42 {
+			t.Fatalf("node ID = %d, want 42", nodeID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("discovery retry did not recover")
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("attempts = %d, want 3", got)
 	}
 }

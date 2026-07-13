@@ -12,8 +12,21 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	mailconfig "github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
+
+func TestCurrentNodeIDUsesRecoveredRemoteIdentity(t *testing.T) {
+	remoteCfg := mailconfig.NewRemoteConfig("", "")
+	h := &NodeHandler{nodeID: 0, remoteCfg: remoteCfg}
+	if got := h.currentNodeID(); got != 0 {
+		t.Fatalf("initial node ID = %d, want 0", got)
+	}
+	remoteCfg.SetNodeID(42)
+	if got := h.currentNodeID(); got != 42 {
+		t.Fatalf("recovered node ID = %d, want 42", got)
+	}
+}
 
 func TestSplitPage(t *testing.T) {
 	files := []string{"a", "b", "c", "d", "e"}

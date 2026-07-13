@@ -51,8 +51,9 @@ func (rc *RemoteConfig) PullAll() error {
 	rc.pullMu.Lock()
 	defer rc.pullMu.Unlock()
 	url := fmt.Sprintf("%s/api/v1/internal/configs", rc.mgmtURL)
-	if rc.nodeID != 0 {
-		url += "?server_id=" + strconv.FormatUint(rc.nodeID, 10)
+	nodeID := rc.NodeID()
+	if nodeID != 0 {
+		url += "?server_id=" + strconv.FormatUint(nodeID, 10)
 	}
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -125,6 +126,21 @@ func (rc *RemoteConfig) PullAll() error {
 	}
 
 	return nil
+}
+
+func (rc *RemoteConfig) NodeID() uint64 {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.nodeID
+}
+
+func (rc *RemoteConfig) SetNodeID(nodeID uint64) {
+	if nodeID == 0 {
+		return
+	}
+	rc.mu.Lock()
+	rc.nodeID = nodeID
+	rc.mu.Unlock()
 }
 
 func (rc *RemoteConfig) setLastApplyError(message string) {
@@ -233,7 +249,8 @@ func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) e
 
 // ReportSnapshots confirms a set of values actually applied by this process.
 func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time.Time) error {
-	if rc.nodeID == 0 {
+	nodeID := rc.NodeID()
+	if nodeID == 0 {
 		return nil
 	}
 	payload := struct {
@@ -260,7 +277,7 @@ func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time
 	if err != nil {
 		return fmt.Errorf("encode config snapshot: %w", err)
 	}
-	url := fmt.Sprintf("%s/api/v1/internal/servers/%d/config-snapshot", rc.mgmtURL, rc.nodeID)
+	url := fmt.Sprintf("%s/api/v1/internal/servers/%d/config-snapshot", rc.mgmtURL, nodeID)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build snapshot request: %w", err)

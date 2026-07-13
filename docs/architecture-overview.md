@@ -195,7 +195,7 @@ GET  /sync/deleting?server_id={id}
 | 邮件查询 | 扫描 `new/` 和 `cur/`，结构化解析 MIME，支持附件下载 |
 | 过滤转发 | 后台扫描 Maildir，应用规则后转发到 active 集成邮箱 |
 | inline 图片兼容 | 对 MIME part 推断真实 content-type、filename 和扩展名 |
-| 运行协同 | 节点发现、心跳、拉取规则/配置、启动时拉取 deleting 任务 |
+| 运行协同 | 节点发现失败后后台退避重试；恢复身份后自动拉取节点配置、上报心跳/snapshot，并对账 deleting 任务 |
 
 ### 3.2 对内 API
 

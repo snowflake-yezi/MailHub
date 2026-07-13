@@ -51,6 +51,15 @@ func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter
 	}
 }
 
+func (h *NodeHandler) currentNodeID() uint64 {
+	if h.remoteCfg != nil {
+		if nodeID := h.remoteCfg.NodeID(); nodeID != 0 {
+			return nodeID
+		}
+	}
+	return h.nodeID
+}
+
 // ===== 邮箱管理（管理系统调用） =====
 
 // CreateMailbox 创建邮箱
@@ -532,7 +541,7 @@ func (h *NodeHandler) Health(c *gin.Context) {
 		"code": 0,
 		"data": gin.H{
 			"status":         "ok",
-			"node_id":        h.nodeID,
+			"node_id":        h.currentNodeID(),
 			"node_name":      h.nodeName,
 			"total_messages": totalMessages,
 			"uptime":         time.Now().Unix(),
@@ -551,7 +560,7 @@ func (h *NodeHandler) Stats(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"node_id":        h.nodeID,
+			"node_id":        h.currentNodeID(),
 			"node_name":      h.nodeName,
 			"mailbox_count":  mailboxCount,
 			"total_messages": totalMessages,

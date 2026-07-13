@@ -63,6 +63,34 @@ func TestPullAllUsesServerIDAndTracksSource(t *testing.T) {
 	}
 }
 
+func TestSetNodeIDSwitchesPollingToNodeScope(t *testing.T) {
+	queries := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		queries <- r.URL.Query().Get("server_id")
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+			"configs": map[string]string{}, "sources": map[string]string{}, "desired_revision": 0,
+		}})
+	}))
+	defer server.Close()
+	rc := NewRemoteConfig(server.URL, "secret")
+	if err := rc.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+	rc.SetNodeID(42)
+	if err := rc.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-queries; got != "" {
+		t.Fatalf("initial server_id = %q, want empty", got)
+	}
+	if got := <-queries; got != "42" {
+		t.Fatalf("recovered server_id = %q, want 42", got)
+	}
+	if got := rc.NodeID(); got != 42 {
+		t.Fatalf("NodeID() = %d, want 42", got)
+	}
+}
+
 func TestPullAllKeepsAppliedConfigWhenHookFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
