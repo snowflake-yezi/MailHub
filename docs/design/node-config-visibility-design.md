@@ -442,12 +442,13 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 - [x] 前端提示与 `pending_reload` / `reload_dispatched` 实际结果对齐。
 - [x] 两个 Go 模块普通测试及 `go test -race ./...`、Web 生产构建通过。
 
-### NC-P1：契约与版本基础（后续能力的前置条件）
+### NC-P1：契约与版本基础（已完成，2026-07-13）
 
-- [NC-14] 建立统一配置 schema，替代多处手工元数据。
-- [NC-14] 引入 `desired_revision` / `applied_revision` 和 snapshot provider 契约。
-- [NC-14] mail-node 定时拉取（抖动 + 退避），形成最终一致性。
-- [NC-14] 建立 Apply 协调器及成功/失败测试骨架。
+- [x] [NC-14] 建立统一配置 schema，首批收口 `lifecycle.trash_retention_hours` 的所有权、校验和 Apply 能力；更多 key 随 P2/P5 迁入。
+- [x] [NC-14] 引入 `desired_revision` / `applied_revision`、`last_apply_error` 和 snapshot provider 契约。
+- [x] [NC-14] mail-node 定时拉取（抖动 + 退避），形成最终一致性。
+- [x] [NC-14] 建立 Apply/after-Apply 协调器，串行化 Pull+Apply 并拒绝 revision 倒退。
+- [x] 普通全量测试与 `go test -race ./...` 通过。
 
 ### NC-P2：热应用闭环
 

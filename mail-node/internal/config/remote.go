@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"sync"
@@ -13,13 +15,21 @@ import (
 
 // RemoteConfig 从 mgmt-system 拉取的动态配置（线程安全）。
 type RemoteConfig struct {
-	mu      sync.RWMutex
-	configs map[string]string
-	mgmtURL string
-	secret  string
-	nodeID  uint64
-	sources map[string]string
+	mu              sync.RWMutex
+	pullMu          sync.Mutex
+	configs         map[string]string
+	mgmtURL         string
+	secret          string
+	nodeID          uint64
+	sources         map[string]string
+	desiredRevision uint64
+	appliedRevision uint64
+	applyHooks      []ApplyFunc
+	afterApplyHooks []func(desiredRevision, appliedRevision uint64)
+	lastApplyError  string
 }
+
+type ApplyFunc func(current, next map[string]string) error
 
 // NewRemoteConfig 创建远程配置客户端。mgmtURL 为 mgmt-system 地址（不含路径），secret 为共享密钥。
 func NewRemoteConfig(mgmtURL, secret string, nodeID ...uint64) *RemoteConfig {
@@ -38,6 +48,8 @@ func NewRemoteConfig(mgmtURL, secret string, nodeID ...uint64) *RemoteConfig {
 
 // PullAll 从 mgmt-system 拉取全量配置并替换本地缓存。
 func (rc *RemoteConfig) PullAll() error {
+	rc.pullMu.Lock()
+	defer rc.pullMu.Unlock()
 	url := fmt.Sprintf("%s/api/v1/internal/configs", rc.mgmtURL)
 	if rc.nodeID != 0 {
 		url += "?server_id=" + strconv.FormatUint(rc.nodeID, 10)
@@ -63,8 +75,9 @@ func (rc *RemoteConfig) PullAll() error {
 	var apiResp struct {
 		Code int `json:"code"`
 		Data struct {
-			Configs map[string]string `json:"configs"`
-			Sources map[string]string `json:"sources"`
+			Configs         map[string]string `json:"configs"`
+			Sources         map[string]string `json:"sources"`
+			DesiredRevision uint64            `json:"desired_revision"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
@@ -74,12 +87,133 @@ func (rc *RemoteConfig) PullAll() error {
 		return fmt.Errorf("mgmt error code %d", apiResp.Code)
 	}
 
+	rc.mu.RLock()
+	current := cloneMap(rc.configs)
+	currentSources := cloneMap(rc.sources)
+	hooks := append([]ApplyFunc(nil), rc.applyHooks...)
+	observedDesiredRevision := rc.desiredRevision
+	appliedRevision := rc.appliedRevision
+	rc.mu.RUnlock()
+	if apiResp.Data.DesiredRevision < observedDesiredRevision {
+		return fmt.Errorf("stale desired revision %d, already observed %d", apiResp.Data.DesiredRevision, observedDesiredRevision)
+	}
 	rc.mu.Lock()
-	rc.configs = apiResp.Data.Configs
-	rc.sources = apiResp.Data.Sources
+	if apiResp.Data.DesiredRevision > rc.desiredRevision {
+		rc.desiredRevision = apiResp.Data.DesiredRevision
+	}
 	rc.mu.Unlock()
+	if apiResp.Data.DesiredRevision <= appliedRevision && equalMap(current, apiResp.Data.Configs) && equalMap(currentSources, apiResp.Data.Sources) {
+		return nil
+	}
+	for _, apply := range hooks {
+		if err := apply(current, apiResp.Data.Configs); err != nil {
+			rc.setLastApplyError(err.Error())
+			return fmt.Errorf("apply config: %w", err)
+		}
+	}
+
+	rc.mu.Lock()
+	rc.configs = cloneMap(apiResp.Data.Configs)
+	rc.sources = cloneMap(apiResp.Data.Sources)
+	rc.desiredRevision = apiResp.Data.DesiredRevision
+	rc.appliedRevision = apiResp.Data.DesiredRevision
+	rc.lastApplyError = ""
+	afterApplyHooks := append([]func(uint64, uint64){}, rc.afterApplyHooks...)
+	rc.mu.Unlock()
+	for _, afterApply := range afterApplyHooks {
+		afterApply(apiResp.Data.DesiredRevision, apiResp.Data.DesiredRevision)
+	}
 
 	return nil
+}
+
+func (rc *RemoteConfig) setLastApplyError(message string) {
+	rc.mu.Lock()
+	rc.lastApplyError = message
+	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) LastApplyError() string {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.lastApplyError
+}
+
+func cloneMap(values map[string]string) map[string]string {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
+func equalMap(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func (rc *RemoteConfig) RegisterApplyHook(apply ApplyFunc) {
+	if apply == nil {
+		return
+	}
+	rc.mu.Lock()
+	rc.applyHooks = append(rc.applyHooks, apply)
+	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) RegisterAfterApplyHook(afterApply func(desiredRevision, appliedRevision uint64)) {
+	if afterApply == nil {
+		return
+	}
+	rc.mu.Lock()
+	rc.afterApplyHooks = append(rc.afterApplyHooks, afterApply)
+	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) Revisions() (desired, applied uint64) {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.desiredRevision, rc.appliedRevision
+}
+
+func (rc *RemoteConfig) StartPolling(ctx context.Context, interval time.Duration, onError func(error)) {
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	backoff := interval
+	for {
+		jitterRange := interval / 5
+		jitter := time.Duration(0)
+		if jitterRange > 0 {
+			jitter = time.Duration(rand.Int63n(int64(jitterRange)))
+		}
+		timer := time.NewTimer(backoff + jitter)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		if err := rc.Reload(); err != nil {
+			rc.setLastApplyError(err.Error())
+			if onError != nil {
+				onError(err)
+			}
+			backoff *= 2
+			if max := interval * 8; backoff > max {
+				backoff = max
+			}
+			continue
+		}
+		backoff = interval
+	}
 }
 
 // Source returns where the effective remote value came from.
@@ -98,14 +232,17 @@ func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) e
 		return nil
 	}
 	payload := struct {
-		ReportedAt time.Time `json:"reported_at"`
-		Items      []struct {
+		ReportedAt      time.Time `json:"reported_at"`
+		DesiredRevision uint64    `json:"desired_revision"`
+		AppliedRevision uint64    `json:"applied_revision"`
+		Items           []struct {
 			ConfigKey      string    `json:"config_key"`
 			EffectiveValue string    `json:"effective_value"`
 			Source         string    `json:"source"`
 			AppliedAt      time.Time `json:"applied_at"`
 		} `json:"items"`
 	}{ReportedAt: time.Now().UTC()}
+	payload.DesiredRevision, payload.AppliedRevision = rc.Revisions()
 	payload.Items = append(payload.Items, struct {
 		ConfigKey      string    `json:"config_key"`
 		EffectiveValue string    `json:"effective_value"`
@@ -137,18 +274,18 @@ func (rc *RemoteConfig) ReportSnapshot(key, value string, appliedAt time.Time) e
 // Reload 增量重载配置（从 mgmt-system 拉取变更项）。
 func (rc *RemoteConfig) Reload() error {
 	// For now, just re-pull all. In the future, mgmt could send changed keys.
-	return rc.PullAll()
+	err := rc.PullAll()
+	if err != nil {
+		rc.setLastApplyError(err.Error())
+	}
+	return err
 }
 
 // Configs returns a copy of all configs (for logging/inspection).
 func (rc *RemoteConfig) Configs() map[string]string {
 	rc.mu.RLock()
 	defer rc.mu.RUnlock()
-	out := make(map[string]string, len(rc.configs))
-	for k, v := range rc.configs {
-		out[k] = v
-	}
-	return out
+	return cloneMap(rc.configs)
 }
 
 // get returns the raw string value for a key.

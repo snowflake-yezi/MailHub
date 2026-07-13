@@ -397,11 +397,13 @@ func (h *ServerHandler) DiscoverServer(c *gin.Context) {
 // POST /api/v1/internal/servers/heartbeat
 func (h *ServerHandler) Heartbeat(c *gin.Context) {
 	var req struct {
-		ServerID  uint64 `json:"server_id"`
-		Status    string `json:"status"`
-		Load      int    `json:"load"`
-		DiskUsage string `json:"disk_usage"`
-		NodeName  string `json:"node_name"`
+		ServerID        uint64 `json:"server_id"`
+		Status          string `json:"status"`
+		Load            int    `json:"load"`
+		DiskUsage       string `json:"disk_usage"`
+		NodeName        string `json:"node_name"`
+		AppliedRevision uint64 `json:"applied_revision"`
+		LastApplyError  string `json:"last_apply_error"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -414,15 +416,28 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 		return
 	}
 
-	if err := h.store.UpdateServerHeartbeat(req.ServerID, req.Load); err != nil {
+	server, err := h.store.GetServer(req.ServerID)
+	if err != nil {
+		notFound(c, "server not found")
+		return
+	}
+	if req.AppliedRevision > server.DesiredRevision {
+		badRequest(c, ErrCodeParamInvalid, "applied_revision exceeds desired_revision")
+		return
+	}
+	appliedRevision := req.AppliedRevision
+	if appliedRevision < server.AppliedRevision {
+		appliedRevision = 0
+	}
+	if err := h.store.UpdateServerHeartbeatState(req.ServerID, req.Load, appliedRevision, req.LastApplyError); err != nil {
 		serverError(c, ErrCodeInternal, "failed to update heartbeat")
 		return
 	}
 
 	// 下发期望心跳间隔，mail-node 据此动态调整节拍（SP-6'）。server 不存在或字段缺失时回退 30。
 	interval := 30
-	if srv, serr := h.store.GetServer(req.ServerID); serr == nil && srv.HeartbeatInterval >= 5 {
-		interval = srv.HeartbeatInterval
+	if server.HeartbeatInterval >= 5 {
+		interval = server.HeartbeatInterval
 	}
 	success(c, "heartbeat received", gin.H{"heartbeat_interval": interval})
 }

@@ -27,6 +27,9 @@ type MailServer struct {
 	LastProbeAt       *time.Time `json:"last_probe_at"`
 	ProbeFailCount    int        `gorm:"not null;default:0" json:"probe_fail_count"`
 	HeartbeatInterval int        `gorm:"not null;default:30" json:"heartbeat_interval"`
+	DesiredRevision   uint64     `gorm:"not null;default:0" json:"desired_revision"`
+	AppliedRevision   uint64     `gorm:"not null;default:0" json:"applied_revision"`
+	LastApplyError    string     `gorm:"type:text" json:"last_apply_error,omitempty"`
 	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 
@@ -67,6 +70,8 @@ type ServerConfigSnapshot struct {
 	RequiresRestart bool       `gorm:"not null;default:false" json:"requires_restart"`
 	AppliedAt       *time.Time `json:"applied_at,omitempty"`
 	ReportedAt      time.Time  `gorm:"not null;index" json:"reported_at"`
+	DesiredRevision uint64     `gorm:"not null;default:0" json:"desired_revision"`
+	AppliedRevision uint64     `gorm:"not null;default:0" json:"applied_revision"`
 }
 
 // MailboxAccount 邮箱账号资产，维度为 server + domain + mailbox + credential。

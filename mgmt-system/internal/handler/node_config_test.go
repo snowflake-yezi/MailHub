@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ticket/email-mgmt-system/internal/configschema"
 )
 
 func TestNotifyNodeReload(t *testing.T) {
@@ -47,13 +49,16 @@ func TestNotifyNodeReloadRejectsFailureStatus(t *testing.T) {
 }
 
 func TestNodeConfigReloadMetadata(t *testing.T) {
-	definition := nodeConfigDefinitions[trashRetentionKey]
-	if !definition.Reloadable || definition.RequiresRestart {
-		t.Fatalf("trash retention metadata = reloadable:%v requires_restart:%v", definition.Reloadable, definition.RequiresRestart)
+	definition, ok := configschema.Get(trashRetentionKey)
+	if !ok || !definition.Reloadable() || definition.RequiresRestart() {
+		t.Fatalf("trash retention metadata = %#v", definition)
 	}
 
-	result := reloadDispatchResult(definition, http.ErrHandlerTimeout)
+	result := reloadDispatchResult(definition, 42, http.ErrHandlerTimeout)
 	if result["reload_dispatched"] != false || result["reload_error"] == "" {
 		t.Fatalf("failed dispatch result = %#v", result)
+	}
+	if result["desired_revision"] != uint64(42) {
+		t.Fatalf("desired revision result = %#v", result)
 	}
 }

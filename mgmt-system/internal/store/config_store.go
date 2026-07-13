@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ticket/email-mgmt-system/internal/configschema"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"gorm.io/gorm"
 )
@@ -38,16 +39,18 @@ func (s *Store) GetConfigByKey(key string) (*model.SystemConfig, error) {
 
 // SetConfig 更新配置值。
 func (s *Store) SetConfig(key, value string) error {
-	result := s.db.Model(&model.SystemConfig{}).
-		Where("config_key = ?", key).
-		Update("config_value", value)
-	if result.Error != nil {
-		return fmt.Errorf("set config %s: %w", key, result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("config key %s not found", key)
-	}
-	return nil
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.SystemConfig{}).
+			Where("config_key = ?", key).
+			Update("config_value", value)
+		if result.Error != nil {
+			return fmt.Errorf("set config %s: %w", key, result.Error)
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("config key %s not found", key)
+		}
+		return s.BumpAllServerDesiredRevisions(tx)
+	})
 }
 
 // BatchSetConfigs 批量更新（map[key]value）。
@@ -60,8 +63,11 @@ func (s *Store) BatchSetConfigs(updates map[string]string) error {
 			if result.Error != nil {
 				return fmt.Errorf("batch set %s: %w", key, result.Error)
 			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("config key %s not found", key)
+			}
 		}
-		return nil
+		return s.BumpAllServerDesiredRevisions(tx)
 	})
 }
 
@@ -198,7 +204,7 @@ type seedConfig struct {
 }
 
 func defaultConfigs() []seedConfig {
-	return []seedConfig{
+	configs := []seedConfig{
 		// ── forward（邮件转发引擎）── mail-node ──
 		{Key: "forward.scan_interval", Value: "5", Type: "int", Category: "forward", Label: "扫描间隔（秒）", Desc: "Maildir 新邮件扫描频率", Default: "5", Reloadable: false},
 		{Key: "forward.max_email_size", Value: "10485760", Type: "int", Category: "forward", Label: "最大邮件大小（字节）", Desc: "单封邮件最大处理字节数，默认 10MB", Default: "10485760", Reloadable: false},
@@ -259,6 +265,12 @@ func defaultConfigs() []seedConfig {
 		{Key: "general.default_server_capacity", Value: "5000", Type: "int", Category: "general", Label: "默认服务器容量", Desc: "新注册 mail-node 的默认邮箱容量", Default: "5000", Reloadable: true},
 		{Key: "general.default_dkim_selector", Value: "mail", Type: "string", Category: "general", Label: "默认 DKIM 选择器", Desc: "新域名的默认 DKIM selector", Default: "mail", Reloadable: false},
 	}
+	for i := range configs {
+		if definition, ok := configschema.Get(configs[i].Key); ok {
+			configs[i].Reloadable = definition.Reloadable()
+		}
+	}
+	return configs
 }
 
 // SeedDefaultConfigs 种子数据：INSERT 不存在的配置项，更新已存在项的 default_value/description（不覆盖当前值）。

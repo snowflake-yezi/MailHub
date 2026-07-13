@@ -181,11 +181,23 @@ func (s *Store) CountMailboxesOnServer(serverID uint64) (int64, error) {
 // UpdateServerHeartbeat 更新被动心跳：刷新 last_heartbeat，可选校准 current_load。
 // 不写 status——status 由 mgmt 主动探测维护，避免 node 上报与探测结论打架。
 // 见 docs/design/t7-healthcheck-design.md §5.3 / §6。
-func (s *Store) UpdateServerHeartbeat(serverID uint64, load int) error {
+func (s *Store) UpdateServerHeartbeat(serverID uint64, load int, appliedRevision ...uint64) error {
+	revision := uint64(0)
+	if len(appliedRevision) > 0 {
+		revision = appliedRevision[0]
+	}
+	return s.UpdateServerHeartbeatState(serverID, load, revision, "")
+}
+
+func (s *Store) UpdateServerHeartbeatState(serverID uint64, load int, appliedRevision uint64, lastApplyError string) error {
 	now := time.Now()
 	updates := map[string]interface{}{
-		"last_heartbeat": &now,
-		"current_load":   load,
+		"last_heartbeat":   &now,
+		"current_load":     load,
+		"last_apply_error": lastApplyError,
+	}
+	if appliedRevision > 0 {
+		updates["applied_revision"] = appliedRevision
 	}
 	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
 		Updates(updates).Error

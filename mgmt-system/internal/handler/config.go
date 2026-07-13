@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/configschema"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -281,6 +282,7 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 	// 避免在后台配置页暴露邮箱密码。
 	result := make(map[string]string, len(configs)+3)
 	sources := make(map[string]string, len(configs))
+	var desiredRevision uint64
 	for _, cfg := range configs {
 		result[cfg.ConfigKey] = cfg.ConfigValue
 		sources[cfg.ConfigKey] = "global"
@@ -291,13 +293,19 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 			fail(c, http.StatusBadRequest, 1001, "invalid server_id")
 			return
 		}
+		server, serverErr := h.store.GetServer(serverID)
+		if serverErr != nil {
+			fail(c, http.StatusNotFound, 2001, "server not found")
+			return
+		}
+		desiredRevision = server.DesiredRevision
 		overrides, overrideErr := h.store.ListServerConfigOverrides(serverID)
 		if overrideErr != nil {
 			fail(c, http.StatusInternalServerError, 5000, "failed to list server config overrides")
 			return
 		}
 		for _, override := range overrides {
-			if _, supported := nodeConfigDefinitions[override.ConfigKey]; supported {
+			if definition, supported := configschema.Get(override.ConfigKey); supported && definition.NodeOverridable {
 				result[override.ConfigKey] = override.ConfigValue
 				sources[override.ConfigKey] = "server_override"
 			}
@@ -311,7 +319,7 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
-		"data": gin.H{"configs": result, "sources": sources},
+		"data": gin.H{"configs": result, "sources": sources, "desired_revision": desiredRevision},
 	})
 }
 

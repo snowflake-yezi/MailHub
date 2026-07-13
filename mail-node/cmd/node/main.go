@@ -112,6 +112,15 @@ func main() {
 	// 启动后台转发扫描
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
+		retention := remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention)
+		if err := remoteCfg.ReportSnapshot("lifecycle.trash_retention_hours", strconv.Itoa(int(retention/time.Hour)), time.Now()); err != nil {
+			log.Printf("[config] post-apply snapshot failed: %v", err)
+		}
+	})
+	go remoteCfg.StartPolling(ctx, time.Minute, func(err error) {
+		log.Printf("[config] periodic pull failed: %v", err)
+	})
 	go fwdSvc.Start(ctx)
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
@@ -267,10 +276,15 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 			load = mailboxMgr.ActiveCount()
 		}
 		body, _ := json.Marshal(map[string]interface{}{
-			"server_id": cfg.Node.ID,
-			"status":    "alive", // 仅表示本地进程自检 OK；mgmt 不据此覆盖 status
-			"load":      load,
-			"node_name": cfg.Node.Name,
+			"server_id":        cfg.Node.ID,
+			"status":           "alive", // 仅表示本地进程自检 OK；mgmt 不据此覆盖 status
+			"load":             load,
+			"node_name":        cfg.Node.Name,
+			"last_apply_error": remoteCfg.LastApplyError(),
+			"applied_revision": func() uint64 {
+				_, applied := remoteCfg.Revisions()
+				return applied
+			}(),
 		})
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {

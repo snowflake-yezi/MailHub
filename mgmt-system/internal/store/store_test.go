@@ -73,6 +73,22 @@ func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 	}
 }
 
+func TestBumpAllServerDesiredRevisions(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `mail_servers` SET `desired_revision`=desired_revision \\+ 1 WHERE 1 = 1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+	if err := st.BumpAllServerDesiredRevisions(nil); err != nil {
+		t.Fatalf("BumpAllServerDesiredRevisions() error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 // TestListMailboxesExcludeStatuses 验证回收站分离：normal 视图排除 soft_deleted/purged。
 // 用宽松正则只断言 WHERE 子句含 NOT IN，避免对 gorm 完整 SELECT 的脆弱依赖；
 // 空结果不触发 Preload，故只匹配 Count + Find 两条。
