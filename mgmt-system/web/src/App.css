@@ -2571,8 +2571,9 @@ textarea {
   border-radius: 6px;
 }
 
-.config-apply-status.pending_restart {
-  color: var(--color-warning);
+.config-apply-status.pending_restart,
+.config-apply-status.pending_reload {
+	color: var(--color-warning);
 }
 
 @media (max-width: 560px) {

@@ -106,6 +106,7 @@ func main() {
 		remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute),
 		time.Duration(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500))*time.Millisecond,
 		remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute),
+		remoteCfg,
 	)
 
 	// 启动后台转发扫描

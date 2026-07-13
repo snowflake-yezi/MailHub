@@ -194,13 +194,13 @@ func (s *Store) GetConfigDuration(key string, defaultVal time.Duration) time.Dur
 
 type seedConfig struct {
 	Key, Value, Type, Category, Label, Desc, Default string
-	Reloadable                                        bool
+	Reloadable                                       bool
 }
 
 func defaultConfigs() []seedConfig {
 	return []seedConfig{
 		// ── forward（邮件转发引擎）── mail-node ──
-		{Key: "forward.scan_interval", Value: "5", Type: "int", Category: "forward", Label: "扫描间隔（秒）", Desc: "Maildir 新邮件扫描频率", Default: "5", Reloadable: true},
+		{Key: "forward.scan_interval", Value: "5", Type: "int", Category: "forward", Label: "扫描间隔（秒）", Desc: "Maildir 新邮件扫描频率", Default: "5", Reloadable: false},
 		{Key: "forward.max_email_size", Value: "10485760", Type: "int", Category: "forward", Label: "最大邮件大小（字节）", Desc: "单封邮件最大处理字节数，默认 10MB", Default: "10485760", Reloadable: false},
 		{Key: "forward.body_preview_size", Value: "65536", Type: "int", Category: "forward", Label: "正文预览大小（字节）", Desc: "过滤时读取的正文预览上限，默认 64KB", Default: "65536", Reloadable: false},
 		{Key: "forward.smtp_dial_timeout", Value: "15", Type: "int", Category: "forward", Label: "SMTP 拨号超时（秒）", Desc: "连接 SMTP 服务器的超时时间", Default: "15", Reloadable: false},
@@ -214,7 +214,7 @@ func defaultConfigs() []seedConfig {
 		{Key: "filter.sync_interval", Value: "30", Type: "int", Category: "filter", Label: "规则同步间隔（秒）", Desc: "从 mgmt-system 同步过滤规则的间隔", Default: "30", Reloadable: true},
 
 		// ── lifecycle（生命周期管理）── 双端 ──
-		{Key: "lifecycle.trash_retention_hours", Value: "24", Type: "int", Category: "lifecycle", Label: "回收站保留时间（小时）", Desc: "超过此时间的 .trash 目录将被物理清除", Default: "24", Reloadable: false},
+		{Key: "lifecycle.trash_retention_hours", Value: "24", Type: "int", Category: "lifecycle", Label: "回收站保留时间（小时）", Desc: "超过此时间的 .trash 目录将被物理清除", Default: "24", Reloadable: true},
 		{Key: "lifecycle.gc_interval_minutes", Value: "60", Type: "int", Category: "lifecycle", Label: "GC 执行间隔（分钟）", Desc: "回收站垃圾回收执行间隔", Default: "60", Reloadable: false},
 		{Key: "lifecycle.drain_timeout_minutes", Value: "5", Type: "int", Category: "lifecycle", Label: "排空超时（分钟）", Desc: "删除前等待活跃转发排空的超时时间", Default: "5", Reloadable: false},
 		{Key: "lifecycle.drain_poll_interval_ms", Value: "500", Type: "int", Category: "lifecycle", Label: "排空轮询间隔（毫秒）", Desc: "检查活跃转发数是否归零的轮询间隔", Default: "500", Reloadable: false},
@@ -298,4 +298,3 @@ func (s *Store) SeedDefaultConfigs() error {
 	}
 	return nil
 }
-

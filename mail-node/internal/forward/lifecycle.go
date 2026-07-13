@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
 
@@ -22,13 +23,14 @@ type Lifecycle struct {
 	fwdSvc            *Service // for ActiveJobs() check
 	trashBase         string   // <maildirBase>/.trash
 	trashRetention    time.Duration
+	remoteCfg         *config.RemoteConfig
 	drainTimeout      time.Duration
 	drainPollInterval time.Duration
 	gcInterval        time.Duration
 }
 
 // NewLifecycle 创建生命周期管理器。timeout/intervals 为 0 时会使用默认值。
-func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTimeout, drainPollInterval, gcInterval time.Duration) *Lifecycle {
+func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTimeout, drainPollInterval, gcInterval time.Duration, remoteCfg ...*config.RemoteConfig) *Lifecycle {
 	if trashRetention <= 0 {
 		trashRetention = 24 * time.Hour
 	}
@@ -42,7 +44,7 @@ func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTi
 		gcInterval = 1 * time.Hour
 	}
 	trashBase := filepath.Join(mgr.MaildirBase(), ".trash")
-	return &Lifecycle{
+	lifecycle := &Lifecycle{
 		mgr:               mgr,
 		fwdSvc:            fwdSvc,
 		trashBase:         trashBase,
@@ -51,6 +53,17 @@ func NewLifecycle(mgr *mailbox.Manager, fwdSvc *Service, trashRetention, drainTi
 		drainPollInterval: drainPollInterval,
 		gcInterval:        gcInterval,
 	}
+	if len(remoteCfg) > 0 {
+		lifecycle.remoteCfg = remoteCfg[0]
+	}
+	return lifecycle
+}
+
+func (l *Lifecycle) currentTrashRetention() time.Duration {
+	if l.remoteCfg == nil {
+		return l.trashRetention
+	}
+	return l.remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", l.trashRetention)
 }
 
 // MoveToTrash atomically moves a mailbox Maildir to .trash/<email>-<unix_ts>/.
@@ -273,7 +286,7 @@ func (l *Lifecycle) purgeExpiredTrash() {
 		return
 	}
 
-	cutoff := time.Now().Add(-l.trashRetention)
+	cutoff := time.Now().Add(-l.currentTrashRetention())
 	purged := 0
 
 	for _, entry := range entries {

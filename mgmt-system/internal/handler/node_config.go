@@ -26,7 +26,7 @@ type nodeConfigDefinition struct {
 var nodeConfigDefinitions = map[string]nodeConfigDefinition{
 	trashRetentionKey: {
 		Key: trashRetentionKey, Label: "回收站保留时间", ValueType: "int",
-		Min: 1, Max: 8760, Reloadable: false, RequiresRestart: true,
+		Min: 1, Max: 8760, Reloadable: true, RequiresRestart: false,
 	},
 }
 
@@ -83,7 +83,8 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		fail(c, http.StatusBadRequest, 1002, "unsupported node config key")
 		return
 	}
-	if _, err := h.store.GetServer(serverID); err != nil {
+	server, err := h.store.GetServer(serverID)
+	if err != nil {
 		fail(c, http.StatusNotFound, 2001, "server not found")
 		return
 	}
@@ -105,7 +106,8 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, 5000, "failed to save node config")
 		return
 	}
-	success(c, "node config saved", gin.H{"requires_restart": definition.RequiresRestart})
+	reloadErr := h.notifyNodeReload(server.APIHost)
+	success(c, "node config saved", reloadDispatchResult(definition, reloadErr))
 }
 
 func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
@@ -119,11 +121,29 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 		fail(c, http.StatusBadRequest, 1002, "unsupported node config key")
 		return
 	}
+	server, err := h.store.GetServer(serverID)
+	if err != nil {
+		fail(c, http.StatusNotFound, 2001, "server not found")
+		return
+	}
 	if err := h.store.DeleteServerConfigOverride(serverID, key); err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to reset node config")
 		return
 	}
-	success(c, "node config reset", gin.H{"requires_restart": definition.RequiresRestart})
+	reloadErr := h.notifyNodeReload(server.APIHost)
+	success(c, "node config reset", reloadDispatchResult(definition, reloadErr))
+}
+
+func reloadDispatchResult(definition nodeConfigDefinition, reloadErr error) gin.H {
+	result := gin.H{
+		"requires_restart":  definition.RequiresRestart,
+		"reload_dispatched": reloadErr == nil,
+		"reload_target":     "single",
+	}
+	if reloadErr != nil {
+		result["reload_error"] = reloadErr.Error()
+	}
+	return result
 }
 
 func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, error) {
@@ -148,7 +168,11 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 				desiredSource = "server_override"
 			}
 			if snapshot.EffectiveValue != desired || snapshot.Source != desiredSource {
-				item.Status = "pending_restart"
+				if definition.Reloadable {
+					item.Status = "pending_reload"
+				} else {
+					item.Status = "pending_restart"
+				}
 			}
 		} else if !store.IsNotFound(err) {
 			return nil, err

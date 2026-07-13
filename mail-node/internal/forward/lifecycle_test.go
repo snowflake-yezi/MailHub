@@ -10,8 +10,44 @@ import (
 	"testing"
 	"time"
 
+	mailconfig "github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
+
+func TestPurgeExpiredTrashUsesReloadedRetention(t *testing.T) {
+	retention := "48"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"configs":{"lifecycle.trash_retention_hours":"` + retention + `"},"sources":{"lifecycle.trash_retention_hours":"global"}}}`))
+	}))
+	defer server.Close()
+
+	remoteCfg := mailconfig.NewRemoteConfig(server.URL, "secret")
+	if err := remoteCfg.PullAll(); err != nil {
+		t.Fatalf("initial PullAll() error: %v", err)
+	}
+
+	base := t.TempDir()
+	usersFile, vmailboxFile := setupConfigFiles(t)
+	mgr := newTestManager(t, base, usersFile, vmailboxFile)
+	lifecycle := NewLifecycle(mgr, &Service{}, 24*time.Hour, 0, 0, 0, remoteCfg)
+	trashDir := filepath.Join(base, ".trash", trashDirName("example.com", "alice", time.Now().Add(-30*time.Hour).Unix()))
+	mustMkdir(t, trashDir)
+
+	lifecycle.purgeExpiredTrash()
+	if _, err := os.Stat(trashDir); err != nil {
+		t.Fatalf("30h trash removed with 48h retention: %v", err)
+	}
+
+	retention = "24"
+	if err := remoteCfg.PullAll(); err != nil {
+		t.Fatalf("reload PullAll() error: %v", err)
+	}
+	lifecycle.purgeExpiredTrash()
+	if _, err := os.Stat(trashDir); !os.IsNotExist(err) {
+		t.Fatalf("30h trash still exists with reloaded 24h retention: %v", err)
+	}
+}
 
 func TestRestoreFromTrashRestoresNewestDomainScopedMailbox(t *testing.T) {
 	base := t.TempDir()

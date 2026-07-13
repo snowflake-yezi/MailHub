@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/store"
@@ -14,11 +15,16 @@ import (
 type ConfigHandler struct {
 	store        *store.Store
 	sharedSecret string
+	httpClient   *http.Client
 }
 
 // NewConfigHandler 创建配置 handler
 func NewConfigHandler(s *store.Store, sharedSecret string) *ConfigHandler {
-	return &ConfigHandler{store: s, sharedSecret: sharedSecret}
+	return &ConfigHandler{
+		store:        s,
+		sharedSecret: sharedSecret,
+		httpClient:   &http.Client{Timeout: 5 * time.Second},
+	}
 }
 
 // groupedConfig 分组配置响应
@@ -245,7 +251,11 @@ func (h *ConfigHandler) notifyNodeReload(apiHost string) error {
 	}
 	req.Header.Set("X-Internal-Token", h.sharedSecret)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := h.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}

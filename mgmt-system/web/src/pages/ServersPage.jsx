@@ -34,6 +34,13 @@ const EMPTY_FORM = {
 
 const TRASH_RETENTION_KEY = 'lifecycle.trash_retention_hours'
 
+function reloadToast(result, savedMessage) {
+  if (result?.reload_dispatched) {
+    return { type: 'success', message: `${savedMessage}，已通知节点热加载` }
+  }
+  return { type: 'error', message: `${savedMessage}，但节点通知失败，请检查节点连通性后重试` }
+}
+
 function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
   const [data, setData] = useState(null)
   const [value, setValue] = useState('')
@@ -57,8 +64,8 @@ function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
     event.preventDefault()
     setSaving(true)
     try {
-      await serverAPI.updateConfig(server.id, TRASH_RETENTION_KEY, value)
-      onToast({ type: 'success', message: '节点覆盖已保存，重启 mail-node 后生效' })
+      const result = await serverAPI.updateConfig(server.id, TRASH_RETENTION_KEY, value)
+      onToast(reloadToast(result, '节点覆盖已保存'))
       await loadConfig()
       onChanged()
     } catch (error) {
@@ -69,8 +76,8 @@ function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
   const reset = async () => {
     setSaving(true)
     try {
-      await serverAPI.resetConfig(server.id, TRASH_RETENTION_KEY)
-      onToast({ type: 'success', message: '已恢复跟随全局，重启 mail-node 后生效' })
+      const result = await serverAPI.resetConfig(server.id, TRASH_RETENTION_KEY)
+      onToast(reloadToast(result, '已恢复跟随全局'))
       await loadConfig()
       onChanged()
     } catch (error) {
@@ -100,12 +107,12 @@ function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
                 <div><span>配置来源</span><strong>{item.source === 'server_override' ? '节点覆盖' : item.source === 'global' ? '全局配置' : item.source === 'local_config' ? '本地配置' : '未知'}</strong></div>
               </div>
               <div className={`config-apply-status ${item.status}`}>
-                {item.status === 'pending_restart' ? '覆盖值与实际值不同，等待节点重启' : item.status === 'applied' ? `已应用 · ${formatDate(item.reported_at)}` : '节点尚未上报配置'}
+                {item.status === 'pending_reload' ? '热加载已触发，等待节点上报实际值' : item.status === 'pending_restart' ? '覆盖值与实际值不同，等待节点重启' : item.status === 'applied' ? `已应用 · ${formatDate(item.reported_at)}` : '节点尚未上报配置'}
               </div>
               <div className="form-group">
                 <label>回收站保留时间（小时）</label>
                 <input type="number" min="1" max="8760" value={value} onChange={event => setValue(event.target.value)} required />
-                <div className="form-hint">控制软删除目录物理清理前的保留窗口。此项需要重启 mail-node。</div>
+                <div className="form-hint">控制软删除目录物理清理前的保留窗口，保存后自动通知节点热加载。</div>
               </div>
             </section>
             <div className="drawer-footer">
@@ -546,7 +553,7 @@ export default function ServersPage() {
                     </td>
                     <td>
                       {server.config_summary?.effective_value
-                        ? <div className="config-summary"><strong>{server.config_summary.effective_value} 小时</strong><span>{server.config_summary.status === 'pending_restart' ? '等待重启' : server.config_summary.has_override ? '已覆盖' : '跟随全局'}</span></div>
+                        ? <div className="config-summary"><strong>{server.config_summary.effective_value} 小时</strong><span>{server.config_summary.status === 'pending_reload' ? '待热加载确认' : server.config_summary.status === 'pending_restart' ? '等待重启' : server.config_summary.has_override ? '已覆盖' : '跟随全局'}</span></div>
                         : <span className="muted-text">未上报</span>}
                     </td>
                     <td>
