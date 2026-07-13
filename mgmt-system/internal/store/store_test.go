@@ -85,7 +85,8 @@ func TestBumpAllServerDesiredRevisions(t *testing.T) {
 	defer cleanup()
 
 	mock.ExpectBegin()
-	mock.ExpectExec("UPDATE `mail_servers` SET `desired_revision`=desired_revision \\+ 1 WHERE 1 = 1").
+	mock.ExpectExec("UPDATE `mail_servers` SET .*`boot_id_at_change`=last_boot_id.*`desired_revision`=desired_revision \\+ 1.*WHERE 1 = 1").
+		WithArgs(sqlmock.AnyArg(), "", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	mock.ExpectCommit()
 	if err := st.BumpAllServerDesiredRevisions(nil); err != nil {

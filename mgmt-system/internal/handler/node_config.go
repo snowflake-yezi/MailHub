@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/configschema"
+	"github.com/ticket/email-mgmt-system/internal/configstate"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
@@ -53,7 +54,12 @@ func (h *ConfigHandler) GetServerConfigs(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, 5000, "failed to load node configs")
 		return
 	}
-	success(c, "success", gin.H{"server_id": server.ID, "server_name": server.Name, "api_host": server.APIHost, "items": items})
+	success(c, "success", gin.H{
+		"server_id": server.ID, "server_name": server.Name, "api_host": server.APIHost, "items": items,
+		"desired_revision": server.DesiredRevision, "applied_revision": server.AppliedRevision,
+		"last_apply_error": server.LastApplyError, "last_reload_error": server.LastReloadError,
+		"last_boot_id": server.LastBootID, "last_started_at": server.LastStartedAt, "config_changed_at": server.ConfigChangedAt,
+	})
 }
 
 func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
@@ -94,6 +100,7 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		return
 	}
 	reloadErr := h.notifyNodeReload(server.APIHost)
+	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config saved", reloadDispatchResult(definition, desiredRevision, reloadErr))
 }
 
@@ -122,6 +129,7 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 		return
 	}
 	reloadErr := h.notifyNodeReload(server.APIHost)
+	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config reset", reloadDispatchResult(definition, desiredRevision, reloadErr))
 }
 
@@ -153,26 +161,29 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 		} else if !store.IsNotFound(err) {
 			return nil, err
 		}
-		if snapshot, err := h.store.GetServerConfigSnapshot(serverID, definition.Key); err == nil {
+		var snapshot *model.ServerConfigSnapshot
+		if value, err := h.store.GetServerConfigSnapshot(serverID, definition.Key); err == nil {
+			snapshot = value
 			item.EffectiveValue = &snapshot.EffectiveValue
 			item.Source = snapshot.Source
 			item.ReportedAt = &snapshot.ReportedAt
-			item.Status = "applied"
 			desired := global
 			desiredSource := "global"
 			if item.OverrideValue != nil {
 				desired = *item.OverrideValue
 				desiredSource = "server_override"
 			}
-			if server.AppliedRevision < server.DesiredRevision || snapshot.AppliedRevision < server.DesiredRevision || snapshot.EffectiveValue != desired || snapshot.Source != desiredSource {
-				if definition.Reloadable() {
-					item.Status = "pending_reload"
-				} else {
-					item.Status = "pending_restart"
-				}
-			}
+			item.Status = configstate.Resolve(*server, snapshot, definition, desired, desiredSource, time.Now(), 15*time.Minute)
 		} else if !store.IsNotFound(err) {
 			return nil, err
+		} else {
+			desired := global
+			desiredSource := "global"
+			if item.OverrideValue != nil {
+				desired = *item.OverrideValue
+				desiredSource = "server_override"
+			}
+			item.Status = configstate.Resolve(*server, nil, definition, desired, desiredSource, time.Now(), 15*time.Minute)
 		}
 		items = append(items, item)
 	}
@@ -188,6 +199,8 @@ func (h *ConfigHandler) ReportServerConfigSnapshot(c *gin.Context) {
 		ReportedAt      time.Time                    `json:"reported_at"`
 		DesiredRevision uint64                       `json:"desired_revision"`
 		AppliedRevision uint64                       `json:"applied_revision"`
+		BootID          string                       `json:"boot_id"`
+		StartedAt       time.Time                    `json:"started_at"`
 		Items           []model.ServerConfigSnapshot `json:"items" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
@@ -210,6 +223,10 @@ func (h *ConfigHandler) ReportServerConfigSnapshot(c *gin.Context) {
 		fail(c, http.StatusConflict, 2004, "stale config snapshot")
 		return
 	}
+	if server.LastStartedAt != nil && !req.StartedAt.IsZero() && req.StartedAt.Before(*server.LastStartedAt) {
+		fail(c, http.StatusConflict, 2004, "stale boot snapshot")
+		return
+	}
 	filtered := make([]model.ServerConfigSnapshot, 0, len(req.Items))
 	for _, item := range req.Items {
 		definition, supported := configschema.Get(item.ConfigKey)
@@ -218,6 +235,7 @@ func (h *ConfigHandler) ReportServerConfigSnapshot(c *gin.Context) {
 		}
 		item.Reloadable = definition.Reloadable()
 		item.RequiresRestart = definition.RequiresRestart()
+		item.BootID = req.BootID
 		if item.Source != "global" && item.Source != "server_override" && item.Source != "local_config" {
 			item.Source = "unknown"
 		}
@@ -227,7 +245,7 @@ func (h *ConfigHandler) ReportServerConfigSnapshot(c *gin.Context) {
 		fail(c, http.StatusBadRequest, 1002, "no supported snapshot items")
 		return
 	}
-	if err := h.store.UpsertServerConfigSnapshots(serverID, req.ReportedAt, req.DesiredRevision, req.AppliedRevision, filtered); err != nil {
+	if err := h.store.UpsertServerConfigSnapshots(serverID, req.ReportedAt, req.DesiredRevision, req.AppliedRevision, req.BootID, req.StartedAt, filtered); err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to save config snapshot")
 		return
 	}

@@ -397,13 +397,15 @@ func (h *ServerHandler) DiscoverServer(c *gin.Context) {
 // POST /api/v1/internal/servers/heartbeat
 func (h *ServerHandler) Heartbeat(c *gin.Context) {
 	var req struct {
-		ServerID        uint64 `json:"server_id"`
-		Status          string `json:"status"`
-		Load            int    `json:"load"`
-		DiskUsage       string `json:"disk_usage"`
-		NodeName        string `json:"node_name"`
-		AppliedRevision uint64 `json:"applied_revision"`
-		LastApplyError  string `json:"last_apply_error"`
+		ServerID        uint64    `json:"server_id"`
+		Status          string    `json:"status"`
+		Load            int       `json:"load"`
+		DiskUsage       string    `json:"disk_usage"`
+		NodeName        string    `json:"node_name"`
+		AppliedRevision uint64    `json:"applied_revision"`
+		LastApplyError  string    `json:"last_apply_error"`
+		BootID          string    `json:"boot_id"`
+		StartedAt       time.Time `json:"started_at"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -429,7 +431,13 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 	if appliedRevision < server.AppliedRevision {
 		appliedRevision = 0
 	}
-	if err := h.store.UpdateServerHeartbeatState(req.ServerID, req.Load, appliedRevision, req.LastApplyError); err != nil {
+	bootID := req.BootID
+	startedAt := req.StartedAt
+	if server.LastStartedAt != nil && !startedAt.IsZero() && startedAt.Before(*server.LastStartedAt) {
+		bootID = ""
+		startedAt = time.Time{}
+	}
+	if err := h.store.UpdateServerHeartbeatState(req.ServerID, req.Load, appliedRevision, req.LastApplyError, bootID, startedAt); err != nil {
 		serverError(c, ErrCodeInternal, "failed to update heartbeat")
 		return
 	}

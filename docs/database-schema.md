@@ -120,6 +120,12 @@ erDiagram
 | `last_heartbeat` | DATETIME(3) | NULL | 最后心跳时间 |
 | `last_probe_at`, `probe_fail_count` | DATETIME(3), BIGINT | NULL, `0` | 最后主动探测时间、连续失败次数 |
 | `heartbeat_interval` | BIGINT | `30` | 心跳间隔秒数 |
+| `desired_revision`, `applied_revision` | BIGINT UNSIGNED | `0` | 期望配置版本、节点确认应用版本 |
+| `last_apply_error`, `last_reload_error` | TEXT | NULL | 最近 Apply 失败、即时 reload 通知失败摘要 |
+| `last_boot_id` | VARCHAR(64) | NULL | 节点最近一次进程启动标识 |
+| `last_started_at` | DATETIME(3) | NULL | 节点最近一次进程启动时间 |
+| `config_changed_at` | DATETIME(3) | NULL | 最近一次配置 revision 推进时间 |
+| `boot_id_at_change` | VARCHAR(64) | NULL | 最近配置变更发生时的节点启动标识 |
 | `created_at`, `updated_at` | DATETIME(3) | NULL | 创建时间、更新时间 |
 
 ### 3.7 `mailbox_accounts`
@@ -191,6 +197,8 @@ erDiagram
 | `reloadable` | TINYINT(1) | `0` | 是否支持热加载 |
 | `requires_restart` | TINYINT(1) | `0` | 是否需要重启 |
 | `applied_at`, `reported_at` | DATETIME(3) | NULL, NOT NULL | 配置应用时间、节点上报时间 |
+| `desired_revision`, `applied_revision` | BIGINT UNSIGNED | `0` | 上报时的期望版本、已应用版本 |
+| `boot_id` | VARCHAR(64) | NULL | 确认该配置值的节点进程启动标识 |
 
 ### 3.12 `server_domains`
 

@@ -210,7 +210,9 @@ func TestReportSnapshot(t *testing.T) {
 func TestReportSnapshotsSendsAllAppliedValues(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Items []struct {
+			BootID    string    `json:"boot_id"`
+			StartedAt time.Time `json:"started_at"`
+			Items  []struct {
 				ConfigKey string `json:"config_key"`
 			} `json:"items"`
 		}
@@ -220,10 +222,17 @@ func TestReportSnapshotsSendsAllAppliedValues(t *testing.T) {
 		if len(body.Items) != 2 {
 			t.Fatalf("snapshot items = %d, want 2", len(body.Items))
 		}
+		if body.BootID != "boot-7" {
+			t.Fatalf("boot_id = %q, want boot-7", body.BootID)
+		}
+		if body.StartedAt.IsZero() {
+			t.Fatal("started_at was not reported")
+		}
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 	rc := NewRemoteConfig(server.URL, "secret", 7)
+	rc.SetBootIdentity("boot-7", time.Now())
 	if err := rc.ReportSnapshots(map[string]string{"forward.scan_interval": "5", "lifecycle.gc_interval_minutes": "60"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}

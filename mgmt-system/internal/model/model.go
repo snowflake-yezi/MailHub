@@ -30,6 +30,11 @@ type MailServer struct {
 	DesiredRevision   uint64     `gorm:"not null;default:0" json:"desired_revision"`
 	AppliedRevision   uint64     `gorm:"not null;default:0" json:"applied_revision"`
 	LastApplyError    string     `gorm:"type:text" json:"last_apply_error,omitempty"`
+	LastBootID        string     `gorm:"size:64" json:"last_boot_id,omitempty"`
+	LastStartedAt     *time.Time `json:"last_started_at,omitempty"`
+	ConfigChangedAt   *time.Time `json:"config_changed_at,omitempty"`
+	BootIDAtChange    string     `gorm:"size:64" json:"boot_id_at_change,omitempty"`
+	LastReloadError   string     `gorm:"type:text" json:"last_reload_error,omitempty"`
 	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 
@@ -72,6 +77,7 @@ type ServerConfigSnapshot struct {
 	ReportedAt      time.Time  `gorm:"not null;index" json:"reported_at"`
 	DesiredRevision uint64     `gorm:"not null;default:0" json:"desired_revision"`
 	AppliedRevision uint64     `gorm:"not null;default:0" json:"applied_revision"`
+	BootID          string     `gorm:"size:64" json:"boot_id,omitempty"`
 }
 
 // MailboxAccount 邮箱账号资产，维度为 server + domain + mailbox + credential。

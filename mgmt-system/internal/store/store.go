@@ -186,10 +186,10 @@ func (s *Store) UpdateServerHeartbeat(serverID uint64, load int, appliedRevision
 	if len(appliedRevision) > 0 {
 		revision = appliedRevision[0]
 	}
-	return s.UpdateServerHeartbeatState(serverID, load, revision, "")
+	return s.UpdateServerHeartbeatState(serverID, load, revision, "", "", time.Time{})
 }
 
-func (s *Store) UpdateServerHeartbeatState(serverID uint64, load int, appliedRevision uint64, lastApplyError string) error {
+func (s *Store) UpdateServerHeartbeatState(serverID uint64, load int, appliedRevision uint64, lastApplyError, bootID string, startedAt time.Time) error {
 	now := time.Now()
 	updates := map[string]interface{}{
 		"last_heartbeat":   &now,
@@ -198,6 +198,12 @@ func (s *Store) UpdateServerHeartbeatState(serverID uint64, load int, appliedRev
 	}
 	if appliedRevision > 0 {
 		updates["applied_revision"] = appliedRevision
+	}
+	if bootID != "" {
+		updates["last_boot_id"] = bootID
+		if !startedAt.IsZero() {
+			updates["last_started_at"] = startedAt.UTC()
+		}
 	}
 	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
 		Updates(updates).Error

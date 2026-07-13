@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -50,6 +52,8 @@ func main() {
 
 	// 从 mgmt-system 拉取动态配置（覆盖 YAML 中的硬编码默认值）
 	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret, cfg.Node.ID)
+	bootID, startedAt := newBootIdentity()
+	remoteCfg.SetBootIdentity(bootID, startedAt)
 	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
 	if err := remoteCfg.PullAll(); err != nil {
@@ -145,6 +149,9 @@ func main() {
 	if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
 		log.Printf("[config] WARNING: failed to report config snapshot: %v", err)
 	}
+	go startPeriodicSnapshot(ctx, 5*time.Minute, func() error {
+		return reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention)
+	})
 
 	// 重启自愈：向 mgmt 拉取属于本节点的 DELETING 状态任务并恢复执行
 	if cfg.Node.ID != 0 {
@@ -210,6 +217,33 @@ func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, forwardCfg forw
 		"lifecycle.drain_poll_interval_ms": strconv.Itoa(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500)),
 	}
 	return remoteCfg.ReportSnapshots(values, time.Now())
+}
+
+func newBootIdentity() (string, time.Time) {
+	startedAt := time.Now().UTC()
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		return fmt.Sprintf("%d-%d", startedAt.UnixNano(), os.Getpid()), startedAt
+	}
+	return hex.EncodeToString(value), startedAt
+}
+
+func startPeriodicSnapshot(ctx context.Context, interval time.Duration, report func() error) {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := report(); err != nil {
+				log.Printf("[config] periodic snapshot failed: %v", err)
+			}
+		}
+	}
 }
 
 // discoverServerID 向 mgmt 查询或自动注册本节点的 server_id。
@@ -339,6 +373,7 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 		if mailboxMgr != nil {
 			load = mailboxMgr.ActiveCount()
 		}
+		bootID, startedAt := remoteCfg.BootIdentity()
 		body, _ := json.Marshal(map[string]interface{}{
 			"server_id":        nodeID,
 			"status":           "alive", // 仅表示本地进程自检 OK；mgmt 不据此覆盖 status
@@ -349,6 +384,8 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 				_, applied := remoteCfg.Revisions()
 				return applied
 			}(),
+			"boot_id":    bootID,
+			"started_at": startedAt,
 		})
 		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {

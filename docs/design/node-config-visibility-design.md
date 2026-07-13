@@ -1,6 +1,6 @@
 # 节点配置可观测与覆盖设计文档
 
-> **状态：v3 实施中（NC-P0 至 NC-P2 已完成，2026-07-13）** ｜ 已完成可靠下发、版本确认与首批运行参数热应用闭环。
+> **状态：v3 实施中（NC-P0 至 NC-P3 已完成，2026-07-13）** ｜ 已完成可靠下发、热应用、重启可观测与配置状态机。
 > **v2 起因：** 评审时质疑「清理回收站为什么也要重启节点」，深挖后发现 v1 把 `reloadable` / `requires_restart` 当成「人工填的元数据」，与代码实现严重脱节，并暴露多个真 bug。本次修订以**代码事实**为基准重新定义热加载语义。
 > **v3 起因：** v2 仍把「刷新 remoteCfg」与「组件确认应用」连接得不够严密，且错误地把定时 snapshot 当成通知丢失的恢复手段。v3 引入 `desired_revision` / `applied_revision`、组件级 `Apply` 和定时拉取自愈。
 > **阅读指引：** 第 3.5 / 3.6 节定义生效语义；第 8 节定义版本模型；第 11–13 节是应用协议、状态机与最终实施顺序。
@@ -456,12 +456,12 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 - [x] [NC-11] Apply 成功提交 revision 后，批量上报 7 项真实 snapshot。
 - [x] 两个 Go 模块普通全量测试、`go test -race ./...`、`go vet ./...` 与 Web 生产构建通过。
 
-### NC-P3：重启可观测与状态机
+### NC-P3：重启可观测与状态机（已完成，2026-07-13）
 
-- [NC-12] `boot_id` 上报、`boot_id_at_change` 与 mail_servers 字段。
-- [NC-7] 落地第 12 节状态机（pending_apply / pending_retry / apply_failed / restart_detected / overdue）。
-- [NC-11] snapshot 定时上报用于对账。
-- 列表/抽屉展示新状态徽标。
+- [x] [NC-12] `boot_id` / `started_at` 随心跳和 snapshot 上报，配置变更记录 `boot_id_at_change`。
+- [x] [NC-7] 落地第 12 节状态机，并持久化 reload/Apply 错误与配置变更时间。
+- [x] [NC-11] snapshot 每 5 分钟定时上报用于对账，并拒绝旧进程乱序上报。
+- [x] 服务器列表与节点配置抽屉展示版本、启动事实和状态说明。
 
 ### NC-P4：作用域选择器 UX
 

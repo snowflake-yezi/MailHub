@@ -89,7 +89,7 @@ flowchart TB
 | `mailbox_accounts` | `email_address`, `password`, `domain_id`, `server_id`, `status`, `sync_status`, `retention_days`, `delete_requested_at` | 当前邮箱账号主表。`status` 为 `active / disabled / recycled / deleting / soft_deleted / purged`。 |
 | `order_mailbox_mappings` | `order_id`, `mailbox_account_id` | 订单与邮箱绑定。当前按 1:1 使用，schema 支持后续扩展。 |
 | `order_mailboxes` | legacy 邮箱字段 | 历史兼容表；启动迁移到 `mailbox_accounts` + `order_mailbox_mappings`。 |
-| `mail_servers` | `api_host`, `smtp_host`, `imap_host`, `public_host`, `capacity`, `current_load`, `status`, `heartbeat_interval` | 数据面节点台账和状态。 |
+| `mail_servers` | `api_host`, `status`, `heartbeat_interval`, `desired_revision`, `applied_revision`, `last_boot_id`, `config_changed_at` | 数据面节点台账、配置版本和重启可观测事实。 |
 | `domains` | `name`, `mx_server`, `status` | 邮件域名池。 |
 | `server_domains` | `server_id`, `domain_id`, `status`, `sync_status`, `postfix_status`, `dkim_status`, `dkim_selector`, `dkim_public_key` | 服务器-域名绑定和远端同步快照。 |
 | `filter_rules` | `rule_type`, `pattern`, `action`, `priority`, `enabled` | 过滤规则，action 为 `pass / block / flag`。 |
@@ -98,7 +98,7 @@ flowchart TB
 | `integrated_mailboxes` | `email_address`, `display_name`, `is_active` | 集成邮箱转发目标池；全局只有一个 active。 |
 | `admin_users` | `username`, `password_hash`, `credential_version`, `status` | 管理后台数据库身份和凭据版本。 |
 | `server_config_overrides` | `server_id`, `config_key`, `config_value`, `value_type` | 单节点显式配置覆盖；同一节点和键唯一。 |
-| `server_config_snapshots` | `server_id`, `config_key`, `effective_value`, `source`, `requires_restart`, `reported_at` | mail-node 实际配置上报快照。 |
+| `server_config_snapshots` | `server_id`, `config_key`, `effective_value`, `source`, `applied_revision`, `boot_id`, `reported_at` | mail-node 实际配置、版本与启动身份快照。 |
 | `system_state` | `key`, `value`, `updated_at` | bootstrap 等系统内部状态。 |
 
 完整 14 张表及字段定义见 [控制面数据库字典](database-schema.md)。
@@ -306,11 +306,11 @@ Scope 当前取值：
 
 - `system_configs` 是运行参数事实源；启动时由 `SeedDefaultConfigs` 补齐默认项。
 - mgmt-system 通过类型化读取方法使用配置，并带 30 秒缓存。
-- mail-node 启动时拉取全部配置，运行中可通过 `/internal/configs/reload` 刷新。
+- mail-node 启动时拉取全部配置，运行中通过即时 reload 与定时轮询保持最终一致。
 - 过滤规则保存后，mgmt-system 会通知 mail-node `/internal/filters/reload`。
 - 集成邮箱激活后，mgmt-system 同步 `forward.target_address` 并通知 mail-node 重载；SMTP 用户名/密码在发送前从 active 集成邮箱动态读取。
 
-> 当前实现：`system_configs` 是全局默认事实源，`server_config_overrides` 保存单节点覆盖，`server_config_snapshots` 保存节点实际上报值和来源。P1 第一阶段已支持 `lifecycle.trash_retention_hours` 的覆盖、重置和待重启状态；`mail_servers.heartbeat_interval` 仍保留为专用节点字段。
+> 当前实现：`system_configs` 是全局默认事实源，`server_config_overrides` 保存单节点覆盖，`server_config_snapshots` 保存节点实际上报值、版本和 boot ID。管理端根据 desired/applied revision、通知/Apply 错误和启动身份统一计算 `pending_apply / pending_retry / apply_failed / pending_restart / restart_detected / restart_overdue / applied`；`mail_servers.heartbeat_interval` 仍保留为专用节点字段。
 
 ---
 

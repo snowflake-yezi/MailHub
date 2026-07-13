@@ -53,3 +53,29 @@ func TestStartDiscoveryRetryRecoversAfterManagementStarts(t *testing.T) {
 		t.Fatalf("attempts = %d, want 3", got)
 	}
 }
+
+func TestNewBootIdentityChangesPerProcessStart(t *testing.T) {
+	first, firstStarted := newBootIdentity()
+	second, secondStarted := newBootIdentity()
+	if first == "" || second == "" || first == second {
+		t.Fatalf("boot IDs = %q/%q, want distinct non-empty values", first, second)
+	}
+	if firstStarted.IsZero() || secondStarted.IsZero() {
+		t.Fatal("started_at must be populated")
+	}
+}
+
+func TestStartPeriodicSnapshotReportsUntilCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := make(chan struct{}, 2)
+	go startPeriodicSnapshot(ctx, time.Millisecond, func() error {
+		calls <- struct{}{}
+		return nil
+	})
+	select {
+	case <-calls:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("periodic snapshot was not reported")
+	}
+}

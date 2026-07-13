@@ -226,12 +226,16 @@ func (h *ConfigHandler) ReloadNode(c *gin.Context) {
 	failed := 0
 	for _, srv := range servers {
 		if srv.Status != "healthy" && srv.Status != "degraded" {
+			_ = h.store.RecordServerReloadResult(srv.ID, fmt.Errorf("node status %s", srv.Status))
+			failed++
 			continue
 		}
 		// 调用 mail-node 的 reload 端点
 		if err := h.notifyNodeReload(srv.APIHost); err != nil {
+			_ = h.store.RecordServerReloadResult(srv.ID, err)
 			failed++
 		} else {
+			_ = h.store.RecordServerReloadResult(srv.ID, nil)
 			reloaded++
 		}
 	}

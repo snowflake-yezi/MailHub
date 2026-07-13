@@ -2565,15 +2565,39 @@ textarea {
 }
 
 .config-apply-status {
+	display: grid;
+	gap: 4px;
   padding: 10px 12px;
   color: var(--color-text-muted);
   background: var(--color-bg-subtle);
   border-radius: 6px;
 }
 
+.config-apply-status strong { font-size: 13px; }
+.config-apply-status span { font-size: 12px; }
+.config-apply-status code { overflow-wrap: anywhere; color: inherit; font-size: 12px; }
+
+.config-apply-status.pending_apply,
+.config-apply-status.pending_retry,
 .config-apply-status.pending_restart,
-.config-apply-status.pending_reload {
-	color: var(--color-warning);
+.config-apply-status.restart_detected,
+.config-summary.pending_apply span,
+.config-summary.pending_retry span,
+.config-summary.pending_restart span,
+.config-summary.restart_detected span {
+  color: var(--color-warning);
+}
+
+.config-apply-status.apply_failed,
+.config-apply-status.restart_overdue,
+.config-summary.apply_failed span,
+.config-summary.restart_overdue span {
+  color: var(--color-danger);
+}
+
+.config-apply-status.applied,
+.config-summary.applied span {
+  color: var(--color-success);
 }
 
 @media (max-width: 560px) {

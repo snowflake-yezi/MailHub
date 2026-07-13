@@ -27,6 +27,8 @@ type RemoteConfig struct {
 	applyHooks      []ApplyFunc
 	afterApplyHooks []func(desiredRevision, appliedRevision uint64)
 	lastApplyError  string
+	bootID          string
+	startedAt       time.Time
 }
 
 type ApplyFunc func(current, next map[string]string) error
@@ -143,6 +145,19 @@ func (rc *RemoteConfig) SetNodeID(nodeID uint64) {
 	rc.mu.Unlock()
 }
 
+func (rc *RemoteConfig) SetBootIdentity(bootID string, startedAt time.Time) {
+	rc.mu.Lock()
+	rc.bootID = bootID
+	rc.startedAt = startedAt.UTC()
+	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) BootIdentity() (string, time.Time) {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.bootID, rc.startedAt
+}
+
 func (rc *RemoteConfig) setLastApplyError(message string) {
 	rc.mu.Lock()
 	rc.lastApplyError = message
@@ -257,6 +272,8 @@ func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time
 		ReportedAt      time.Time `json:"reported_at"`
 		DesiredRevision uint64    `json:"desired_revision"`
 		AppliedRevision uint64    `json:"applied_revision"`
+		BootID          string    `json:"boot_id"`
+		StartedAt       time.Time `json:"started_at"`
 		Items           []struct {
 			ConfigKey      string    `json:"config_key"`
 			EffectiveValue string    `json:"effective_value"`
@@ -265,6 +282,7 @@ func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time
 		} `json:"items"`
 	}{ReportedAt: time.Now().UTC()}
 	payload.DesiredRevision, payload.AppliedRevision = rc.Revisions()
+	payload.BootID, payload.StartedAt = rc.BootIdentity()
 	for key, value := range values {
 		payload.Items = append(payload.Items, struct {
 			ConfigKey      string    `json:"config_key"`

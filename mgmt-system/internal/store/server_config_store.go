@@ -4,6 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ticket/email-mgmt-system/internal/configschema"
+	"github.com/ticket/email-mgmt-system/internal/configstate"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -37,7 +39,12 @@ func (s *Store) SetServerConfigOverrideAndBump(value *model.ServerConfigOverride
 			return err
 		}
 		return tx.Model(&model.MailServer{}).Where("id = ?", value.ServerID).
-			UpdateColumn("desired_revision", gorm.Expr("desired_revision + 1")).Error
+			Updates(map[string]interface{}{
+				"desired_revision":  gorm.Expr("desired_revision + 1"),
+				"config_changed_at": time.Now().UTC(),
+				"boot_id_at_change": gorm.Expr("last_boot_id"),
+				"last_reload_error": "",
+			}).Error
 	})
 	if err != nil {
 		return 0, err
@@ -60,7 +67,12 @@ func (s *Store) DeleteServerConfigOverrideAndBump(serverID uint64, key string) (
 			return err
 		}
 		return tx.Model(&model.MailServer{}).Where("id = ?", serverID).
-			UpdateColumn("desired_revision", gorm.Expr("desired_revision + 1")).Error
+			Updates(map[string]interface{}{
+				"desired_revision":  gorm.Expr("desired_revision + 1"),
+				"config_changed_at": time.Now().UTC(),
+				"boot_id_at_change": gorm.Expr("last_boot_id"),
+				"last_reload_error": "",
+			}).Error
 	})
 	if err != nil {
 		return 0, err
@@ -76,9 +88,21 @@ func (s *Store) BumpAllServerDesiredRevisions(tx *gorm.DB) error {
 	if tx == nil {
 		tx = s.db
 	}
-	return tx.Model(&model.MailServer{}).
-		Where("1 = 1").
-		UpdateColumn("desired_revision", gorm.Expr("desired_revision + 1")).Error
+	return tx.Model(&model.MailServer{}).Where("1 = 1").Updates(map[string]interface{}{
+		"desired_revision":  gorm.Expr("desired_revision + 1"),
+		"config_changed_at": time.Now().UTC(),
+		"boot_id_at_change": gorm.Expr("last_boot_id"),
+		"last_reload_error": "",
+	}).Error
+}
+
+func (s *Store) RecordServerReloadResult(serverID uint64, reloadErr error) error {
+	message := ""
+	if reloadErr != nil {
+		message = reloadErr.Error()
+	}
+	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
+		Update("last_reload_error", message).Error
 }
 
 func (s *Store) GetServerConfigSnapshot(serverID uint64, key string) (*model.ServerConfigSnapshot, error) {
@@ -87,7 +111,7 @@ func (s *Store) GetServerConfigSnapshot(serverID uint64, key string) (*model.Ser
 	return &value, err
 }
 
-func (s *Store) UpsertServerConfigSnapshots(serverID uint64, reportedAt time.Time, desiredRevision, appliedRevision uint64, values []model.ServerConfigSnapshot) error {
+func (s *Store) UpsertServerConfigSnapshots(serverID uint64, reportedAt time.Time, desiredRevision, appliedRevision uint64, bootID string, startedAt time.Time, values []model.ServerConfigSnapshot) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		for i := range values {
 			values[i].ServerID = serverID
@@ -96,14 +120,21 @@ func (s *Store) UpsertServerConfigSnapshots(serverID uint64, reportedAt time.Tim
 			values[i].AppliedRevision = appliedRevision
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "server_id"}, {Name: "config_key"}},
-				DoUpdates: clause.AssignmentColumns([]string{"effective_value", "source", "reloadable", "requires_restart", "applied_at", "reported_at", "desired_revision", "applied_revision"}),
+				DoUpdates: clause.AssignmentColumns([]string{"effective_value", "source", "reloadable", "requires_restart", "applied_at", "reported_at", "desired_revision", "applied_revision", "boot_id"}),
 			}).Create(&values[i]).Error; err != nil {
 				return err
 			}
 		}
+		updates := map[string]interface{}{"applied_revision": appliedRevision, "last_apply_error": "", "last_reload_error": ""}
+		if bootID != "" {
+			updates["last_boot_id"] = bootID
+			if !startedAt.IsZero() {
+				updates["last_started_at"] = startedAt.UTC()
+			}
+		}
 		return tx.Model(&model.MailServer{}).
 			Where("id = ? AND applied_revision <= ?", serverID, appliedRevision).
-			Updates(map[string]interface{}{"applied_revision": appliedRevision, "last_apply_error": ""}).Error
+			Updates(updates).Error
 	})
 }
 
@@ -123,10 +154,11 @@ func (s *Store) AttachServerConfigSummaries(servers []model.MailServer, key, glo
 			summary.EffectiveValue = snapshot.EffectiveValue
 			summary.Source = snapshot.Source
 			summary.ReportedAt = &snapshot.ReportedAt
-			summary.Status = "applied"
-			if servers[i].AppliedRevision < servers[i].DesiredRevision || snapshot.AppliedRevision < servers[i].DesiredRevision || snapshot.EffectiveValue != desiredValue || snapshot.Source != desiredSource {
-				summary.Status = "pending_reload"
+			if definition, ok := configschema.Get(key); ok {
+				summary.Status = configstate.Resolve(servers[i], snapshot, definition, desiredValue, desiredSource, time.Now(), 15*time.Minute)
 			}
+		} else if definition, ok := configschema.Get(key); ok {
+			summary.Status = configstate.Resolve(servers[i], nil, definition, desiredValue, desiredSource, time.Now(), 15*time.Minute)
 		}
 		servers[i].ConfigSummary = summary
 	}

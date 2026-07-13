@@ -34,6 +34,21 @@ const EMPTY_FORM = {
 
 const TRASH_RETENTION_KEY = 'lifecycle.trash_retention_hours'
 
+const CONFIG_STATUS_META = {
+  unreported: { label: '未上报', detail: '节点尚未上报配置事实' },
+  pending_apply: { label: '等待应用', detail: '配置版本已更新，等待节点拉取并确认应用' },
+  pending_retry: { label: '等待重试', detail: '即时通知失败，节点将通过定时拉取自动重试' },
+  apply_failed: { label: '应用失败', detail: '节点拉取、校验或应用配置失败' },
+  pending_restart: { label: '等待重启', detail: '该配置需要节点重启后生效' },
+  restart_detected: { label: '已检测重启', detail: '节点已经重启，等待新进程上报匹配配置' },
+  restart_overdue: { label: '重启逾期', detail: '配置变更后长时间未检测到节点重启' },
+  applied: { label: '已应用', detail: '节点已确认应用当前配置版本' },
+}
+
+function configStatusMeta(status) {
+  return CONFIG_STATUS_META[status] || CONFIG_STATUS_META.unreported
+}
+
 function reloadToast(result, savedMessage) {
   if (result?.reload_dispatched) {
     return { type: 'success', message: `${savedMessage}，已通知节点热加载` }
@@ -59,6 +74,8 @@ function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
 
   useEffect(() => { loadConfig() }, [loadConfig])
   const item = data?.items?.[0]
+
+  const statusMeta = configStatusMeta(item?.status)
 
   const save = async (event) => {
     event.preventDefault()
@@ -105,9 +122,15 @@ function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
                 <div><span>节点覆盖</span><strong>{item.override_value ? `${item.override_value} 小时` : '无'}</strong></div>
                 <div><span>实际生效</span><strong>{item.effective_value ? `${item.effective_value} 小时` : '未上报'}</strong></div>
                 <div><span>配置来源</span><strong>{item.source === 'server_override' ? '节点覆盖' : item.source === 'global' ? '全局配置' : item.source === 'local_config' ? '本地配置' : '未知'}</strong></div>
+				<div><span>配置版本</span><strong>{data.applied_revision ?? 0} / {data.desired_revision ?? 0}</strong></div>
+				<div><span>本次启动</span><strong>{formatDate(data.last_started_at)}</strong></div>
+				<div><span>启动标识</span><strong><code>{data.last_boot_id ? data.last_boot_id.slice(0, 12) : '未上报'}</code></strong></div>
+				<div><span>配置变更</span><strong>{formatDate(data.config_changed_at)}</strong></div>
               </div>
               <div className={`config-apply-status ${item.status}`}>
-                {item.status === 'pending_reload' ? '热加载已触发，等待节点上报实际值' : item.status === 'pending_restart' ? '覆盖值与实际值不同，等待节点重启' : item.status === 'applied' ? `已应用 · ${formatDate(item.reported_at)}` : '节点尚未上报配置'}
+				<strong>{statusMeta.label}</strong><span>{statusMeta.detail}{item.status === 'applied' ? ` · ${formatDate(item.reported_at)}` : ''}</span>
+				{data.last_apply_error && <code>{data.last_apply_error}</code>}
+				{data.last_reload_error && !data.last_apply_error && <code>{data.last_reload_error}</code>}
               </div>
               <div className="form-group">
                 <label>回收站保留时间（小时）</label>
@@ -552,8 +575,8 @@ export default function ServersPage() {
                       </span>
                     </td>
                     <td>
-                      {server.config_summary?.effective_value
-                        ? <div className="config-summary"><strong>{server.config_summary.effective_value} 小时</strong><span>{server.config_summary.status === 'pending_reload' ? '待热加载确认' : server.config_summary.status === 'pending_restart' ? '等待重启' : server.config_summary.has_override ? '已覆盖' : '跟随全局'}</span></div>
+                      {server.config_summary
+						? <div className={`config-summary ${server.config_summary.status}`}><strong>{server.config_summary.effective_value ? `${server.config_summary.effective_value} 小时` : '未上报'}</strong><span>{configStatusMeta(server.config_summary.status).label}</span></div>
                         : <span className="muted-text">未上报</span>}
                     </td>
                     <td>
