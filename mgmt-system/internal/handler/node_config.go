@@ -35,6 +35,7 @@ type nodeConfigItem struct {
 	RequiresRestart bool       `json:"requires_restart"`
 	Status          string     `json:"status"`
 	ReportedAt      *time.Time `json:"reported_at,omitempty"`
+	RelatedHint     string     `json:"related_hint,omitempty"`
 }
 
 func parseServerID(c *gin.Context) (uint64, bool) {
@@ -243,6 +244,10 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 			Key: definition.Key, Category: definition.Category, Label: definition.Label, Description: definition.Description,
 			ValueType: definition.ValueType, DefaultValue: definition.DefaultValue, Unit: definition.Unit, Min: definition.Min, Max: definition.Max,
 			GlobalValue: global, Source: "unknown", Status: "unreported", Reloadable: definition.Reloadable(), RequiresRestart: definition.RequiresRestart(),
+		}
+		if definition.Key == "lifecycle.message_retention_days" {
+			mailboxDefault := h.store.GetConfigInt("general.default_retention_days", 30)
+			item.RelatedHint = fmt.Sprintf("值为 0 时使用各邮箱自身设置；新建邮箱默认 %d 天。大于 0 时覆盖该节点全部邮箱。", mailboxDefault)
 		}
 		if override, err := h.store.GetServerConfigOverride(serverID, definition.Key); err == nil {
 			item.OverrideValue = &override.ConfigValue

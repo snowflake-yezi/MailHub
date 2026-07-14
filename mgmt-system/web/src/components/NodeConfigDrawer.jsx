@@ -35,6 +35,11 @@ function sourceLabel(source) {
   return source === 'server_override' ? '节点覆盖' : source === 'global' ? '全局配置' : source === 'local_config' ? '本地配置' : '未知'
 }
 
+function displayConfigValue(item, value, fallback) {
+  if (item.key === 'lifecycle.message_retention_days' && String(value) === '0') return fallback
+  return value != null ? `${value} ${item.unit}` : fallback
+}
+
 export default function NodeConfigDrawer({ server, category, onClose, onChanged, onToast }) {
   const [data, setData] = useState(null)
   const [values, setValues] = useState({})
@@ -109,6 +114,10 @@ export default function NodeConfigDrawer({ server, category, onClose, onChanged,
           <div className="config-field-list">
             {items.map(item => {
               const status = configStatusMeta(item.status)
+              const isMessageRetention = item.key === 'lifecycle.message_retention_days'
+              const effectiveDisplay = isMessageRetention && String(item.effective_value) === '0'
+                ? '按邮箱 retention_days'
+                : displayConfigValue(item, item.effective_value, '未上报')
               return (
                 <ConfigField
                   key={item.key}
@@ -120,14 +129,15 @@ export default function NodeConfigDrawer({ server, category, onClose, onChanged,
                   )}
                 >
                   <div className="config-facts config-facts-compact">
-                    <div><span>全局默认</span><strong>{item.global_value} {item.unit}</strong></div>
+                    <div><span>全局默认</span><strong>{displayConfigValue(item, item.global_value, '使用邮箱设置')}</strong></div>
                     <div><span>节点覆盖</span><strong>{item.override_value != null ? `${item.override_value} ${item.unit}` : '无'}</strong></div>
-                    <div><span>实际生效</span><strong>{item.effective_value != null ? `${item.effective_value} ${item.unit}` : '未上报'}</strong></div>
+                    <div><span>实际生效</span><strong>{effectiveDisplay}</strong></div>
                     <div><span>配置来源</span><strong>{sourceLabel(item.source)}</strong></div>
                   </div>
+                  {item.related_hint && <div className="inline-alert">{item.related_hint}</div>}
                   <div className={`config-apply-status ${item.status}`}>
                     <strong>{status.label}</strong>
-                    <span>{status.detail}{item.status === 'applied' ? ` · ${formatDate(item.reported_at)}` : ''}</span>
+                    <span>{isMessageRetention ? '管理端运行时读取；保存后下一轮生命周期调度生效' : status.detail}{item.status === 'applied' && item.reported_at ? ` · ${formatDate(item.reported_at)}` : ''}</span>
                     {data.last_apply_error && <code>{data.last_apply_error}</code>}
                     {data.last_reload_error && !data.last_apply_error && <code>{data.last_reload_error}</code>}
                   </div>

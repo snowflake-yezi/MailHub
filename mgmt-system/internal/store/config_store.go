@@ -258,7 +258,7 @@ func defaultConfigs() []seedConfig {
 		{Key: "maildir.vmail_gid", Value: "5000", Type: "int", Category: "maildir", Label: "虚拟用户 GID", Desc: "Maildir 文件属组 GID", Default: "5000", Reloadable: false},
 
 		// ── general（通用参数）── 双端 ──
-		{Key: "general.default_retention_days", Value: "30", Type: "int", Category: "general", Label: "默认邮件保留天数", Desc: "每封邮件从 Maildir 收件时间起的默认保留天数；邮箱账号不会自动删除", Default: "30", Reloadable: false},
+		{Key: "general.default_retention_days", Value: "30", Type: "int", Category: "general", Label: "新邮箱默认邮件保留天数", Desc: "仅用于新建邮箱的 retention_days 初始值；保存后立即影响后续新邮箱，不修改已有邮箱，也不需要重启。节点统一邮件保留天数为 0 时，已有邮箱仍使用各自设置", Default: "30", Reloadable: false},
 		{Key: "general.default_page_size", Value: "20", Type: "int", Category: "general", Label: "默认分页大小", Desc: "列表 API 默认每页条数", Default: "20", Reloadable: true},
 		{Key: "general.max_page_size", Value: "100", Type: "int", Category: "general", Label: "最大分页大小", Desc: "列表 API 最大每页条数", Default: "100", Reloadable: true},
 		{Key: "general.password_min_length", Value: "6", Type: "int", Category: "general", Label: "密码最小长度", Desc: "邮箱密码最小字符数", Default: "6", Reloadable: false},

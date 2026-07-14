@@ -43,6 +43,17 @@ type configItem struct {
 	Description  string `json:"description"`
 	DefaultValue string `json:"default_value"`
 	Reloadable   bool   `json:"reloadable"`
+	EffectType   string `json:"effect_type"`
+}
+
+func configEffectType(key string, reloadable bool) string {
+	if key == "general.default_retention_days" {
+		return "new_resources"
+	}
+	if reloadable {
+		return "hot_reload"
+	}
+	return "restart"
 }
 
 // ListConfigs 按 category 分组列出全部配置
@@ -93,6 +104,7 @@ func (h *ConfigHandler) ListConfigs(c *gin.Context) {
 			Description:  cfg.Description,
 			DefaultValue: cfg.DefaultValue,
 			Reloadable:   cfg.Reloadable,
+			EffectType:   configEffectType(cfg.ConfigKey, cfg.Reloadable),
 		})
 	}
 
@@ -135,6 +147,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 			Description:  cfg.Description,
 			DefaultValue: cfg.DefaultValue,
 			Reloadable:   cfg.Reloadable,
+			EffectType:   configEffectType(cfg.ConfigKey, cfg.Reloadable),
 		},
 	})
 }

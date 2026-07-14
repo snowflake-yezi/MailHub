@@ -78,7 +78,7 @@ function ModulePanel({ group, onConfigure }) {
   const Icon = meta.icon
   const total = group.items.length
   const reloadable = group.items.filter(item => item.reloadable).length
-  const restartRequired = total - reloadable
+  const restartRequired = group.items.filter(item => item.effect_type === 'restart' || (!item.effect_type && !item.reloadable)).length
 
   return (
     <article className="module-panel">
@@ -367,12 +367,13 @@ export default function ConfigPage() {
 
   const stats = useMemo(() => {
     const totalParams = groups.reduce((sum, group) => sum + group.items.length, 0)
-    const reloadable = groups.reduce((sum, group) => sum + group.items.filter(item => item.reloadable).length, 0)
+    const reloadable = groups.reduce((sum, group) => sum + group.items.filter(item => item.effect_type === 'hot_reload' || (!item.effect_type && item.reloadable)).length, 0)
+    const restartRequired = groups.reduce((sum, group) => sum + group.items.filter(item => item.effect_type === 'restart' || (!item.effect_type && !item.reloadable)).length, 0)
     return {
       modules: groups.length,
       totalParams,
       reloadable,
-      restartRequired: totalParams - reloadable,
+      restartRequired,
     }
   }, [groups])
 

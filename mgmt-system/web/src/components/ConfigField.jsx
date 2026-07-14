@@ -1,6 +1,11 @@
 export default function ConfigField({ item, value, onChange, children, action }) {
   const inputValue = value ?? item.value ?? item.global_value ?? ''
   const inputID = `config-${item.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const effectBadge = item.effect_type === 'new_resources'
+    ? <span className="tag tag-success">仅影响新建邮箱</span>
+    : item.reloadable
+      ? <span className="tag tag-info">热加载</span>
+      : <span className="tag tag-warning">需重启</span>
 
   const input = item.value_type === 'bool' ? (
     <label className="toggle">
@@ -36,7 +41,7 @@ export default function ConfigField({ item, value, onChange, children, action })
           <code>{item.key}</code>
         </div>
         <div className="config-field-actions">
-          {item.reloadable ? <span className="tag tag-info">热加载</span> : <span className="tag tag-warning">需重启</span>}
+          {effectBadge}
           {action}
         </div>
       </div>

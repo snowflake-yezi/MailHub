@@ -87,6 +87,15 @@ func TestMessageRetentionIsMgmtReadThrough(t *testing.T) {
 	}
 }
 
+func TestDefaultRetentionEffectType(t *testing.T) {
+	if got := configEffectType("general.default_retention_days", false); got != "new_resources" {
+		t.Fatalf("effect type = %q", got)
+	}
+	if got := configEffectType("lifecycle.message_retention_days", true); got != "hot_reload" {
+		t.Fatalf("node retention effect type = %q", got)
+	}
+}
+
 func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
 	definition, ok := configschema.Get("forward.target_address")
 	if !ok {
