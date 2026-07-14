@@ -15,7 +15,9 @@ import (
 // GetEffectiveServerConfigInt resolves server override > global config > fallback.
 // It is read on every lifecycle run, so changes do not require a process restart.
 func (s *Store) GetEffectiveServerConfigInt(serverID uint64, key string, fallback int) int {
-	if override, err := s.GetServerConfigOverride(serverID, key); err == nil {
+	var override model.ServerConfigOverride
+	result := s.db.Where("server_id = ? AND config_key = ?", serverID, key).Limit(1).Find(&override)
+	if result.Error == nil && result.RowsAffected > 0 {
 		if value, parseErr := strconv.Atoi(override.ConfigValue); parseErr == nil {
 			return value
 		}
