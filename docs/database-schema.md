@@ -140,7 +140,7 @@ erDiagram
 | `status` | ENUM | `active` | `active / disabled / recycled / deleting / soft_deleted / purged` |
 | `sync_status` | ENUM | `pending` | `pending / synced / sync_failed` |
 | `sync_error` | TEXT | NULL | 同步错误信息 |
-| `retention_days` | BIGINT | `30` | 单封邮件保留天数，按 Maildir 收件时间计算 |
+| `retention_days` | BIGINT | `30` | 兼容字段；实际单封邮件保留期使用全局系统配置 |
 | `expires_at` | DATETIME(3) | NULL | 兼容列；不再用于邮箱账号到期，新建账号保持 NULL |
 | `synced_at`, `disabled_at`, `recycled_at` | DATETIME(3) | NULL | 同步、停用、进入回收站时间 |
 | `delete_requested_at` | DATETIME(3) | NULL | 删除请求时间，供 Watchdog 对账 |
@@ -168,7 +168,7 @@ erDiagram
 | `status` | ENUM | `active` | `active / disabled / recycled` |
 | `sync_status` | ENUM | `pending` | `pending / synced / sync_failed` |
 | `sync_error` | TEXT | NULL | 同步错误信息 |
-| `retention_days` | BIGINT | `30` | 单封邮件保留天数 |
+| `retention_days` | BIGINT | `30` | 兼容字段；实际单封邮件保留期使用全局系统配置 |
 | `synced_at`, `expires_at` | DATETIME(3) | NULL | 同步完成时间；`expires_at` 为兼容列，不再驱动账号删除 |
 | `disabled_at`, `recycled_at` | DATETIME(3) | NULL | 停用时间、进入回收站时间 |
 | `created_at` | DATETIME(3) | NULL | 创建时间 |

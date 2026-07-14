@@ -21,7 +21,7 @@ const (
 	cfgLifecycleWatchdogMin    = "lifecycle.delete_watchdog_minutes"
 	cfgLifecycleDeleteProbeSec = "healthcheck.probe_timeout_seconds" // reuse healthcheck probe timeout
 	cfgTrashRetentionHours     = "lifecycle.trash_retention_hours"
-	cfgMessageRetentionDays    = "lifecycle.message_retention_days"
+	cfgGlobalRetentionDays     = "general.default_retention_days"
 )
 
 // Scheduler 负责邮箱生命周期后台任务：
@@ -83,19 +83,11 @@ func (s *Scheduler) purgeExpiredMessages() {
 		RetentionDays int    `json:"retention_days"`
 	}
 	groups := make(map[uint64][]retentionItem)
-	nodeRetentionDays := make(map[uint64]int)
+	retentionDays := s.store.GetConfigInt(cfgGlobalRetentionDays, 30)
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
 	for _, mb := range mailboxes {
-		retentionDays, resolved := nodeRetentionDays[mb.ServerID]
-		if !resolved {
-			retentionDays = s.store.GetEffectiveServerConfigInt(mb.ServerID, cfgMessageRetentionDays, 0)
-			nodeRetentionDays[mb.ServerID] = retentionDays
-		}
-		if retentionDays <= 0 {
-			retentionDays = mb.RetentionDays
-		}
-		if retentionDays <= 0 {
-			retentionDays = 30
-		}
 		groups[mb.ServerID] = append(groups[mb.ServerID], retentionItem{EmailAddress: mb.EmailAddress, RetentionDays: retentionDays})
 	}
 	for serverID, items := range groups {

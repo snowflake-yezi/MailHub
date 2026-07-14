@@ -90,7 +90,7 @@ Content-Type: application/json
 |------|------|------|
 | `order_id` | 是 | 业务订单号，接口按该字段幂等复用邮箱 |
 | `domain_id` | 否 | 指定域名 ID；为空时由分配器选择 |
-| `retention_days` | 否 | 单封邮件保留天数；按 Maildir 收件时间计算，账号本身不会到期；为空使用系统默认值 |
+| `retention_days` | 否 | 兼容字段；实际邮件清理统一使用系统配置 `general.default_retention_days`，账号本身不会到期 |
 
 响应：
 

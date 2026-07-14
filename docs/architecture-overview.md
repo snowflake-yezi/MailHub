@@ -86,7 +86,7 @@ flowchart TB
 
 | 表 | 关键字段 | 说明 |
 |----|----------|------|
-| `mailbox_accounts` | `email_address`, `password`, `domain_id`, `server_id`, `status`, `sync_status`, `retention_days`, `delete_requested_at` | 当前邮箱账号主表。`retention_days` 控制单封邮件保留期，不使账号到期；`status` 为 `active / disabled / recycled / deleting / soft_deleted / purged`。 |
+| `mailbox_accounts` | `email_address`, `password`, `domain_id`, `server_id`, `status`, `sync_status`, `retention_days`, `delete_requested_at` | 当前邮箱账号主表。`retention_days` 为兼容字段，实际单封邮件保留期由全局配置控制；`status` 为 `active / disabled / recycled / deleting / soft_deleted / purged`。 |
 | `order_mailbox_mappings` | `order_id`, `mailbox_account_id` | 订单与邮箱绑定。当前按 1:1 使用，schema 支持后续扩展。 |
 | `order_mailboxes` | legacy 邮箱字段 | 历史兼容表；启动迁移到 `mailbox_accounts` + `order_mailbox_mappings`。 |
 | `mail_servers` | `api_host`, `status`, `heartbeat_interval`, `desired_revision`, `applied_revision`, `last_boot_id`, `config_changed_at` | 数据面节点台账、配置版本和重启可观测事实。 |
@@ -312,7 +312,7 @@ Scope 当前取值：
 
 > 当前实现：`system_configs` 是全局默认事实源，`server_config_overrides` 保存单节点覆盖，`server_config_snapshots` 保存节点实际上报值、版本和 boot ID。管理端根据 desired/applied revision、通知/Apply 错误和启动身份统一计算 `pending_apply / pending_retry / apply_failed / pending_restart / restart_detected / restart_overdue / applied`；`mail_servers.heartbeat_interval` 仍保留为专用节点字段。
 
-邮件保留支持 `lifecycle.message_retention_days` 节点覆盖：值大于 `0` 时统一覆盖该节点所有邮箱的邮件保留天数，值为 `0` 时继续使用各邮箱自身的 `retention_days`。该配置由 mgmt 生命周期调度器运行期读取，保存后无需重启，下一轮调度生效。
+邮件保留统一使用全局配置 `general.default_retention_days`。该值对全部现有及新邮箱生效，由 mgmt 生命周期调度器运行期读取，保存后无需重启，下一轮调度按 Maildir 邮件文件时间清理。邮箱表中的 `retention_days` 与旧的 `lifecycle.message_retention_days` 节点配置仅为兼容保留，不再决定实际清理时间。
 
 ---
 

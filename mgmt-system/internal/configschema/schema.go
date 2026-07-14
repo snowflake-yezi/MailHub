@@ -79,11 +79,11 @@ var definitions = map[string]Definition{
 	},
 	"lifecycle.message_retention_days": {
 		Key: "lifecycle.message_retention_days", Owner: "mgmt-system", Category: "lifecycle",
-		Label: "节点统一邮件保留天数", Description: "大于 0 时统一覆盖该节点所有邮箱的邮件保留天数；0 表示使用各邮箱自身设置",
+		Label: "节点邮件保留天数（已停用）", Description: "兼容旧配置保留，邮件清理统一使用 general.default_retention_days",
 		ValueType: "int", DefaultValue: "0", Unit: "天",
 		Min:             0,
 		Max:             36500,
-		NodeOverridable: true,
+		NodeOverridable: false,
 		ApplyStrategy:   ReadThrough,
 	},
 	"lifecycle.gc_interval_minutes": {

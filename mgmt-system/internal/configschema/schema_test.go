@@ -25,7 +25,6 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 		"forward.tls_insecure_skip":        ReadThrough,
 		"forward.tls_min_version":          ReadThrough,
 		"lifecycle.gc_interval_minutes":    ReloadHook,
-		"lifecycle.message_retention_days": ReadThrough,
 		"lifecycle.drain_timeout_minutes":  ReadThrough,
 		"lifecycle.drain_poll_interval_ms": ReadThrough,
 	}
@@ -45,12 +44,18 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 
 func TestNodeOverridesAreStableAndComplete(t *testing.T) {
 	definitions := NodeOverrides()
-	if len(definitions) != len(definitionOrder) {
-		t.Fatalf("NodeOverrides() returned %d definitions, want %d", len(definitions), len(definitionOrder))
+	expectedKeys := make([]string, 0, len(definitionOrder))
+	for _, key := range definitionOrder {
+		if definition, ok := Get(key); ok && definition.NodeOverridable {
+			expectedKeys = append(expectedKeys, key)
+		}
+	}
+	if len(definitions) != len(expectedKeys) {
+		t.Fatalf("NodeOverrides() returned %d definitions, want %d", len(definitions), len(expectedKeys))
 	}
 	for index, definition := range definitions {
-		if definition.Key != definitionOrder[index] {
-			t.Fatalf("NodeOverrides()[%d].Key = %q, want %q", index, definition.Key, definitionOrder[index])
+		if definition.Key != expectedKeys[index] {
+			t.Fatalf("NodeOverrides()[%d].Key = %q, want %q", index, definition.Key, expectedKeys[index])
 		}
 		if definition.Category == "" || definition.Description == "" || definition.DefaultValue == "" || definition.Unit == "" {
 			t.Fatalf("definition %s has incomplete UI metadata: %#v", definition.Key, definition)

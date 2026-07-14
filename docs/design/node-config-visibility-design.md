@@ -478,7 +478,7 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 
 ### 生命周期语义修正（2026-07-14）
 
-- `retention_days` 统一解释为单封邮件保留天数，按 Maildir `received_at`（文件修改时间）计算。
+- 单封邮件保留天数统一取 `general.default_retention_days`，按 Maildir `received_at`（文件修改时间）计算；邮箱表 `retention_days` 为兼容字段。
 - 生命周期调度器只调用节点邮件级 GC，不再根据该字段删除邮箱账号；人工删除账号仍走 `deleting → soft_deleted → purged` 回收站协议。
 - 新建邮箱不再生成账号 `expires_at`，启动迁移清空 active 邮箱遗留到期时间；字段仅为 API/数据库兼容保留。
 

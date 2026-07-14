@@ -78,7 +78,7 @@ func TestNodeConfigReloadMetadata(t *testing.T) {
 
 func TestMessageRetentionIsMgmtReadThrough(t *testing.T) {
 	definition, ok := configschema.Get("lifecycle.message_retention_days")
-	if !ok || definition.Owner != "mgmt-system" || definition.ApplyStrategy != configschema.ReadThrough || !definition.Reloadable() {
+	if !ok || definition.Owner != "mgmt-system" || definition.ApplyStrategy != configschema.ReadThrough || !definition.Reloadable() || definition.NodeOverridable {
 		t.Fatalf("message retention metadata = %#v", definition)
 	}
 	result := mgmtReadThroughResult(7)
@@ -88,7 +88,7 @@ func TestMessageRetentionIsMgmtReadThrough(t *testing.T) {
 }
 
 func TestDefaultRetentionEffectType(t *testing.T) {
-	if got := configEffectType("general.default_retention_days", false); got != "new_resources" {
+	if got := configEffectType("general.default_retention_days", true); got != "hot_reload" {
 		t.Fatalf("effect type = %q", got)
 	}
 	if got := configEffectType("lifecycle.message_retention_days", true); got != "hot_reload" {

@@ -48,7 +48,7 @@ type configItem struct {
 
 func configEffectType(key string, reloadable bool) string {
 	if key == "general.default_retention_days" {
-		return "new_resources"
+		return "hot_reload"
 	}
 	if reloadable {
 		return "hot_reload"
