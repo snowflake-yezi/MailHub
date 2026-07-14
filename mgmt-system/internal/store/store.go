@@ -87,8 +87,17 @@ func New(dsn string, mode string) (*Store, error) {
 	if err := s.MigrateLegacyOrderMailboxes(); err != nil {
 		return nil, fmt.Errorf("migrate legacy order_mailboxes: %w", err)
 	}
+	if err := s.clearLegacyActiveMailboxExpirations(); err != nil {
+		return nil, fmt.Errorf("clear legacy mailbox expirations: %w", err)
+	}
 
 	return s, nil
+}
+
+func (s *Store) clearLegacyActiveMailboxExpirations() error {
+	return s.db.Model(&model.MailboxAccount{}).
+		Where("status = ? AND expires_at IS NOT NULL", "active").
+		Update("expires_at", nil).Error
 }
 
 // DB 返回原始 gorm 实例（供内部使用）
@@ -599,9 +608,9 @@ func (s *Store) UpdateRetentionDays(id uint64, days int) error {
 	return s.db.Model(&model.MailboxAccount{}).Where("id = ?", id).
 		Update("retention_days", days).Error
 }
-func (s *Store) FindExpiredMailboxes() ([]model.MailboxAccount, error) {
+func (s *Store) ListActiveMailboxesForMessageRetention() ([]model.MailboxAccount, error) {
 	var list []model.MailboxAccount
-	err := s.db.Where("status = 'active' AND expires_at <= ?", time.Now()).Find(&list).Error
+	err := s.db.Where("status = ?", "active").Order("server_id ASC, id ASC").Find(&list).Error
 	return list, err
 }
 
@@ -674,12 +683,12 @@ func (s *Store) FindStuckDeleting(timeout time.Duration) ([]model.MailboxAccount
 }
 
 // FindExpiredSoftDeleted 查找 soft_deleted 且已过保留期的邮箱（GC 用）。
-func (s *Store) FindExpiredSoftDeleted() ([]model.MailboxAccount, error) {
+func (s *Store) FindExpiredSoftDeleted(retention time.Duration) ([]model.MailboxAccount, error) {
 	var list []model.MailboxAccount
-	// 使用 recycled_at 判定软删除时间；retention_days 为 0 时默认 30 天
+	cutoff := time.Now().Add(-retention)
 	err := s.db.Where("status = ?", "soft_deleted").
 		Where("recycled_at IS NOT NULL").
-		Where("DATE_ADD(recycled_at, INTERVAL COALESCE(retention_days, 30) DAY) <= ?", time.Now()).
+		Where("recycled_at <= ?", cutoff).
 		Order("id ASC").Find(&list).Error
 	return list, err
 }

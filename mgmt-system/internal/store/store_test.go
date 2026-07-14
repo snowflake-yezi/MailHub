@@ -70,6 +70,7 @@ func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 		"forward.max_email_size",
 		"forward.body_preview_size",
 		"lifecycle.trash_retention_hours",
+		"lifecycle.message_retention_days",
 		"lifecycle.gc_interval_minutes",
 		"lifecycle.drain_timeout_minutes",
 		"lifecycle.drain_poll_interval_ms",

@@ -10,11 +10,99 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	mailconfig "github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
+
+func TestPurgeExpiredMessageFilesDeletesOnlyExpiredMessages(t *testing.T) {
+	dir := t.TempDir()
+	oldFile := filepath.Join(dir, "old")
+	newFile := filepath.Join(dir, "new")
+	if err := os.WriteFile(oldFile, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("new"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(oldFile, now.Add(-48*time.Hour), now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newFile, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	deleted, failed := purgeExpiredMessageFiles([]string{oldFile, newFile}, now.Add(-24*time.Hour))
+	if deleted != 1 || failed != 0 {
+		t.Fatalf("deleted/failed = %d/%d", deleted, failed)
+	}
+	if _, err := os.Stat(oldFile); !os.IsNotExist(err) {
+		t.Fatalf("old file still exists: %v", err)
+	}
+	if _, err := os.Stat(newFile); err != nil {
+		t.Fatalf("new file removed: %v", err)
+	}
+}
+
+func TestPurgeExpiredMessagesBatchUsesPerMailboxRetention(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	mgr := mailbox.NewManagerWithFiles(tmp, 5000, 5000, filepath.Join(tmp, "users.conf"), filepath.Join(tmp, "vmailbox"))
+	h := &NodeHandler{mailboxMgr: mgr}
+	now := time.Now()
+
+	oldA := filepath.Join(tmp, "example.com", "a", "new", "old-a")
+	oldB := filepath.Join(tmp, "example.com", "b", "cur", "old-b")
+	newB := filepath.Join(tmp, "example.com", "b", "new", "new-b")
+	for _, path := range []string{oldA, oldB, newB} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("message"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, age := range map[string]time.Duration{oldA: 31 * 24 * time.Hour, oldB: 8 * 24 * time.Hour, newB: 6 * 24 * time.Hour} {
+		stamp := now.Add(-age)
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := `{"items":[{"email_address":"a@example.com","retention_days":30},{"email_address":"b@example.com","retention_days":7},{"email_address":"invalid","retention_days":7}]}`
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/internal/messages/retention/purge", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.PurgeExpiredMessagesBatch(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Processed int `json:"processed_mailboxes"`
+			Deleted   int `json:"deleted"`
+			Failed    int `json:"failed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Processed != 2 || resp.Data.Deleted != 2 || resp.Data.Failed != 1 {
+		t.Fatalf("response = %s", w.Body.String())
+	}
+	for _, path := range []string{oldA, oldB} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expired message still exists: %s (%v)", path, err)
+		}
+	}
+	if _, err := os.Stat(newB); err != nil {
+		t.Fatalf("unexpired message removed: %v", err)
+	}
+}
 
 func TestCurrentNodeIDUsesRecoveredRemoteIdentity(t *testing.T) {
 	remoteCfg := mailconfig.NewRemoteConfig("", "")

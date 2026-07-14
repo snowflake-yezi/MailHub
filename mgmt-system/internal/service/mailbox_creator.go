@@ -26,17 +26,17 @@ type MailboxCreateInput struct {
 }
 
 type MailboxCreateResult struct {
-	MailboxAccountID uint64    `json:"mailbox_account_id"`
-	OrderID          string    `json:"order_id"`
-	EmailAddress     string    `json:"email_address"`
-	LocalPart        string    `json:"local_part"`
-	Domain           string    `json:"domain"`
-	Password         string    `json:"password,omitempty"`
-	ServerID         uint64    `json:"server_id"`
-	CreatedAt        time.Time `json:"created_at"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	SyncStatus       string    `json:"sync_status"`
-	IsExisting       bool      `json:"is_existing"`
+	MailboxAccountID uint64     `json:"mailbox_account_id"`
+	OrderID          string     `json:"order_id"`
+	EmailAddress     string     `json:"email_address"`
+	LocalPart        string     `json:"local_part"`
+	Domain           string     `json:"domain"`
+	Password         string     `json:"password,omitempty"`
+	ServerID         uint64     `json:"server_id"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	SyncStatus       string     `json:"sync_status"`
+	IsExisting       bool       `json:"is_existing"`
 }
 
 type MailboxCreator struct {
@@ -108,7 +108,6 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 	}
 
 	now := time.Now()
-	expiresAt := now.Add(time.Duration(retentionDays) * 24 * time.Hour)
 	account := &model.MailboxAccount{
 		EmailAddress:  emailAddress,
 		LocalPart:     localPart,
@@ -119,7 +118,7 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 		SyncStatus:    "synced",
 		RetentionDays: retentionDays,
 		SyncedAt:      &now,
-		ExpiresAt:     &expiresAt,
+		ExpiresAt:     nil,
 	}
 	if err := m.store.CreateMailboxAccountWithOrder(account, input.OrderID); err != nil {
 		return nil, fmt.Errorf("create mailbox record: %w", err)
@@ -226,10 +225,6 @@ func (m *MailboxCreator) createRemote(apiHost, email, password string) error {
 }
 
 func mailboxResult(mb *model.MailboxAccount, orderID string, existing bool) *MailboxCreateResult {
-	var expiresAt time.Time
-	if mb.ExpiresAt != nil {
-		expiresAt = *mb.ExpiresAt
-	}
 	return &MailboxCreateResult{
 		MailboxAccountID: mb.ID,
 		OrderID:          orderID,
@@ -239,7 +234,7 @@ func mailboxResult(mb *model.MailboxAccount, orderID string, existing bool) *Mai
 		Password:         mb.Password,
 		ServerID:         mb.ServerID,
 		CreatedAt:        mb.CreatedAt,
-		ExpiresAt:        expiresAt,
+		ExpiresAt:        mb.ExpiresAt,
 		SyncStatus:       mb.SyncStatus,
 		IsExisting:       existing,
 	}

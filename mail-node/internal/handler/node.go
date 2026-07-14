@@ -320,6 +320,73 @@ func (h *NodeHandler) GetMessages(c *gin.Context) {
 	})
 }
 
+// PurgeExpiredMessages removes individual Maildir messages older than the
+// mailbox retention period without changing the mailbox account itself.
+// DELETE /internal/mailboxes/:email/messages/expired?retention_days=N
+func (h *NodeHandler) PurgeExpiredMessages(c *gin.Context) {
+	email := c.Param("email")
+	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": "invalid email"})
+		return
+	}
+	retentionDays, err := strconv.Atoi(c.Query("retention_days"))
+	if err != nil || retentionDays <= 0 || retentionDays > 36500 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": "retention_days must be between 1 and 36500"})
+		return
+	}
+
+	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	deleted, failed := purgeExpiredMessageFiles(h.scanMailboxFiles(email), cutoff)
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "expired messages purged", "data": gin.H{
+		"email_address": email, "retention_days": retentionDays, "deleted": deleted, "failed": failed,
+	}})
+}
+
+func (h *NodeHandler) PurgeExpiredMessagesBatch(c *gin.Context) {
+	var req struct {
+		Items []struct {
+			EmailAddress  string `json:"email_address"`
+			RetentionDays int    `json:"retention_days"`
+		} `json:"items" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1001, "message": "items are required"})
+		return
+	}
+	totalDeleted := 0
+	totalFailed := 0
+	processed := 0
+	for _, item := range req.Items {
+		if len(strings.SplitN(item.EmailAddress, "@", 2)) != 2 || item.RetentionDays <= 0 || item.RetentionDays > 36500 {
+			totalFailed++
+			continue
+		}
+		cutoff := time.Now().Add(-time.Duration(item.RetentionDays) * 24 * time.Hour)
+		deleted, failed := purgeExpiredMessageFiles(h.scanMailboxFiles(item.EmailAddress), cutoff)
+		totalDeleted += deleted
+		totalFailed += failed
+		processed++
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "message retention batch completed", "data": gin.H{
+		"processed_mailboxes": processed, "deleted": totalDeleted, "failed": totalFailed,
+	}})
+}
+
+func purgeExpiredMessageFiles(files []string, cutoff time.Time) (deleted, failed int) {
+	for _, filePath := range files {
+		stat, statErr := os.Stat(filePath)
+		if statErr != nil || stat.ModTime().After(cutoff) {
+			continue
+		}
+		if removeErr := os.Remove(filePath); removeErr != nil {
+			failed++
+			continue
+		}
+		deleted++
+	}
+	return deleted, failed
+}
+
 // GetMessageBody 获取单封邮件完整内容
 // GET /internal/messages/:message_id?mailbox=xxx@domain
 func (h *NodeHandler) GetMessageBody(c *gin.Context) {
@@ -656,6 +723,8 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 
 	// 邮件查询
 	rg.GET("/mailboxes/:email/messages", h.GetMessages)
+	rg.DELETE("/mailboxes/:email/messages/expired", h.PurgeExpiredMessages)
+	rg.POST("/messages/retention/purge", h.PurgeExpiredMessagesBatch)
 	rg.GET("/messages/:message_id", h.GetMessageBody)
 	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
 	rg.GET("/messages/:message_id/attachments/:index/preview", h.GetMessageAttachmentPreview)

@@ -90,7 +90,7 @@ Content-Type: application/json
 |------|------|------|
 | `order_id` | 是 | 业务订单号，接口按该字段幂等复用邮箱 |
 | `domain_id` | 否 | 指定域名 ID；为空时由分配器选择 |
-| `retention_days` | 否 | 保留天数；为空使用系统默认值 |
+| `retention_days` | 否 | 单封邮件保留天数；按 Maildir 收件时间计算，账号本身不会到期；为空使用系统默认值 |
 
 响应：
 
@@ -106,7 +106,6 @@ Content-Type: application/json
     "password": "generated-password",
     "server_id": 1,
     "created_at": "2026-07-03T10:00:00Z",
-    "expires_at": "2026-08-02T10:00:00Z",
     "sync_status": "synced",
     "is_existing": false
   },
@@ -123,7 +122,7 @@ GET /api/v1/mailboxes/{order_id}
 Authorization: Bearer <token with mailbox:read>
 ```
 
-响应 `data` 为邮箱账号记录，包含 `email_address`、`local_part`、`password`、`domain_id`、`server_id`、`status`、`sync_status`、`retention_days`、`created_at`、`expires_at` 等字段。
+响应 `data` 为邮箱账号记录，包含 `email_address`、`local_part`、`password`、`domain_id`、`server_id`、`status`、`sync_status`、`retention_days`、`created_at` 等字段。兼容字段 `expires_at` 不再用于账号生命周期，新建邮箱默认不返回该字段。
 
 ### 2.3 禁用邮箱
 

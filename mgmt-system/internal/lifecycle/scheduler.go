@@ -1,7 +1,9 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +20,8 @@ const (
 	cfgLifecycleInterval       = "lifecycle.schedule_interval_minutes"
 	cfgLifecycleWatchdogMin    = "lifecycle.delete_watchdog_minutes"
 	cfgLifecycleDeleteProbeSec = "healthcheck.probe_timeout_seconds" // reuse healthcheck probe timeout
+	cfgTrashRetentionHours     = "lifecycle.trash_retention_hours"
+	cfgMessageRetentionDays    = "lifecycle.message_retention_days"
 )
 
 // Scheduler 负责邮箱生命周期后台任务：
@@ -64,7 +68,51 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) run() {
 	s.watchdog()
+	s.purgeExpiredMessages()
 	s.purgeExpired()
+}
+
+func (s *Scheduler) purgeExpiredMessages() {
+	mailboxes, err := s.store.ListActiveMailboxesForMessageRetention()
+	if err != nil {
+		log.Printf("[lifecycle] message retention: list active mailboxes failed: %v", err)
+		return
+	}
+	type retentionItem struct {
+		EmailAddress  string `json:"email_address"`
+		RetentionDays int    `json:"retention_days"`
+	}
+	groups := make(map[uint64][]retentionItem)
+	nodeRetentionDays := make(map[uint64]int)
+	for _, mb := range mailboxes {
+		retentionDays, resolved := nodeRetentionDays[mb.ServerID]
+		if !resolved {
+			retentionDays = s.store.GetEffectiveServerConfigInt(mb.ServerID, cfgMessageRetentionDays, 0)
+			nodeRetentionDays[mb.ServerID] = retentionDays
+		}
+		if retentionDays <= 0 {
+			retentionDays = mb.RetentionDays
+		}
+		if retentionDays <= 0 {
+			retentionDays = 30
+		}
+		groups[mb.ServerID] = append(groups[mb.ServerID], retentionItem{EmailAddress: mb.EmailAddress, RetentionDays: retentionDays})
+	}
+	for serverID, items := range groups {
+		srv, getErr := s.store.GetServer(serverID)
+		if getErr != nil {
+			log.Printf("[lifecycle] message retention: get server %d failed: %v", serverID, getErr)
+			continue
+		}
+		deleted, callErr := s.callNodePurgeExpiredMessagesBatch(srv.APIHost, items)
+		if callErr != nil {
+			log.Printf("[lifecycle] message retention: purge server %d failed: %v", serverID, callErr)
+			continue
+		}
+		if deleted > 0 {
+			log.Printf("[lifecycle] message retention: purged %d messages on server %d", deleted, serverID)
+		}
+	}
 }
 
 // watchdog 扫描 deleting 超时的任务，重新向 mail-node 下发 DELETE。
@@ -101,7 +149,8 @@ func (s *Scheduler) watchdog() {
 
 // purgeExpired 扫描 soft_deleted 且已过保留期的邮箱，标记为 purged。
 func (s *Scheduler) purgeExpired() {
-	expired, err := s.store.FindExpiredSoftDeleted()
+	retention := time.Duration(s.store.GetConfigInt(cfgTrashRetentionHours, 24)) * time.Hour
+	expired, err := s.store.FindExpiredSoftDeleted(retention)
 	if err != nil {
 		log.Printf("[lifecycle] purge: find expired failed: %v", err)
 		return
@@ -115,6 +164,45 @@ func (s *Scheduler) purgeExpired() {
 		}
 		log.Printf("[lifecycle] purge: %s → purged", mb.EmailAddress)
 	}
+}
+
+func (s *Scheduler) callNodePurgeExpiredMessagesBatch(apiHost string, items interface{}) (int, error) {
+	body, err := json.Marshal(map[string]interface{}{"items": items})
+	if err != nil {
+		return 0, fmt.Errorf("encode request: %w", err)
+	}
+	endpoint := fmt.Sprintf("http://%s/internal/messages/retention/purge", apiHost)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.sharedSecret)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return 0, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			Deleted int `json:"deleted"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return 0, fmt.Errorf("decode response: %w", err)
+	}
+	if result.Code != 0 {
+		return 0, fmt.Errorf("node returned code %d", result.Code)
+	}
+	return result.Data.Deleted, nil
 }
 
 // callNodeDelete 向 mail-node 发送 DELETE 请求触发 MoveToTrash。

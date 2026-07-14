@@ -476,6 +476,12 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 - [x] [NC-9] 新增 `config_change_audits`，节点覆盖设置/修改/恢复与 revision bump 在同一事务中记录；节点配置抽屉展示最近操作者、前后值、动作、revision 与时间。
 - [x] [NC-4] 增加 schema 策略/元数据、节点 Apply/read-through、snapshot provider 完整 key 集合和输入校验契约测试；双 Go 模块全量测试与 `go vet`、Web 生产构建通过。
 
+### 生命周期语义修正（2026-07-14）
+
+- `retention_days` 统一解释为单封邮件保留天数，按 Maildir `received_at`（文件修改时间）计算。
+- 生命周期调度器只调用节点邮件级 GC，不再根据该字段删除邮箱账号；人工删除账号仍走 `deleting → soft_deleted → purged` 回收站协议。
+- 新建邮箱不再生成账号 `expires_at`，启动迁移清空 active 邮箱遗留到期时间；字段仅为 API/数据库兼容保留。
+
 ---
 
 ## 14. 验收标准（v2 补充）

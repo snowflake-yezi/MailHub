@@ -237,7 +237,8 @@ stateDiagram-v2
 - mgmt-system 定时扫描超时 `deleting` 任务并重新下发 DELETE。
 - mail-node 启动时拉取 `/api/v1/internal/sync/deleting` 恢复未完成删除任务。
 - mail-node GC 清理超过 `lifecycle.trash_retention_hours` 的 `.trash` 目录。
-- mgmt-system 将超过账号 `retention_days` 的 `soft_deleted` 标记为 `purged`。
+- mgmt-system 按 active 邮箱的 `retention_days` 请求 mail-node 删除超过收件期限的单封邮件，不删除邮箱账号；人工删除账号后的 `soft_deleted → purged` 状态收敛改用 `.trash` 保留窗口。
+- `lifecycle.message_retention_days` 支持全局默认与单节点覆盖：大于 `0` 时覆盖节点内邮箱保留期，`0` 时使用邮箱自身设置；mgmt 调度器每轮读取，属于无需重启的 read-through 热加载。
 
 ---
 

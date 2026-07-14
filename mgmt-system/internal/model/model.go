@@ -105,7 +105,7 @@ type MailboxAccount struct {
 	Status        string     `gorm:"type:enum('active','disabled','recycled','deleting','soft_deleted','purged');default:active;index:idx_status" json:"status"`
 	SyncStatus    string     `gorm:"type:enum('pending','synced','sync_failed');default:pending;index:idx_sync_status" json:"sync_status"`
 	SyncError     string     `gorm:"type:text" json:"sync_error,omitempty"`
-	RetentionDays int        `gorm:"not null;default:30" json:"retention_days"`
+	RetentionDays int        `gorm:"not null;default:30" json:"retention_days"` // per-message retention; never expires the mailbox account
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	SyncedAt      *time.Time `json:"synced_at"`

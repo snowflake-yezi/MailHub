@@ -21,7 +21,7 @@ mail-node 侧 `forward/lifecycle.go` 已完整实现安全删除协议：
 |------|------|------|
 | `/api/v1/internal/sync/deleting` 未实现（实现前） | mail-node 重启 Pull 返回 404 | 重启丢排空任务，无法自愈 |
 | `DisableMailbox` 只写 DB | 管理员停用账号后 mail-node 不知情 | 邮箱继续收信转发，生命周期形同虚设 |
-| 无 GC 调度器 | `FindExpiredMailboxes`/`RecycleMailbox` 写了从不调用 | 过期邮箱不会自动回收 |
+| 无 GC 调度器（历史问题，已于 2026-07-14 修正） | 旧设计曾预留按 `expires_at` 回收账号的入口，但未调用且现已删除 | 当前仅按每封邮件的收件时间执行保留期清理，邮箱账号不会自动回收 |
 
 ---
 

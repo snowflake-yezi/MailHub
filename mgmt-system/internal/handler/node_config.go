@@ -106,6 +106,15 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		oldValue = existing.ConfigValue
 	}
 	actor, _ := c.Get("admin_user")
+	if definition.Owner == "mgmt-system" {
+		err := h.store.SetServerConfigOverride(&model.ServerConfigOverride{ServerID: serverID, ConfigKey: key, ConfigValue: value, ValueType: definition.ValueType, UpdatedBy: actorString(actor)})
+		if err != nil {
+			fail(c, http.StatusInternalServerError, 5000, "failed to save node config")
+			return
+		}
+		success(c, "node config saved", mgmtReadThroughResult(server.DesiredRevision))
+		return
+	}
 	desiredRevision, err := h.store.SetServerConfigOverrideAndBump(&model.ServerConfigOverride{ServerID: serverID, ConfigKey: key, ConfigValue: value, ValueType: definition.ValueType}, actorString(actor), oldValue)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to save node config")
@@ -168,6 +177,14 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 	}
 	globalValue := h.store.GetConfig(key, definition.DefaultValue)
 	actor, _ := c.Get("admin_user")
+	if definition.Owner == "mgmt-system" {
+		if err := h.store.DeleteServerConfigOverride(serverID, key); err != nil {
+			fail(c, http.StatusInternalServerError, 5000, "failed to reset node config")
+			return
+		}
+		success(c, "node config reset", mgmtReadThroughResult(server.DesiredRevision))
+		return
+	}
 	desiredRevision, err := h.store.DeleteServerConfigOverrideAndBump(serverID, key, actorString(actor), oldValue, globalValue)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to reset node config")
@@ -206,6 +223,13 @@ func reloadDispatchResult(definition configschema.Definition, desiredRevision ui
 	return result
 }
 
+func mgmtReadThroughResult(desiredRevision uint64) gin.H {
+	return gin.H{
+		"desired_revision": desiredRevision, "requires_restart": false,
+		"reload_dispatched": true, "reload_target": "mgmt_read_through",
+	}
+}
+
 func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, error) {
 	server, err := h.store.GetServer(serverID)
 	if err != nil {
@@ -224,6 +248,18 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 			item.OverrideValue = &override.ConfigValue
 		} else if !store.IsNotFound(err) {
 			return nil, err
+		}
+		if definition.Owner == "mgmt-system" {
+			effective := global
+			item.Source = "global"
+			if item.OverrideValue != nil {
+				effective = *item.OverrideValue
+				item.Source = "server_override"
+			}
+			item.EffectiveValue = &effective
+			item.Status = "applied"
+			items = append(items, item)
+			continue
 		}
 		var snapshot *model.ServerConfigSnapshot
 		if value, err := h.store.GetServerConfigSnapshot(serverID, definition.Key); err == nil {

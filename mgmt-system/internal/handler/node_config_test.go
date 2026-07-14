@@ -76,6 +76,17 @@ func TestNodeConfigReloadMetadata(t *testing.T) {
 	}
 }
 
+func TestMessageRetentionIsMgmtReadThrough(t *testing.T) {
+	definition, ok := configschema.Get("lifecycle.message_retention_days")
+	if !ok || definition.Owner != "mgmt-system" || definition.ApplyStrategy != configschema.ReadThrough || !definition.Reloadable() {
+		t.Fatalf("message retention metadata = %#v", definition)
+	}
+	result := mgmtReadThroughResult(7)
+	if result["reload_target"] != "mgmt_read_through" || result["reload_dispatched"] != true || result["requires_restart"] != false {
+		t.Fatalf("read-through result = %#v", result)
+	}
+}
+
 func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
 	definition, ok := configschema.Get("forward.target_address")
 	if !ok {

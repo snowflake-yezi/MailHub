@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/configschema"
@@ -10,6 +11,17 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// GetEffectiveServerConfigInt resolves server override > global config > fallback.
+// It is read on every lifecycle run, so changes do not require a process restart.
+func (s *Store) GetEffectiveServerConfigInt(serverID uint64, key string, fallback int) int {
+	if override, err := s.GetServerConfigOverride(serverID, key); err == nil {
+		if value, parseErr := strconv.Atoi(override.ConfigValue); parseErr == nil {
+			return value
+		}
+	}
+	return s.GetConfigInt(key, fallback)
+}
 
 func (s *Store) GetServerConfigOverride(serverID uint64, key string) (*model.ServerConfigOverride, error) {
 	var value model.ServerConfigOverride

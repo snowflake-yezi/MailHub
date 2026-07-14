@@ -25,16 +25,16 @@ func (a *Allocator) Creator() *MailboxCreator {
 }
 
 type AllocateResult struct {
-	OrderID      string    `json:"order_id"`
-	EmailAddress string    `json:"email_address"`
-	LocalPart    string    `json:"local_part"`
-	Domain       string    `json:"domain"`
-	Password     string    `json:"password,omitempty"`
-	ServerID     uint64    `json:"server_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	SyncStatus   string    `json:"sync_status"`
-	IsExisting   bool      `json:"is_existing"`
+	OrderID      string     `json:"order_id"`
+	EmailAddress string     `json:"email_address"`
+	LocalPart    string     `json:"local_part"`
+	Domain       string     `json:"domain"`
+	Password     string     `json:"password,omitempty"`
+	ServerID     uint64     `json:"server_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
+	SyncStatus   string     `json:"sync_status"`
+	IsExisting   bool       `json:"is_existing"`
 }
 
 func (a *Allocator) Allocate(orderID string, domainID uint64, retentionDays int) (*AllocateResult, error) {
