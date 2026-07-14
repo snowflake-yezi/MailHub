@@ -1664,6 +1664,13 @@ textarea {
   gap: 12px;
 }
 
+.config-audit-section { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 20px; }
+.config-audit-list { display: grid; gap: 10px; }
+.config-audit-item { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); }
+.config-audit-item > div { display: flex; justify-content: space-between; gap: 12px; }
+.config-audit-item span { color: var(--text-muted); font-size: 12px; }
+.config-audit-item code { white-space: normal; overflow-wrap: anywhere; }
+
 .config-field-actions {
   display: flex;
   flex: 0 0 auto;

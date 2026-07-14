@@ -15,6 +15,10 @@ func TestForwardConfigReadsReloadedRuntimeValues(t *testing.T) {
 		"forward.scan_interval":     "7",
 		"forward.max_email_size":    "2048",
 		"forward.body_preview_size": "1024",
+		"forward.target_address":    "ops@example.com",
+		"forward.smtp_dial_timeout": "30",
+		"forward.tls_insecure_skip": "false",
+		"forward.tls_min_version":   "13",
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
@@ -37,12 +41,25 @@ func TestForwardConfigReadsReloadedRuntimeValues(t *testing.T) {
 	if got := service.currentBodyPreviewSize(); got != 1024 {
 		t.Fatalf("body preview size = %d, want 1024", got)
 	}
+	if got := service.currentTarget(); got != "ops@example.com" {
+		t.Fatalf("target = %q, want ops@example.com", got)
+	}
+	smtpCfg := service.currentSMTPConfig()
+	if smtpCfg.SMTPDialTimeout != 30*time.Second || smtpCfg.TLSInsecureSkip || smtpCfg.TLSMinVersion != 13 {
+		t.Fatalf("smtp config = %#v", smtpCfg)
+	}
 }
 
 func TestForwardApplyRejectsInvalidRuntimeValue(t *testing.T) {
 	service := New(ForwardConfig{}, nil, nil, nil)
 	if err := service.ApplyConfig(nil, map[string]string{"forward.scan_interval": "0"}); err == nil {
 		t.Fatal("ApplyConfig() error = nil, want invalid interval rejection")
+	}
+	if err := service.ApplyConfig(nil, map[string]string{"forward.target_address": "invalid"}); err == nil {
+		t.Fatal("ApplyConfig() error = nil, want invalid target rejection")
+	}
+	if err := service.ApplyConfig(nil, map[string]string{"forward.tls_min_version": "11"}); err == nil {
+		t.Fatal("invalid TLS version accepted")
 	}
 	service.AfterApplyConfig(1, 1)
 	select {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -127,12 +128,26 @@ func (s *Service) ApplyConfig(current, next map[string]string) error {
 }
 
 func ValidateForwardConfig(_, next map[string]string) error {
-	for _, key := range []string{"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size"} {
+	for _, key := range []string{"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size", "forward.smtp_dial_timeout"} {
 		if value, ok := next[key]; ok {
 			number, err := strconv.ParseInt(value, 10, 64)
 			if err != nil || number <= 0 {
 				return fmt.Errorf("%s must be a positive integer", key)
 			}
+		}
+	}
+	if value, ok := next["forward.tls_min_version"]; ok && value != "12" && value != "13" {
+		return fmt.Errorf("forward.tls_min_version must be 12 or 13")
+	}
+	if value, ok := next["forward.tls_insecure_skip"]; ok {
+		if _, err := strconv.ParseBool(value); err != nil {
+			return fmt.Errorf("forward.tls_insecure_skip must be a boolean")
+		}
+	}
+	if value, ok := next["forward.target_address"]; ok {
+		address, err := mail.ParseAddress(strings.TrimSpace(value))
+		if err != nil || address.Address != strings.TrimSpace(value) {
+			return fmt.Errorf("forward.target_address must be a valid email address")
 		}
 	}
 	return nil
@@ -165,6 +180,17 @@ func (s *Service) currentSMTPAuth() (string, string) {
 		return user, pass
 	}
 	return s.cfg.SMTPUser, s.cfg.SMTPPass
+}
+
+func (s *Service) currentSMTPConfig() ForwardConfig {
+	cfg := s.cfg
+	if s.remoteCfg == nil {
+		return cfg
+	}
+	cfg.SMTPDialTimeout = s.remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", cfg.SMTPDialTimeout)
+	cfg.TLSInsecureSkip = s.remoteCfg.GetBool("forward.tls_insecure_skip", cfg.TLSInsecureSkip)
+	cfg.TLSMinVersion = s.remoteCfg.GetInt("forward.tls_min_version", cfg.TLSMinVersion)
+	return cfg
 }
 
 // ActiveJobs returns the number of currently processing files.
@@ -318,7 +344,7 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 
 	target := s.currentTarget()
 	smtpUser, smtpPass := s.currentSMTPAuth()
-	if err := streamToSMTP(s.cfg, filePath, newSubject, sourceAddr, target, smtpUser, smtpPass); err != nil {
+	if err := streamToSMTP(s.currentSMTPConfig(), filePath, newSubject, sourceAddr, target, smtpUser, smtpPass); err != nil {
 		// SMTP failed → leave in new/ for next-scan retry (natural backoff)
 		return fmt.Errorf("smtp: %w", err)
 	}

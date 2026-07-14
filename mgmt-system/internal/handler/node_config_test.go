@@ -35,6 +35,19 @@ func TestNotifyNodeReload(t *testing.T) {
 	}
 }
 
+func TestValidateNodeConfigValueSupportsBoolContract(t *testing.T) {
+	definition, ok := configschema.Get("forward.tls_insecure_skip")
+	if !ok {
+		t.Fatal("TLS boolean definition missing")
+	}
+	if err := validateNodeConfigValue(definition, "false"); err != nil {
+		t.Fatalf("valid bool rejected: %v", err)
+	}
+	if err := validateNodeConfigValue(definition, "yes"); err == nil {
+		t.Fatal("invalid bool accepted")
+	}
+}
+
 func TestNotifyNodeReloadRejectsFailureStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -60,5 +73,18 @@ func TestNodeConfigReloadMetadata(t *testing.T) {
 	}
 	if result["desired_revision"] != uint64(42) {
 		t.Fatalf("desired revision result = %#v", result)
+	}
+}
+
+func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
+	definition, ok := configschema.Get("forward.target_address")
+	if !ok {
+		t.Fatal("target address definition missing")
+	}
+	if err := validateNodeConfigValue(definition, "ops@example.com"); err != nil {
+		t.Fatalf("valid address rejected: %v", err)
+	}
+	if err := validateNodeConfigValue(definition, "invalid"); err == nil {
+		t.Fatal("invalid address accepted")
 	}
 }

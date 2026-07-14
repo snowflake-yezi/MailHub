@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
+	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +66,7 @@ func (h *ConfigHandler) GetServerConfigs(c *gin.Context) {
 		"desired_revision": server.DesiredRevision, "applied_revision": server.AppliedRevision,
 		"last_apply_error": server.LastApplyError, "last_reload_error": server.LastReloadError,
 		"last_boot_id": server.LastBootID, "last_started_at": server.LastStartedAt, "config_changed_at": server.ConfigChangedAt,
+		"audits": h.serverConfigAudits(serverID),
 	})
 }
 
@@ -94,12 +97,16 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		return
 	}
 	value := strings.TrimSpace(req.Value)
-	number, err := strconv.Atoi(value)
-	if err != nil || number < definition.Min || number > definition.Max {
-		fail(c, http.StatusBadRequest, 1001, "value must be an integer between "+strconv.Itoa(definition.Min)+" and "+strconv.Itoa(definition.Max))
+	if err := validateNodeConfigValue(definition, value); err != nil {
+		fail(c, http.StatusBadRequest, 1001, err.Error())
 		return
 	}
-	desiredRevision, err := h.store.SetServerConfigOverrideAndBump(&model.ServerConfigOverride{ServerID: serverID, ConfigKey: key, ConfigValue: value, ValueType: definition.ValueType})
+	oldValue := ""
+	if existing, getErr := h.store.GetServerConfigOverride(serverID, key); getErr == nil {
+		oldValue = existing.ConfigValue
+	}
+	actor, _ := c.Get("admin_user")
+	desiredRevision, err := h.store.SetServerConfigOverrideAndBump(&model.ServerConfigOverride{ServerID: serverID, ConfigKey: key, ConfigValue: value, ValueType: definition.ValueType}, actorString(actor), oldValue)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to save node config")
 		return
@@ -107,6 +114,33 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 	reloadErr := h.notifyNodeReload(server.APIHost)
 	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config saved", reloadDispatchResult(definition, desiredRevision, reloadErr))
+}
+
+func validateNodeConfigValue(definition configschema.Definition, value string) error {
+	switch definition.ValueType {
+	case "int":
+		number, err := strconv.Atoi(value)
+		if err != nil || number < definition.Min || number > definition.Max {
+			return fmt.Errorf("value must be an integer between %d and %d", definition.Min, definition.Max)
+		}
+	case "string":
+		if len(value) < definition.Min || len(value) > definition.Max {
+			return fmt.Errorf("value length must be between %d and %d", definition.Min, definition.Max)
+		}
+		if definition.Key == "forward.target_address" {
+			address, err := mail.ParseAddress(value)
+			if err != nil || address.Address != value {
+				return fmt.Errorf("value must be a valid email address")
+			}
+		}
+	case "bool":
+		if value != "true" && value != "false" {
+			return fmt.Errorf("value must be true or false")
+		}
+	default:
+		return fmt.Errorf("unsupported value type")
+	}
+	return nil
 }
 
 func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
@@ -128,7 +162,13 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 		fail(c, http.StatusNotFound, 2001, "server not found")
 		return
 	}
-	desiredRevision, err := h.store.DeleteServerConfigOverrideAndBump(serverID, key)
+	oldValue := ""
+	if existing, getErr := h.store.GetServerConfigOverride(serverID, key); getErr == nil {
+		oldValue = existing.ConfigValue
+	}
+	globalValue := h.store.GetConfig(key, definition.DefaultValue)
+	actor, _ := c.Get("admin_user")
+	desiredRevision, err := h.store.DeleteServerConfigOverrideAndBump(serverID, key, actorString(actor), oldValue, globalValue)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, 5000, "failed to reset node config")
 		return
@@ -136,6 +176,21 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 	reloadErr := h.notifyNodeReload(server.APIHost)
 	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config reset", reloadDispatchResult(definition, desiredRevision, reloadErr))
+}
+
+func actorString(value interface{}) string {
+	if actor, ok := value.(string); ok && actor != "" {
+		return actor
+	}
+	return "unknown"
+}
+
+func (h *ConfigHandler) serverConfigAudits(serverID uint64) []model.ConfigChangeAudit {
+	audits, err := h.store.ListServerConfigAudits(serverID, 20)
+	if err != nil {
+		return []model.ConfigChangeAudit{}
+	}
+	return audits
 }
 
 func reloadDispatchResult(definition configschema.Definition, desiredRevision uint64, reloadErr error) gin.H {

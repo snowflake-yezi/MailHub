@@ -64,6 +64,7 @@ func New(dsn string, mode string) (*Store, error) {
 		&model.SystemState{},
 		&model.ServerConfigOverride{},
 		&model.ServerConfigSnapshot{},
+		&model.ConfigChangeAudit{},
 	); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}

@@ -80,6 +80,20 @@ type ServerConfigSnapshot struct {
 	BootID          string     `gorm:"size:64" json:"boot_id,omitempty"`
 }
 
+// ConfigChangeAudit records an administrator change to a global or node-scoped configuration value.
+type ConfigChangeAudit struct {
+	ID              uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	Scope           string    `gorm:"size:32;not null;index" json:"scope"`
+	ServerID        *uint64   `gorm:"index" json:"server_id,omitempty"`
+	ConfigKey       string    `gorm:"size:128;not null;index" json:"config_key"`
+	Action          string    `gorm:"size:32;not null" json:"action"`
+	OldValue        string    `gorm:"type:text" json:"old_value"`
+	NewValue        string    `gorm:"type:text" json:"new_value"`
+	Actor           string    `gorm:"size:128;not null" json:"actor"`
+	DesiredRevision uint64    `gorm:"not null;default:0" json:"desired_revision"`
+	CreatedAt       time.Time `gorm:"autoCreateTime;index" json:"created_at"`
+}
+
 // MailboxAccount 邮箱账号资产，维度为 server + domain + mailbox + credential。
 type MailboxAccount struct {
 	ID            uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -247,3 +261,4 @@ func (ServerDomain) TableName() string        { return "server_domains" }
 func (IntegratedMailbox) TableName() string   { return "integrated_mailboxes" }
 func (AdminUser) TableName() string           { return "admin_users" }
 func (SystemState) TableName() string         { return "system_state" }
+func (ConfigChangeAudit) TableName() string   { return "config_change_audits" }

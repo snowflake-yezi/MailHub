@@ -30,7 +30,8 @@ func (s *Store) SetServerConfigOverride(value *model.ServerConfigOverride) error
 	}).Create(value).Error
 }
 
-func (s *Store) SetServerConfigOverrideAndBump(value *model.ServerConfigOverride) (uint64, error) {
+func (s *Store) SetServerConfigOverrideAndBump(value *model.ServerConfigOverride, actor, oldValue string) (uint64, error) {
+	var revision uint64
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "server_id"}, {Name: "config_key"}},
@@ -38,50 +39,76 @@ func (s *Store) SetServerConfigOverrideAndBump(value *model.ServerConfigOverride
 		}).Create(value).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.MailServer{}).Where("id = ?", value.ServerID).
+		if err := tx.Model(&model.MailServer{}).Where("id = ?", value.ServerID).
 			Updates(map[string]interface{}{
 				"desired_revision":  gorm.Expr("desired_revision + 1"),
 				"config_changed_at": time.Now().UTC(),
 				"boot_id_at_change": gorm.Expr("last_boot_id"),
 				"last_reload_error": "",
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		var server model.MailServer
+		if err := tx.First(&server, value.ServerID).Error; err != nil {
+			return err
+		}
+		revision = server.DesiredRevision
+		serverID := value.ServerID
+		return tx.Create(&model.ConfigChangeAudit{
+			Scope: "server", ServerID: &serverID, ConfigKey: value.ConfigKey, Action: "set",
+			OldValue: oldValue, NewValue: value.ConfigValue, Actor: actor, DesiredRevision: revision,
+		}).Error
 	})
 	if err != nil {
 		return 0, err
 	}
-	server, err := s.GetServer(value.ServerID)
-	if err != nil {
-		return 0, err
-	}
-	return server.DesiredRevision, nil
+	return revision, nil
 }
 
 func (s *Store) DeleteServerConfigOverride(serverID uint64, key string) error {
 	return s.db.Where("server_id = ? AND config_key = ?", serverID, key).Delete(&model.ServerConfigOverride{}).Error
 }
 
-func (s *Store) DeleteServerConfigOverrideAndBump(serverID uint64, key string) (uint64, error) {
+func (s *Store) DeleteServerConfigOverrideAndBump(serverID uint64, key, actor, oldValue, newValue string) (uint64, error) {
+	var revision uint64
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("server_id = ? AND config_key = ?", serverID, key).
 			Delete(&model.ServerConfigOverride{}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.MailServer{}).Where("id = ?", serverID).
+		if err := tx.Model(&model.MailServer{}).Where("id = ?", serverID).
 			Updates(map[string]interface{}{
 				"desired_revision":  gorm.Expr("desired_revision + 1"),
 				"config_changed_at": time.Now().UTC(),
 				"boot_id_at_change": gorm.Expr("last_boot_id"),
 				"last_reload_error": "",
-			}).Error
+			}).Error; err != nil {
+			return err
+		}
+		var server model.MailServer
+		if err := tx.First(&server, serverID).Error; err != nil {
+			return err
+		}
+		revision = server.DesiredRevision
+		return tx.Create(&model.ConfigChangeAudit{
+			Scope: "server", ServerID: &serverID, ConfigKey: key, Action: "reset",
+			OldValue: oldValue, NewValue: newValue, Actor: actor, DesiredRevision: revision,
+		}).Error
 	})
 	if err != nil {
 		return 0, err
 	}
-	server, err := s.GetServer(serverID)
-	if err != nil {
-		return 0, err
+	return revision, nil
+}
+
+func (s *Store) ListServerConfigAudits(serverID uint64, limit int) ([]model.ConfigChangeAudit, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
 	}
-	return server.DesiredRevision, nil
+	var values []model.ConfigChangeAudit
+	err := s.db.Where("scope = ? AND server_id = ?", "server", serverID).
+		Order("id DESC").Limit(limit).Find(&values).Error
+	return values, err
 }
 
 func (s *Store) BumpAllServerDesiredRevisions(tx *gorm.DB) error {

@@ -135,6 +135,20 @@ export default function NodeConfigDrawer({ server, category, onClose, onChanged,
               )
             })}
           </div>
+          <section className="config-audit-section">
+            <div className="section-heading"><div><span className="eyebrow">Audit</span><h3>最近配置变更</h3></div></div>
+            {(data.audits || []).length === 0 ? <div className="empty-inline">暂无节点配置变更记录</div> : (
+              <div className="config-audit-list">
+                {data.audits.map(audit => (
+                  <div className="config-audit-item" key={audit.id}>
+                    <div><strong>{audit.config_key}</strong><span>{audit.action === 'reset' ? '恢复全局' : '设置覆盖'} · revision {audit.desired_revision}</span></div>
+                    <code>{audit.old_value || '无覆盖'} → {audit.new_value}</code>
+                    <span>{audit.actor} · {formatDate(audit.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
           <div className="drawer-footer">
             <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
             <button className="btn btn-primary" type="submit" disabled={saving || dirtyItems.length === 0}>

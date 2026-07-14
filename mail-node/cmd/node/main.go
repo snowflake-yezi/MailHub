@@ -207,16 +207,23 @@ func main() {
 }
 
 func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) error {
-	values := map[string]string{
+	return remoteCfg.ReportSnapshots(runtimeConfigSnapshotValues(remoteCfg, forwardCfg, trashRetention), time.Now())
+}
+
+func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) map[string]string {
+	return map[string]string{
 		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
 		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
 		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),
+		"forward.target_address":           remoteCfg.GetString("forward.target_address", forwardCfg.TargetAddress),
+		"forward.smtp_dial_timeout":        strconv.Itoa(int(remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", forwardCfg.SMTPDialTimeout) / time.Second)),
+		"forward.tls_insecure_skip":        strconv.FormatBool(remoteCfg.GetBool("forward.tls_insecure_skip", forwardCfg.TLSInsecureSkip)),
+		"forward.tls_min_version":          strconv.Itoa(remoteCfg.GetInt("forward.tls_min_version", forwardCfg.TLSMinVersion)),
 		"lifecycle.trash_retention_hours":  strconv.Itoa(int(remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention) / time.Hour)),
 		"lifecycle.gc_interval_minutes":    strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute) / time.Minute)),
 		"lifecycle.drain_timeout_minutes":  strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute) / time.Minute)),
 		"lifecycle.drain_poll_interval_ms": strconv.Itoa(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500)),
 	}
-	return remoteCfg.ReportSnapshots(values, time.Now())
 }
 
 func newBootIdentity() (string, time.Time) {

@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ticket/email-mail-node/internal/config"
+	"github.com/ticket/email-mail-node/internal/forward"
 )
 
 func TestClampHeartbeat(t *testing.T) {
@@ -23,6 +26,25 @@ func TestClampHeartbeat(t *testing.T) {
 	for _, tc := range tests {
 		if got := clampHeartbeat(tc.v, tc.fallback, nil); got != tc.want {
 			t.Fatalf("clampHeartbeat(%d, %d) = %d, want %d", tc.v, tc.fallback, got, tc.want)
+		}
+	}
+}
+
+func TestRuntimeConfigSnapshotContract(t *testing.T) {
+	values := runtimeConfigSnapshotValues(config.NewRemoteConfig("", ""), forward.ForwardConfig{
+		ScanInterval: 5, MaxEmailSize: 10485760, BodyPreviewSize: 65536, TargetAddress: "union@example.com",
+	}, 24*time.Hour)
+	want := []string{
+		"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size", "forward.target_address",
+		"forward.smtp_dial_timeout", "forward.tls_insecure_skip", "forward.tls_min_version",
+		"lifecycle.trash_retention_hours", "lifecycle.gc_interval_minutes", "lifecycle.drain_timeout_minutes", "lifecycle.drain_poll_interval_ms",
+	}
+	if len(values) != len(want) {
+		t.Fatalf("snapshot keys = %d, want %d", len(values), len(want))
+	}
+	for _, key := range want {
+		if _, ok := values[key]; !ok {
+			t.Fatalf("snapshot provider missing %s", key)
 		}
 	}
 }

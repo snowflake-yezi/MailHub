@@ -28,6 +28,10 @@ var definitionOrder = []string{
 	"forward.scan_interval",
 	"forward.max_email_size",
 	"forward.body_preview_size",
+	"forward.target_address",
+	"forward.smtp_dial_timeout",
+	"forward.tls_insecure_skip",
+	"forward.tls_min_version",
 	"lifecycle.trash_retention_hours",
 	"lifecycle.gc_interval_minutes",
 	"lifecycle.drain_timeout_minutes",
@@ -46,6 +50,22 @@ var definitions = map[string]Definition{
 	"forward.body_preview_size": {
 		Key: "forward.body_preview_size", Owner: "mail-node", Category: "forward", Label: "正文预览大小", Description: "过滤时读取的正文预览上限",
 		ValueType: "int", DefaultValue: "65536", Unit: "字节", Min: 1024, Max: 10485760, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"forward.target_address": {
+		Key: "forward.target_address", Owner: "mail-node", Category: "forward", Label: "转发目标邮箱", Description: "非垃圾邮件汇总转发的目标邮箱地址",
+		ValueType: "string", DefaultValue: "union@asadad.bond", Unit: "邮箱", Min: 3, Max: 191, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"forward.smtp_dial_timeout": {
+		Key: "forward.smtp_dial_timeout", Owner: "mail-node", Category: "forward", Label: "SMTP 拨号超时", Description: "连接 SMTP 服务器的超时时间",
+		ValueType: "int", DefaultValue: "15", Unit: "秒", Min: 1, Max: 300, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"forward.tls_insecure_skip": {
+		Key: "forward.tls_insecure_skip", Owner: "mail-node", Category: "forward", Label: "跳过 TLS 证书验证", Description: "仅在使用受控自签名证书时启用",
+		ValueType: "bool", DefaultValue: "true", Unit: "开关", Min: 0, Max: 1, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"forward.tls_min_version": {
+		Key: "forward.tls_min_version", Owner: "mail-node", Category: "forward", Label: "TLS 最低版本", Description: "SMTP STARTTLS 最低版本，12 表示 TLS 1.2，13 表示 TLS 1.3",
+		ValueType: "int", DefaultValue: "12", Unit: "版本", Min: 12, Max: 13, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"lifecycle.trash_retention_hours": {
 		Key: "lifecycle.trash_retention_hours", Owner: "mail-node", Category: "lifecycle",

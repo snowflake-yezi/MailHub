@@ -470,11 +470,11 @@ unreported ──覆盖变更──▶ pending_restart ──检测到 boot_id �
 - [x] [NC-8] 基于统一 schema 开放首批 7 个已验证热加载 key，节点抽屉按稳定 schema 顺序渲染并展示全局/覆盖/生效三栏事实。
 - [x] 两个 Go 模块普通全量测试、`go test -race ./...`、`go vet ./...` 与 Web 生产构建通过；真实 Chrome 验收覆盖快捷入口、节点保存和 390px 移动端无横向溢出。
 
-### NC-P5：扩展与审计
+### NC-P5：扩展与审计（已完成，2026-07-14）
 
-- [NC-8] 覆盖更多 mail-node 配置。
-- [NC-9] 配置变更历史审计。
-- [NC-4] CI 校验 schema、Apply 注册、snapshot provider 和测试覆盖一致性。
+- [x] [NC-8] 节点覆盖从首批 7 项扩展到 11 项，新增 `forward.target_address`、`forward.smtp_dial_timeout`、`forward.tls_insecure_skip`、`forward.tls_min_version`；四项均完成运行期 read-through、Apply 校验与 snapshot 上报。
+- [x] [NC-9] 新增 `config_change_audits`，节点覆盖设置/修改/恢复与 revision bump 在同一事务中记录；节点配置抽屉展示最近操作者、前后值、动作、revision 与时间。
+- [x] [NC-4] 增加 schema 策略/元数据、节点 Apply/read-through、snapshot provider 完整 key 集合和输入校验契约测试；双 Go 模块全量测试与 `go vet`、Web 生产构建通过。
 
 ---
 
