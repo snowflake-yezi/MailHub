@@ -1664,6 +1664,13 @@ textarea {
   gap: 12px;
 }
 
+.config-field-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .config-field label {
   display: block;
   margin-bottom: 4px;
@@ -1675,6 +1682,51 @@ textarea {
 .config-field .form-hint {
   display: grid;
   gap: 3px;
+}
+
+.scope-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.config-field input[type="text"],
+.config-field input[type="number"],
+.config-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.config-field input:focus,
+.config-field textarea:focus {
+  border-color: var(--color-brand);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(35, 136, 255, 0.12);
+}
+
+.scope-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.scope-copy > span,
+.scope-copy small {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.scope-toolbar select {
+  width: min(320px, 100%);
+  min-height: 38px;
+  padding: 7px 34px 7px 11px;
 }
 
 @media (max-width: 980px) {
@@ -1695,6 +1747,15 @@ textarea {
 
   .field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scope-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scope-toolbar select {
+    width: 100%;
   }
 
   .drawer {
@@ -2535,6 +2596,15 @@ textarea {
   border-bottom: 1px solid var(--color-border);
 }
 
+.node-config-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 5px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
 .node-config-section {
   display: grid;
   gap: 18px;
@@ -2561,6 +2631,21 @@ textarea {
 
 .config-facts span {
   color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.config-facts.config-facts-compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.config-facts-compact > div {
+  min-width: 0;
+  padding: 9px;
+}
+
+.config-facts-compact strong {
+  overflow-wrap: anywhere;
   font-size: 12px;
 }
 
@@ -2602,6 +2687,7 @@ textarea {
 
 @media (max-width: 560px) {
   .config-facts { grid-template-columns: 1fr; }
+  .config-facts.config-facts-compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

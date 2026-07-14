@@ -17,9 +17,14 @@ const trashRetentionKey = "lifecycle.trash_retention_hours"
 
 type nodeConfigItem struct {
 	Key             string     `json:"key"`
+	Category        string     `json:"category"`
 	Label           string     `json:"label"`
+	Description     string     `json:"description"`
 	ValueType       string     `json:"value_type"`
+	DefaultValue    string     `json:"default_value"`
 	Unit            string     `json:"unit"`
+	Min             int        `json:"min"`
+	Max             int        `json:"max"`
 	GlobalValue     string     `json:"global_value"`
 	OverrideValue   *string    `json:"override_value"`
 	EffectiveValue  *string    `json:"effective_value"`
@@ -91,7 +96,7 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 	value := strings.TrimSpace(req.Value)
 	number, err := strconv.Atoi(value)
 	if err != nil || number < definition.Min || number > definition.Max {
-		fail(c, http.StatusBadRequest, 1001, "value must be an integer between 1 and 8760")
+		fail(c, http.StatusBadRequest, 1001, "value must be an integer between "+strconv.Itoa(definition.Min)+" and "+strconv.Itoa(definition.Max))
 		return
 	}
 	desiredRevision, err := h.store.SetServerConfigOverrideAndBump(&model.ServerConfigOverride{ServerID: serverID, ConfigKey: key, ConfigValue: value, ValueType: definition.ValueType})
@@ -154,8 +159,12 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 	definitions := configschema.NodeOverrides()
 	items := make([]nodeConfigItem, 0, len(definitions))
 	for _, definition := range definitions {
-		global := h.store.GetConfig(definition.Key, "24")
-		item := nodeConfigItem{Key: definition.Key, Label: definition.Label, ValueType: definition.ValueType, Unit: "小时", GlobalValue: global, Source: "unknown", Status: "unreported", Reloadable: definition.Reloadable(), RequiresRestart: definition.RequiresRestart()}
+		global := h.store.GetConfig(definition.Key, definition.DefaultValue)
+		item := nodeConfigItem{
+			Key: definition.Key, Category: definition.Category, Label: definition.Label, Description: definition.Description,
+			ValueType: definition.ValueType, DefaultValue: definition.DefaultValue, Unit: definition.Unit, Min: definition.Min, Max: definition.Max,
+			GlobalValue: global, Source: "unknown", Status: "unreported", Reloadable: definition.Reloadable(), RequiresRestart: definition.RequiresRestart(),
+		}
 		if override, err := h.store.GetServerConfigOverride(serverID, definition.Key); err == nil {
 			item.OverrideValue = &override.ConfigValue
 		} else if !store.IsNotFound(err) {

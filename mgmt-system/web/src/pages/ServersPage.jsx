@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AlertTriangle,
@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { serverAPI } from '../api'
+import { configStatusMeta } from '../components/NodeConfigDrawer'
 
 const STATUS_META = {
   healthy: { label: '健康', className: 'status-healthy', icon: CheckCircle2 },
@@ -30,124 +31,6 @@ const EMPTY_FORM = {
   capacity: 5000,
   heartbeat_interval: 30,
   status: 'healthy',
-}
-
-const TRASH_RETENTION_KEY = 'lifecycle.trash_retention_hours'
-
-const CONFIG_STATUS_META = {
-  unreported: { label: '未上报', detail: '节点尚未上报配置事实' },
-  pending_apply: { label: '等待应用', detail: '配置版本已更新，等待节点拉取并确认应用' },
-  pending_retry: { label: '等待重试', detail: '即时通知失败，节点将通过定时拉取自动重试' },
-  apply_failed: { label: '应用失败', detail: '节点拉取、校验或应用配置失败' },
-  pending_restart: { label: '等待重启', detail: '该配置需要节点重启后生效' },
-  restart_detected: { label: '已检测重启', detail: '节点已经重启，等待新进程上报匹配配置' },
-  restart_overdue: { label: '重启逾期', detail: '配置变更后长时间未检测到节点重启' },
-  applied: { label: '已应用', detail: '节点已确认应用当前配置版本' },
-}
-
-function configStatusMeta(status) {
-  return CONFIG_STATUS_META[status] || CONFIG_STATUS_META.unreported
-}
-
-function reloadToast(result, savedMessage) {
-  if (result?.reload_dispatched) {
-    return { type: 'success', message: `${savedMessage}，已通知节点热加载` }
-  }
-  return { type: 'error', message: `${savedMessage}，但节点通知失败，请检查节点连通性后重试` }
-}
-
-function NodeConfigDrawer({ server, onClose, onChanged, onToast }) {
-  const [data, setData] = useState(null)
-  const [value, setValue] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const loadConfig = useCallback(async () => {
-    try {
-      const result = await serverAPI.configs(server.id)
-      setData(result)
-      const item = result.items?.[0]
-      setValue(item?.override_value ?? item?.global_value ?? '')
-    } catch (error) {
-      onToast({ type: 'error', message: '节点配置加载失败: ' + error.message })
-    }
-  }, [onToast, server.id])
-
-  useEffect(() => { loadConfig() }, [loadConfig])
-  const item = data?.items?.[0]
-
-  const statusMeta = configStatusMeta(item?.status)
-
-  const save = async (event) => {
-    event.preventDefault()
-    setSaving(true)
-    try {
-      const result = await serverAPI.updateConfig(server.id, TRASH_RETENTION_KEY, value)
-      onToast(reloadToast(result, '节点覆盖已保存'))
-      await loadConfig()
-      onChanged()
-    } catch (error) {
-      onToast({ type: 'error', message: error.message })
-    } finally { setSaving(false) }
-  }
-
-  const reset = async () => {
-    setSaving(true)
-    try {
-      const result = await serverAPI.resetConfig(server.id, TRASH_RETENTION_KEY)
-      onToast(reloadToast(result, '已恢复跟随全局'))
-      await loadConfig()
-      onChanged()
-    } catch (error) {
-      onToast({ type: 'error', message: error.message })
-    } finally { setSaving(false) }
-  }
-
-  return (
-    <div className="drawer-overlay" onClick={onClose}>
-      <aside className="drawer" onClick={event => event.stopPropagation()} aria-label="节点配置">
-        <div className="drawer-header">
-          <div className="drawer-title-with-icon">
-            <span className="module-icon"><Settings2 size={18} /></span>
-            <div><div className="drawer-kicker">Node config</div><h2>节点配置</h2></div>
-          </div>
-          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
-        </div>
-        {!item ? <div className="drawer-body loading-panel"><span className="spinner" /> 加载配置...</div> : (
-          <form className="drawer-body" onSubmit={save}>
-            <div className="node-config-identity"><strong>{data.server_name}</strong><code>{data.api_host}</code></div>
-            <section className="node-config-section">
-              <h3>生命周期</h3>
-              <div className="config-facts">
-                <div><span>全局默认</span><strong>{item.global_value} 小时</strong></div>
-                <div><span>节点覆盖</span><strong>{item.override_value ? `${item.override_value} 小时` : '无'}</strong></div>
-                <div><span>实际生效</span><strong>{item.effective_value ? `${item.effective_value} 小时` : '未上报'}</strong></div>
-                <div><span>配置来源</span><strong>{item.source === 'server_override' ? '节点覆盖' : item.source === 'global' ? '全局配置' : item.source === 'local_config' ? '本地配置' : '未知'}</strong></div>
-				<div><span>配置版本</span><strong>{data.applied_revision ?? 0} / {data.desired_revision ?? 0}</strong></div>
-				<div><span>本次启动</span><strong>{formatDate(data.last_started_at)}</strong></div>
-				<div><span>启动标识</span><strong><code>{data.last_boot_id ? data.last_boot_id.slice(0, 12) : '未上报'}</code></strong></div>
-				<div><span>配置变更</span><strong>{formatDate(data.config_changed_at)}</strong></div>
-              </div>
-              <div className={`config-apply-status ${item.status}`}>
-				<strong>{statusMeta.label}</strong><span>{statusMeta.detail}{item.status === 'applied' ? ` · ${formatDate(item.reported_at)}` : ''}</span>
-				{data.last_apply_error && <code>{data.last_apply_error}</code>}
-				{data.last_reload_error && !data.last_apply_error && <code>{data.last_reload_error}</code>}
-              </div>
-              <div className="form-group">
-                <label>回收站保留时间（小时）</label>
-                <input type="number" min="1" max="8760" value={value} onChange={event => setValue(event.target.value)} required />
-                <div className="form-hint">控制软删除目录物理清理前的保留窗口，保存后自动通知节点热加载。</div>
-              </div>
-            </section>
-            <div className="drawer-footer">
-              <button className="btn btn-outline" type="button" onClick={reset} disabled={saving || !item.override_value}><RotateCcw size={15} /> 恢复全局</button>
-              <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
-              <button className="btn btn-primary" type="submit" disabled={saving}>{saving && <span className="spinner" />} 保存覆盖</button>
-            </div>
-          </form>
-        )}
-      </aside>
-    </div>
-  )
 }
 
 function Toast({ message, type, onClose }) {
@@ -311,6 +194,7 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
 }
 
 export default function ServersPage() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const searchQuery = (searchParams.get('search') || '').trim()
   const [servers, setServers] = useState([])
@@ -321,7 +205,6 @@ export default function ServersPage() {
   const [drawerMode, setDrawerMode] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
-  const [configServer, setConfigServer] = useState(null)
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
@@ -581,7 +464,7 @@ export default function ServersPage() {
                     </td>
                     <td>
                       <div className="row-actions">
-                        <button className="icon-button compact" type="button" title="节点配置" onClick={() => setConfigServer(server)}><Settings2 size={15} /></button>
+                        <button className="icon-button compact" type="button" title="节点配置" onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
                         <button className="icon-button compact" type="button" title="编辑" onClick={() => openEdit(server)}>
                           <Pencil size={15} />
                         </button>
@@ -630,7 +513,6 @@ export default function ServersPage() {
           onDelete={() => askDelete(form)}
         />
       )}
-      {configServer && <NodeConfigDrawer server={configServer} onClose={() => setConfigServer(null)} onChanged={() => load(true)} onToast={setToast} />}
       {confirm && <ConfirmDialog {...confirm} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>

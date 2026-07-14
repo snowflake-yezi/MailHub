@@ -32,8 +32,23 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 		if definition.ApplyStrategy != want || !definition.Reloadable() || definition.RequiresRestart() {
 			t.Fatalf("definition %s = %#v, want strategy %s", key, definition, want)
 		}
-		if definition.NodeOverridable {
-			t.Fatalf("definition %s unexpectedly exposed as node override", key)
+		if !definition.NodeOverridable {
+			t.Fatalf("definition %s is not exposed as node override", key)
+		}
+	}
+}
+
+func TestNodeOverridesAreStableAndComplete(t *testing.T) {
+	definitions := NodeOverrides()
+	if len(definitions) != len(definitionOrder) {
+		t.Fatalf("NodeOverrides() returned %d definitions, want %d", len(definitions), len(definitionOrder))
+	}
+	for index, definition := range definitions {
+		if definition.Key != definitionOrder[index] {
+			t.Fatalf("NodeOverrides()[%d].Key = %q, want %q", index, definition.Key, definitionOrder[index])
+		}
+		if definition.Category == "" || definition.Description == "" || definition.DefaultValue == "" || definition.Unit == "" {
+			t.Fatalf("definition %s has incomplete UI metadata: %#v", definition.Key, definition)
 		}
 	}
 }

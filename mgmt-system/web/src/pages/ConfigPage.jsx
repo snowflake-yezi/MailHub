@@ -19,7 +19,10 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { accountAPI, configAPI } from '../api'
+import { accountAPI, configAPI, serverAPI } from '../api'
+import ConfigDrawer from '../components/ConfigDrawer'
+import ConfigField from '../components/ConfigField'
+import NodeConfigDrawer from '../components/NodeConfigDrawer'
 
 const CATEGORY_META = {
   forward: { label: '邮件转发引擎', desc: '控制 union 转发目标、重试与链路行为。', icon: MailCheck },
@@ -212,7 +215,7 @@ function AccountDialog({ account, onClose }) {
   )
 }
 
-function ConfigDrawer({ group, onSave, onReset, onClose }) {
+function GlobalConfigDrawer({ group, onSave, onReset, onClose }) {
   const [values, setValues] = useState({})
   const [saving, setSaving] = useState(false)
   const meta = getCategoryMeta(group)
@@ -230,50 +233,6 @@ function ConfigDrawer({ group, onSave, onReset, onClose }) {
 
   const updateValue = (key, value) => {
     setValues(prev => ({ ...prev, [key]: value }))
-  }
-
-  const renderInput = (item) => {
-    const value = values[item.key] ?? item.value ?? ''
-    if (item.value_type === 'bool') {
-      return (
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={value === 'true' || value === '1' || value === true}
-            onChange={e => updateValue(item.key, e.target.checked ? 'true' : 'false')}
-          />
-          <span className="toggle-slider" />
-        </label>
-      )
-    }
-
-    if (item.value_type === 'int') {
-      return (
-        <input
-          type="number"
-          value={value}
-          onChange={e => updateValue(item.key, e.target.value)}
-        />
-      )
-    }
-
-    if (String(value).length > 72) {
-      return (
-        <textarea
-          rows={3}
-          value={value}
-          onChange={e => updateValue(item.key, e.target.value)}
-        />
-      )
-    }
-
-    return (
-      <input
-        type="text"
-        value={value}
-        onChange={e => updateValue(item.key, e.target.value)}
-      />
-    )
   }
 
   const handleSave = async (e) => {
@@ -300,21 +259,7 @@ function ConfigDrawer({ group, onSave, onReset, onClose }) {
   }
 
   return (
-    <div className="drawer-overlay" onClick={onClose}>
-      <aside className="drawer drawer-wide" onClick={e => e.stopPropagation()} aria-label={`${meta.label} 参数配置`}>
-        <div className="drawer-header">
-          <div className="drawer-title-with-icon">
-            <span className="module-icon"><Icon size={20} /></span>
-            <div>
-              <div className="drawer-kicker">{group.category}</div>
-              <h2>{meta.label}</h2>
-            </div>
-          </div>
-          <button className="icon-button" type="button" title="关闭" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </div>
-
+    <ConfigDrawer title={meta.label} kicker={group.category} icon={Icon} ariaLabel={`${meta.label} 参数配置`} onClose={onClose}>
         <form className="drawer-body" onSubmit={handleSave}>
           <div className="config-drawer-summary">
             <span className="status-badge status-active">
@@ -327,24 +272,7 @@ function ConfigDrawer({ group, onSave, onReset, onClose }) {
 
           <div className="config-field-list">
             {group.items.map(item => (
-              <section className="config-field" key={item.key}>
-                <div className="config-field-head">
-                  <div>
-                    <label>{item.label}</label>
-                    <code>{item.key}</code>
-                  </div>
-                  {item.reloadable ? (
-                    <span className="tag tag-info">热加载</span>
-                  ) : (
-                    <span className="tag tag-warning">需重启</span>
-                  )}
-                </div>
-                {renderInput(item)}
-                <div className="form-hint">
-                  {item.description || '暂无说明'}
-                  <span>默认: {item.default_value ?? '-'}</span>
-                </div>
-              </section>
+              <ConfigField key={item.key} item={item} value={values[item.key]} onChange={value => updateValue(item.key, value)} />
             ))}
           </div>
 
@@ -359,14 +287,16 @@ function ConfigDrawer({ group, onSave, onReset, onClose }) {
             </button>
           </div>
         </form>
-      </aside>
-    </div>
+    </ConfigDrawer>
   )
 }
 
 export default function ConfigPage() {
-	const [searchParams, setSearchParams] = useSearchParams()
-  const [groups, setGroups] = useState([])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedServerID = searchParams.get('server_id') || ''
+  const [globalGroups, setGlobalGroups] = useState([])
+  const [servers, setServers] = useState([])
+  const [nodeData, setNodeData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [activeGroup, setActiveGroup] = useState(null)
   const [toast, setToast] = useState(null)
@@ -377,8 +307,9 @@ export default function ConfigPage() {
 
   const loadConfigs = useCallback(async () => {
     try {
-      const data = await configAPI.list()
-      setGroups(data.groups || [])
+      const [configData, serverData] = await Promise.all([configAPI.list(), serverAPI.list()])
+      setGlobalGroups(configData.groups || [])
+      setServers(Array.isArray(serverData) ? serverData : [])
     } catch (e) {
       setToast({ type: 'error', message: '加载配置失败: ' + e.message })
     } finally {
@@ -387,6 +318,36 @@ export default function ConfigPage() {
   }, [])
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
+
+  const loadNodeConfigs = useCallback(async () => {
+    if (!selectedServerID) {
+      setNodeData(null)
+      return
+    }
+    try {
+      setNodeData(await serverAPI.configs(selectedServerID))
+    } catch (e) {
+      setToast({ type: 'error', message: '加载节点配置失败: ' + e.message })
+      setNodeData(null)
+    }
+  }, [selectedServerID])
+
+  useEffect(() => { loadNodeConfigs() }, [loadNodeConfigs])
+
+  const selectedServer = useMemo(
+    () => servers.find(server => String(server.id) === String(selectedServerID)),
+    [selectedServerID, servers],
+  )
+
+  const groups = useMemo(() => {
+    if (!selectedServerID) return globalGroups
+    const grouped = new Map()
+    for (const item of nodeData?.items || []) {
+      if (!grouped.has(item.category)) grouped.set(item.category, { category: item.category, label: getCategoryLabel(item.category), items: [] })
+      grouped.get(item.category).items.push({ ...item, value: item.override_value ?? item.global_value })
+    }
+    return Array.from(grouped.values())
+  }, [globalGroups, nodeData, selectedServerID])
 
   useEffect(() => {
     accountAPI.get().then(data => {
@@ -433,7 +394,7 @@ export default function ConfigPage() {
       confirmLabel: '恢复默认',
       onConfirm: async () => {
         try {
-          const group = groups.find(item => item.category === category)
+          const group = globalGroups.find(item => item.category === category)
           if (group) {
             await Promise.all(group.items.map(item => configAPI.reset(item.key)))
           }
@@ -461,6 +422,19 @@ export default function ConfigPage() {
     }
   }
 
+  const refreshScope = async () => {
+    if (selectedServerID) await loadNodeConfigs()
+    else await loadConfigs()
+  }
+
+  const changeScope = event => {
+    const next = new URLSearchParams(searchParams)
+    if (event.target.value) next.set('server_id', event.target.value)
+    else next.delete('server_id')
+    setActiveGroup(null)
+    setSearchParams(next, { replace: true })
+  }
+
   if (loading) {
     return (
       <div className="dashboard-panel loading-panel">
@@ -474,18 +448,30 @@ export default function ConfigPage() {
       <div className="page-header">
         <div>
           <h1>系统配置</h1>
-          <p className="page-subtitle">以模块为单位管理参数，区分热加载项和需重启项。</p>
+          <p className="page-subtitle">统一管理全局默认与节点覆盖，并对照节点实际上报的生效状态。</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-outline" type="button" onClick={loadConfigs}>
+          <button className="btn btn-outline" type="button" onClick={refreshScope}>
             <RotateCcw size={16} /> 刷新
           </button>
-          <button className="btn btn-primary" type="button" onClick={handleReload} disabled={reloading}>
+          {!selectedServerID && <button className="btn btn-primary" type="button" onClick={handleReload} disabled={reloading}>
             {reloading ? <span className="spinner" /> : <BellRing size={16} />}
             通知节点重载
-          </button>
+          </button>}
         </div>
       </div>
+
+      <section className="scope-toolbar" aria-label="配置作用域">
+        <div className="scope-copy">
+          <span>作用域</span>
+          <strong>{selectedServer ? selectedServer.name : '全局默认'}</strong>
+          <small>{selectedServer ? '仅覆盖该节点，保存后自动通知热加载' : '作为所有节点的默认配置'}</small>
+        </div>
+        <select value={selectedServerID} onChange={changeScope} aria-label="选择配置作用域">
+          <option value="">全局默认</option>
+          {servers.map(server => <option key={server.id} value={server.id}>{server.name || `server-${server.id}`}</option>)}
+        </select>
+      </section>
 
       <div className="summary-grid config-summary">
         <div className="summary-tile" data-tone="brand">
@@ -518,7 +504,7 @@ export default function ConfigPage() {
         </div>
       </div>
 
-      {account && <AccountPanel account={account} onEdit={() => setAccountOpen(true)} />}
+      {!selectedServerID && account && <AccountPanel account={account} onEdit={() => setAccountOpen(true)} />}
 
       {groups.length > 0 ? (
         <div className="module-grid">
@@ -535,12 +521,22 @@ export default function ConfigPage() {
       )}
 
       {activeGroup && (
-        <ConfigDrawer
-          group={activeGroup}
-          onSave={handleSaveGroup}
-          onReset={handleResetGroup}
-          onClose={() => setActiveGroup(null)}
-        />
+        selectedServer ? (
+          <NodeConfigDrawer
+            server={selectedServer}
+            category={activeGroup.category}
+            onToast={setToast}
+            onChanged={loadNodeConfigs}
+            onClose={() => setActiveGroup(null)}
+          />
+        ) : (
+          <GlobalConfigDrawer
+            group={activeGroup}
+            onSave={handleSaveGroup}
+            onReset={handleResetGroup}
+            onClose={() => setActiveGroup(null)}
+          />
+        )
       )}
       {confirm && <ConfirmDialog {...confirm} />}
       {accountOpen && account && <AccountDialog account={account} onClose={closeAccount} />}

@@ -12,48 +12,61 @@ const (
 type Definition struct {
 	Key             string
 	Owner           string
+	Category        string
 	Label           string
+	Description     string
 	ValueType       string
+	DefaultValue    string
+	Unit            string
 	Min             int
 	Max             int
 	NodeOverridable bool
 	ApplyStrategy   ApplyStrategy
 }
 
+var definitionOrder = []string{
+	"forward.scan_interval",
+	"forward.max_email_size",
+	"forward.body_preview_size",
+	"lifecycle.trash_retention_hours",
+	"lifecycle.gc_interval_minutes",
+	"lifecycle.drain_timeout_minutes",
+	"lifecycle.drain_poll_interval_ms",
+}
+
 var definitions = map[string]Definition{
 	"forward.scan_interval": {
-		Key: "forward.scan_interval", Owner: "mail-node", Label: "扫描间隔", ValueType: "int",
-		Min: 1, Max: 3600, ApplyStrategy: ReloadHook,
+		Key: "forward.scan_interval", Owner: "mail-node", Category: "forward", Label: "扫描间隔", Description: "Maildir 新邮件扫描频率",
+		ValueType: "int", DefaultValue: "5", Unit: "秒", Min: 1, Max: 3600, NodeOverridable: true, ApplyStrategy: ReloadHook,
 	},
 	"forward.max_email_size": {
-		Key: "forward.max_email_size", Owner: "mail-node", Label: "最大邮件大小", ValueType: "int",
-		Min: 1024, Max: 1073741824, ApplyStrategy: ReadThrough,
+		Key: "forward.max_email_size", Owner: "mail-node", Category: "forward", Label: "最大邮件大小", Description: "单封邮件最大处理字节数",
+		ValueType: "int", DefaultValue: "10485760", Unit: "字节", Min: 1024, Max: 1073741824, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"forward.body_preview_size": {
-		Key: "forward.body_preview_size", Owner: "mail-node", Label: "正文预览大小", ValueType: "int",
-		Min: 1024, Max: 10485760, ApplyStrategy: ReadThrough,
+		Key: "forward.body_preview_size", Owner: "mail-node", Category: "forward", Label: "正文预览大小", Description: "过滤时读取的正文预览上限",
+		ValueType: "int", DefaultValue: "65536", Unit: "字节", Min: 1024, Max: 10485760, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"lifecycle.trash_retention_hours": {
-		Key:             "lifecycle.trash_retention_hours",
-		Owner:           "mail-node",
-		Label:           "回收站保留时间",
-		ValueType:       "int",
+		Key: "lifecycle.trash_retention_hours", Owner: "mail-node", Category: "lifecycle",
+		Label: "回收站保留时间", Description: "超过此时间的 .trash 目录将被物理清除",
+		ValueType: "int", DefaultValue: "24", Unit: "小时",
 		Min:             1,
 		Max:             8760,
 		NodeOverridable: true,
 		ApplyStrategy:   ReadThrough,
 	},
 	"lifecycle.gc_interval_minutes": {
-		Key: "lifecycle.gc_interval_minutes", Owner: "mail-node", Label: "GC 执行间隔", ValueType: "int",
-		Min: 1, Max: 10080, ApplyStrategy: ReloadHook,
+		Key: "lifecycle.gc_interval_minutes", Owner: "mail-node", Category: "lifecycle", Label: "GC 执行间隔", Description: "回收站垃圾回收执行间隔",
+		ValueType: "int", DefaultValue: "60", Unit: "分钟", Min: 1, Max: 10080, NodeOverridable: true, ApplyStrategy: ReloadHook,
 	},
 	"lifecycle.drain_timeout_minutes": {
-		Key: "lifecycle.drain_timeout_minutes", Owner: "mail-node", Label: "排空超时", ValueType: "int",
-		Min: 1, Max: 1440, ApplyStrategy: ReadThrough,
+		Key: "lifecycle.drain_timeout_minutes", Owner: "mail-node", Category: "lifecycle", Label: "排空超时", Description: "删除前等待活跃转发排空的超时时间",
+		ValueType: "int", DefaultValue: "5", Unit: "分钟", Min: 1, Max: 1440, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"lifecycle.drain_poll_interval_ms": {
-		Key: "lifecycle.drain_poll_interval_ms", Owner: "mail-node", Label: "排空轮询间隔", ValueType: "int",
-		Min: 10, Max: 60000, ApplyStrategy: ReadThrough,
+		Key: "lifecycle.drain_poll_interval_ms", Owner: "mail-node", Category: "lifecycle", Label: "排空轮询间隔", Description: "检查活跃转发数是否归零的轮询间隔",
+		ValueType: "int", DefaultValue: "500", Unit: "毫秒", Min: 10, Max: 60000, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 }
 
@@ -63,8 +76,9 @@ func Get(key string) (Definition, bool) {
 }
 
 func NodeOverrides() []Definition {
-	result := make([]Definition, 0, len(definitions))
-	for _, definition := range definitions {
+	result := make([]Definition, 0, len(definitionOrder))
+	for _, key := range definitionOrder {
+		definition := definitions[key]
 		if definition.NodeOverridable {
 			result = append(result, definition)
 		}
