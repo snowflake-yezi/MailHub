@@ -91,6 +91,7 @@ export const mailboxAPI = {
 export const emailAPI = {
   list(mailbox, page, size) { return get('/emails', { mailbox, page, size }); },
   body(id, mailbox) { return get(`/emails/${encodeURIComponent(id)}/body`, { mailbox }); },
+  remove(id, mailbox) { return request(`/emails/${encodeURIComponent(id)}?mailbox=${encodeURIComponent(mailbox)}`, { method: 'DELETE' }); },
   attachmentUrl(id, index, mailbox) {
     return `${API_BASE}/emails/${encodeURIComponent(id)}/attachments/${index}?mailbox=${encodeURIComponent(mailbox)}`;
   },

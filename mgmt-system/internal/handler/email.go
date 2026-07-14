@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/url"
 
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,56 @@ func (h *EmailHandler) AdminGetEmailBody(c *gin.Context) {
 	h.proxyEmailBody(c, messageID, mb.EmailAddress)
 }
 
+// AdminDeleteEmail permanently deletes one message from the mailbox Maildir.
+func (h *EmailHandler) AdminDeleteEmail(c *gin.Context) {
+	messageID := c.Param("message_id")
+	emailAddr := c.Query("mailbox")
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err == nil {
+		srv, srvErr := h.store.GetServer(mb.ServerID)
+		if srvErr != nil {
+			serverError(c, ErrCodeExternalFail, "mail server not found")
+			return
+		}
+		h.proxyDeleteEmailDirect(c, srv, messageID, mb.EmailAddress)
+		return
+	}
+	_, domainName, ok := splitEmail(emailAddr)
+	if !ok {
+		notFound(c, "invalid email: "+emailAddr)
+		return
+	}
+	srv, srvErr := h.store.FindServerByEmailDomain(domainName)
+	if srvErr != nil {
+		notFound(c, "mailbox not found and no server serves domain: "+emailAddr)
+		return
+	}
+	h.proxyDeleteEmailDirect(c, srv, messageID, emailAddr)
+}
+
+func (h *EmailHandler) proxyDeleteEmailDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
+	query := url.Values{}
+	query.Set("mailbox", emailAddr)
+	path := "/internal/messages/" + url.PathEscape(messageID) + "?" + query.Encode()
+	data, err := proxyToServer(srv.APIHost, http.MethodDelete, path, nil, h.sharedSecret)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "failed to delete email: "+err.Error())
+		return
+	}
+	var rawResp map[string]interface{}
+	if err := json.Unmarshal(data, &rawResp); err != nil {
+		serverError(c, ErrCodeExternalFail, "failed to parse delete response")
+		return
+	}
+	rawResp["request_id"] = uuidShort()
+	c.JSON(http.StatusOK, rawResp)
+}
+
 // proxyMailboxMessagesDirect 直接向指定服务器代理邮件列表请求（跳过 mailbox_accounts 查找）。
 func (h *EmailHandler) proxyMailboxMessagesDirect(c *gin.Context, srv *model.MailServer, emailAddr, orderID string) {
 	query := url.Values{}
@@ -358,6 +409,7 @@ func splitEmail(email string) (localPart, domain string, ok bool) {
 func (h *EmailHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/emails", h.AdminGetEmails)
 	r.GET("/emails/:message_id/body", h.AdminGetEmailBody)
+	r.DELETE("/emails/:message_id", h.AdminDeleteEmail)
 	r.GET("/emails/:message_id/attachments/:index", h.AdminGetEmailAttachment)
 	r.GET("/emails/:message_id/attachments/:index/preview", h.AdminGetEmailAttachmentPreview)
 }

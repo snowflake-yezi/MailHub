@@ -104,6 +104,42 @@ func TestPurgeExpiredMessagesBatchUsesPerMailboxRetention(t *testing.T) {
 	}
 }
 
+func TestDeleteMessageRemovesOnlyMatchedMaildirFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	mgr := mailbox.NewManagerWithFiles(tmp, 5000, 5000, filepath.Join(tmp, "users.conf"), filepath.Join(tmp, "vmailbox"))
+	h := &NodeHandler{mailboxMgr: mgr}
+	matched := filepath.Join(tmp, "example.com", "a", "new", "matched.eml")
+	other := filepath.Join(tmp, "example.com", "a", "cur", "other.eml")
+	writeTestFile(t, matched, "Message-ID: <delete-me@example.com>\r\nSubject: delete me\r\n\r\nbody")
+	writeTestFile(t, other, "Message-ID: <keep-me@example.com>\r\nSubject: keep me\r\n\r\nbody")
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/internal/messages/x?mailbox=a@example.com", nil)
+	c.Params = gin.Params{{Key: "message_id", Value: "<delete-me@example.com>"}}
+	h.DeleteMessage(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(matched); !os.IsNotExist(err) {
+		t.Fatalf("matched message still exists: %v", err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("unmatched message removed: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/internal/messages/x?mailbox=a@example.com", nil)
+	c.Params = gin.Params{{Key: "message_id", Value: "<delete-me@example.com>"}}
+	h.DeleteMessage(c)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("second delete status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCurrentNodeIDUsesRecoveredRemoteIdentity(t *testing.T) {
 	remoteCfg := mailconfig.NewRemoteConfig("", "")
 	h := &NodeHandler{nodeID: 0, remoteCfg: remoteCfg}

@@ -409,6 +409,33 @@ func (h *NodeHandler) GetMessageBody(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": msg})
 }
 
+// DeleteMessage permanently removes one Maildir message matched by mailbox and Message-ID.
+// DELETE /internal/messages/:message_id?mailbox=xxx@domain
+func (h *NodeHandler) DeleteMessage(c *gin.Context) {
+	messageID, err := url.PathUnescape(c.Param("message_id"))
+	if err != nil {
+		messageID = c.Param("message_id")
+	}
+	email := c.Query("mailbox")
+	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": "invalid mailbox param"})
+		return
+	}
+
+	msg, filePath, ok := h.findMessage(email, messageID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"code": 2003, "message": "message not found"})
+		return
+	}
+	if err := os.Remove(filePath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 5000, "message": "failed to delete message"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "message deleted", "data": gin.H{
+		"mailbox": email, "message_id": msg.MessageID,
+	}})
+}
+
 // normalizeMessageID 去掉 message-id 首尾的 < > 和引号，trim 空白，用于兼容匹配。
 func normalizeMessageID(s string) string {
 	s = strings.TrimSpace(s)
@@ -726,6 +753,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/mailboxes/:email/messages/expired", h.PurgeExpiredMessages)
 	rg.POST("/messages/retention/purge", h.PurgeExpiredMessagesBatch)
 	rg.GET("/messages/:message_id", h.GetMessageBody)
+	rg.DELETE("/messages/:message_id", h.DeleteMessage)
 	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
 	rg.GET("/messages/:message_id/attachments/:index/preview", h.GetMessageAttachmentPreview)
 

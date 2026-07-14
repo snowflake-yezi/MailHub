@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Trash2,
   X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
@@ -205,6 +206,29 @@ function AttachmentPreviewModal({ preview, onClose, onCopy }) {
   )
 }
 
+function DeleteMessageDialog({ message, mailbox, deleting, onConfirm, onCancel }) {
+  if (!message) return null
+  return (
+    <div className="modal-overlay" onClick={deleting ? undefined : onCancel}>
+      <div className="modal confirm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="确认删除邮件">
+        <h3>确认永久删除这封邮件？</h3>
+        <p>此操作会直接删除 Maildir 中的邮件文件，无法从回收站恢复。</p>
+        <div className="email-meta-grid">
+          <span>主题</span><strong>{message.subject || '(无标题)'}</strong>
+          <span>邮箱</span><code>{mailbox}</code>
+          <span>Message-ID</span><code>{message.message_id}</code>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" type="button" onClick={onCancel} disabled={deleting}>取消</button>
+          <button className="btn btn-danger" type="button" onClick={onConfirm} disabled={deleting}>
+            {deleting ? <span className="spinner" /> : <Trash2 size={15} />} 确认永久删除
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function EmailsPage() {
   const location = useLocation()
   const appliedURLSearch = useRef('')
@@ -222,6 +246,8 @@ export default function EmailsPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [bodyView, setBodyView] = useState('text')
   const [attachmentPreview, setAttachmentPreview] = useState(null)
+  const [deleteConfirm, setDeleteConfirm] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const totalAttachments = useMemo(
     () => messages.reduce((sum, msg) => sum + (Number(msg.attachments_count) || 0), 0),
@@ -375,6 +401,24 @@ export default function EmailsPage() {
     }
   }
 
+  const deleteSelectedMessage = async () => {
+    if (!deleteConfirm?.message_id || !query) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await emailAPI.remove(deleteConfirm.message_id, query)
+      setMessages(current => current.filter(message => message.message_id !== deleteConfirm.message_id))
+      setSelected(null)
+      setDetail(null)
+      setAttachmentPreview(null)
+      setDeleteConfirm(null)
+    } catch (err) {
+      setError(err.message || '删除邮件失败')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -485,7 +529,14 @@ export default function EmailsPage() {
               <h3>邮件详情</h3>
               <div className="panel-caption">正文、HTML 和附件在同一审阅器中处理。</div>
             </div>
-            {detail && !detail._error && <span className="tag tag-success">已解析</span>}
+            {detail && !detail._error && (
+              <div className="page-actions">
+                <span className="tag tag-success">已解析</span>
+                <button className="btn btn-sm btn-danger" type="button" onClick={() => setDeleteConfirm(detail)}>
+                  <Trash2 size={14} /> 删除邮件
+                </button>
+              </div>
+            )}
           </div>
 
           {detailLoading && <div className="empty-state"><span className="spinner" /><strong>加载详情...</strong></div>}
@@ -586,6 +637,7 @@ export default function EmailsPage() {
         </section>
       </div>
       <AttachmentPreviewModal preview={attachmentPreview} onClose={closeAttachmentPreview} onCopy={copyPreviewText} />
+      <DeleteMessageDialog message={deleteConfirm} mailbox={query} deleting={deleting} onConfirm={deleteSelectedMessage} onCancel={() => setDeleteConfirm(null)} />
     </div>
   )
 }
