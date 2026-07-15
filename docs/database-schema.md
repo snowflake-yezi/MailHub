@@ -1,6 +1,6 @@
 # 控制面数据库字典
 
-> 当前版本：2026-07-11
+> 当前版本：2026-07-15
 >
 > 适用组件：`mgmt-system`
 >
@@ -10,12 +10,19 @@
 
 ## 1. 总览
 
-控制面当前包含 14 张表。邮件正文和附件不存数据库，仍以 Maildir EML 为事实源。
+控制面当前包含 21 张表。邮件正文和附件不存数据库，仍以 Maildir EML 为事实源。
 
 | 表名 | 中文表注释 | 用途 |
 |------|------------|------|
 | `admin_users` | 管理后台用户表 | 管理员身份、bcrypt 密码和凭据版本 |
-| `api_tokens` | 外部API访问令牌表 | 外部调用方 Bearer Token 与 scope |
+| `api_access_logs` | 外部 API 调用日志表 | 应用、凭证、权限、状态和耗时审计 |
+| `api_application_permissions` | 外部应用授权表 | 应用与业务权限的多对多关系 |
+| `api_applications` | 外部应用表 | 可命名、启停的外部调用方主体 |
+| `api_credentials` | 外部应用凭证表 | Token 哈希、前缀、过期和最近使用信息 |
+| `api_permissions` | API 业务权限表 | 管理端可勾选的稳定功能权限 |
+| `api_resources` | 外部 API 资源表 | 代码自动登记的 method/path 与权限映射 |
+| `api_tokens` | 历史外部 API 令牌表 | 升级回滚期兼容的明文 Token 与 scope |
+| `config_change_audits` | 配置变更审计表 | 全局和节点配置修改记录 |
 | `domains` | 邮件域名表 | 可用邮件域名基础信息 |
 | `filter_rules` | 邮件过滤规则表 | 白名单、黑名单、关键词和正则规则 |
 | `integrated_mailboxes` | 集成邮箱转发目标表 | union 人工兜底转发目标池 |
@@ -40,6 +47,11 @@ erDiagram
     DOMAINS ||--o{ SERVER_DOMAINS : domain_id
     MAIL_SERVERS ||--o{ SERVER_CONFIG_OVERRIDES : server_id
     MAIL_SERVERS ||--o{ SERVER_CONFIG_SNAPSHOTS : server_id
+    API_APPLICATIONS ||--o{ API_CREDENTIALS : application_id
+    API_APPLICATIONS ||--o{ API_APPLICATION_PERMISSIONS : application_id
+    API_PERMISSIONS ||--o{ API_APPLICATION_PERMISSIONS : permission_code
+    API_PERMISSIONS ||--o{ API_RESOURCES : permission_code
+    API_APPLICATIONS ||--o{ API_ACCESS_LOGS : application_id
 ```
 
 `server_config_overrides` 和 `server_config_snapshots` 当前通过 `server_id` 逻辑关联 `mail_servers`，未建立数据库外键；删除节点时由业务层控制。
@@ -62,6 +74,8 @@ erDiagram
 
 ### 3.2 `api_tokens`
 
+该表仅用于旧配置 Token 的升级兼容。新凭证由管理端签发，并只在 `api_credentials` 保存哈希。
+
 | 字段 | 类型 | 约束/默认值 | 中文注释 |
 |------|------|-------------|----------|
 | `id` | BIGINT UNSIGNED | PK, AUTO_INCREMENT | 主键ID |
@@ -70,6 +84,17 @@ erDiagram
 | `scopes` | VARCHAR(512) | `*` | 权限范围列表，按逗号分隔后精确匹配 |
 | `enabled` | TINYINT(1) | `1` | 是否启用 |
 | `created_at`, `last_used_at` | DATETIME(3) | NULL | 创建时间、最后使用时间 |
+
+### 3.2.1 外部访问管理表
+
+| 表 | 关键字段 | 说明 |
+|---|---|---|
+| `api_applications` | `name`, `description`, `enabled`, `legacy_token_id` | 外部调用方主体；停用后其全部凭证立即失效。 |
+| `api_credentials` | `application_id`, `name`, `token_prefix`, `token_hash`, `enabled`, `expires_at`, `last_used_at`, `last_used_ip` | Token 只保存 SHA-256 哈希；完整值只在签发时返回一次。 |
+| `api_permissions` | `code`, `group_name`, `name`, `sort_order`, `active` | 管理员勾选的稳定业务能力。 |
+| `api_resources` | `method`, `path`, `permission_code`, `name`, `status` | 服务启动时由统一路由注册器 upsert；删除的代码路由标记为 `retired`。 |
+| `api_application_permissions` | `application_id`, `permission_code` | 应用授权关系，组合唯一。 |
+| `api_access_logs` | `application_id`, `credential_id`, `permission_code`, `method`, `path`, `status_code`, `client_ip`, `duration_ms`, `created_at` | 认证成功后的外部请求审计。 |
 
 ### 3.3 `domains`
 
@@ -244,5 +269,5 @@ erDiagram
 - `mgmt-system` 启动时运行 GORM `AutoMigrate`，补齐模型对应表和字段。
 - `SeedDefaultConfigs` 补齐 `system_configs` 默认项，不覆盖已存在的运维配置。
 - `MigrateLegacyOrderMailboxes` 将旧 `order_mailboxes` 数据迁移到当前账号和映射模型。
-- 生产库 14 张表、134 个字段已于 2026-07-11 写入与本文一致的中文 COMMENT。
+- 2026-07-11 时生产库原有 14 张表、134 个字段已写入中文 COMMENT；本次新增外部访问表的注释以后续生产迁移结果为准。
 - 修改字段时必须保留现有类型、NULL、默认值、索引和外键；生产 DDL 前先备份 schema。

@@ -18,14 +18,18 @@ https://<mgmt-host>/api/v1
 Authorization: Bearer <token>
 ```
 
-Token 在 `auth.tokens` 配置或 `api_tokens` 表中维护。`scopes` 使用逗号分隔的完整项：
+Token 由管理端“外部访问”页面签发。管理员创建并命名外部应用、勾选可调用功能后获得一次性 Token；完整 Token 只展示一次，数据库只保存哈希。
 
-- `mailbox:create`：创建/禁用邮箱。
+- `mailbox:create`：创建或复用邮箱。
 - `mailbox:read`：查询邮箱信息。
-- `email:read`：查询邮件列表、正文和附件。
-- `*`：通配全部 scope，仅用于受控调试或管理员级系统。
+- `mailbox:disable`：禁用邮箱。
+- `email:list`：查询邮件列表。
+- `email:body`：查询邮件正文。
+- `email:attachment`：下载邮件附件。
 
-Scope 校验规则：按逗号分隔后 trim，每一项必须与所需 scope 完全相等；不做子串匹配。
+权限编码必须与接口要求完全相等，不做前缀或子串匹配。应用被停用、凭证被撤销或凭证到期后立即返回 401。
+
+升级兼容期内，配置文件 `auth.tokens` 和 `api_tokens` 表仍可使用。启动时旧 Token 会迁移为管理端可见的外部应用：旧 `mailbox:create` 同时映射创建和禁用权限，旧 `email:read` 映射邮件列表、正文和附件权限。新调用方不再通过配置文件签发 Token。
 
 ### 1.3 JSON 响应信封
 
@@ -70,7 +74,7 @@ user@example.com    -> user@example.com 或 user%40example.com
 
 ```http
 POST /api/v1/mailboxes
-Authorization: Bearer <token with mailbox:create>
+Authorization: Bearer <token with mailbox:create permission>
 Content-Type: application/json
 ```
 
@@ -119,7 +123,7 @@ Content-Type: application/json
 
 ```http
 GET /api/v1/mailboxes/{order_id}
-Authorization: Bearer <token with mailbox:read>
+Authorization: Bearer <token with mailbox:read permission>
 ```
 
 响应 `data` 为邮箱账号记录，包含 `email_address`、`local_part`、`password`、`domain_id`、`server_id`、`status`、`sync_status`、`retention_days`、`created_at` 等字段。兼容字段 `expires_at` 不再用于账号生命周期，新建邮箱默认不返回该字段。
@@ -128,10 +132,10 @@ Authorization: Bearer <token with mailbox:read>
 
 ```http
 POST /api/v1/mailboxes/{order_id}/disable
-Authorization: Bearer <token with mailbox:create>
+Authorization: Bearer <token with mailbox:disable permission>
 ```
 
-按订单号禁用邮箱并触发数据面删除/回收流程。当前为兼容出票中心 Token，仍复用 `mailbox:create` scope。
+按订单号禁用邮箱并触发数据面删除/回收流程。旧 Token 的 `mailbox:create` scope 在兼容期内仍可调用该接口。
 
 ---
 
@@ -141,7 +145,7 @@ Authorization: Bearer <token with mailbox:create>
 
 ```http
 GET /api/v1/orders/{order_id}/emails?page=1&size=20
-Authorization: Bearer <token with email:read>
+Authorization: Bearer <token with email:list permission>
 ```
 
 响应：
@@ -191,7 +195,7 @@ Authorization: Bearer <token with email:read>
 
 ```http
 GET /api/v1/mailboxes/{email}/messages?page=1&size=20
-Authorization: Bearer <token with email:read>
+Authorization: Bearer <token with email:list permission>
 ```
 
 该接口是邮箱维度主入口。`{email}` 是邮箱地址的 path 参数，应进行 URL path escape。响应结构与按订单查询邮件列表一致，但不一定包含 `order_id`。
@@ -200,7 +204,7 @@ Authorization: Bearer <token with email:read>
 
 ```http
 GET /api/v1/emails/{message_id}/body?mailbox={email}
-Authorization: Bearer <token with email:read>
+Authorization: Bearer <token with email:body permission>
 ```
 
 参数：
@@ -220,7 +224,7 @@ Authorization: Bearer <token with email:read>
 
 ```http
 GET /api/v1/emails/{message_id}/attachments/{index}?mailbox={email}
-Authorization: Bearer <token with email:read>
+Authorization: Bearer <token with email:attachment permission>
 ```
 
 参数：
@@ -245,15 +249,14 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 
 ---
 
-## 4. Scope 与调用方建议
+## 4. 权限与调用方建议
 
-| 调用方 | 建议 Scope | 用途 |
+| 调用方 | 建议权限 | 用途 |
 |--------|------------|------|
-| 出票中心 | `mailbox:create,mailbox:read` | 创建、查询、禁用订单邮箱 |
-| 大模型系统 | `email:read` | 拉取邮件列表、正文和附件 |
-| 联调管理员 | `*` | 临时全权限联调，生产慎用 |
+| 出票中心 | `mailbox:create,mailbox:read,mailbox:disable` | 创建、查询、禁用订单邮箱 |
+| 大模型系统 | `email:list,email:body,email:attachment` | 拉取邮件列表、正文和附件 |
 
-配置示例：
+旧版本兼容配置示例（仅用于升级过渡）：
 
 ```yaml
 auth:

@@ -131,6 +131,9 @@ func mailboxParam(c *gin.Context) string {
 	if v := c.Param("email"); v != "" {
 		return v
 	}
+	if v := c.Param("mailbox_ref"); v != "" {
+		return v
+	}
 	if v := c.Param("order_id"); v != "" {
 		return v
 	}

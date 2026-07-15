@@ -13,6 +13,7 @@ auth:
   # Initialize with: mgmt-server admin bootstrap --username admin --password-file <path>
   admin_user: ""
   admin_pass: ""
+  # 仅用于旧版 Token 升级兼容；新调用方请在管理端“外部访问”页面创建。
   tokens:
     - name: "出票中心"
       token: "sk-ticket-CHANGE-ME"

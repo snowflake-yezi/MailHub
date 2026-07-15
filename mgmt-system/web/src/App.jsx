@@ -7,6 +7,7 @@ import MailboxesPage from './pages/MailboxesPage'
 import EmailsPage from './pages/EmailsPage'
 import ConfigPage from './pages/ConfigPage'
 import SearchPage from './pages/SearchPage'
+import ExternalAccessPage from './pages/ExternalAccessPage'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/mailboxes" element={<MailboxesPage />} />
         <Route path="/emails" element={<EmailsPage />} />
         <Route path="/config" element={<ConfigPage />} />
+        <Route path="/external-access" element={<ExternalAccessPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

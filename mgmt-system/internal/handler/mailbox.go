@@ -254,7 +254,7 @@ func parseCSV(r io.Reader) ([]BatchCreateItem, error) {
 }
 
 func (h *MailboxHandler) GetMailbox(c *gin.Context) {
-	orderID := c.Param("order_id")
+	orderID := mailboxOrderIDParam(c)
 
 	mb, err := h.store.GetMailboxByOrderID(orderID)
 	if err != nil {
@@ -266,7 +266,7 @@ func (h *MailboxHandler) GetMailbox(c *gin.Context) {
 }
 
 func (h *MailboxHandler) DisableMailbox(c *gin.Context) {
-	orderID := c.Param("order_id")
+	orderID := mailboxOrderIDParam(c)
 
 	mb, err := h.store.GetMailboxByOrderID(orderID)
 	if err != nil {
@@ -275,6 +275,13 @@ func (h *MailboxHandler) DisableMailbox(c *gin.Context) {
 	}
 
 	h.executeDeletion(c, mb)
+}
+
+func mailboxOrderIDParam(c *gin.Context) string {
+	if value := c.Param("mailbox_ref"); value != "" {
+		return value
+	}
+	return c.Param("order_id")
 }
 
 // RequestDelete 管理后台触发的邮箱删除（四态流转入口）。

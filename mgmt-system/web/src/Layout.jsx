@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Filter,
   Inbox,
+  KeyRound,
   LayoutDashboard,
   Mail,
   Menu,
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
   { path: '/emails', label: '邮件查询', icon: Mail, group: '资源' },
   { path: '/filters', label: '过滤规则', icon: Filter, group: '策略' },
   { path: '/config', label: '系统配置', icon: Settings, group: '系统' },
+  { path: '/external-access', label: '外部访问', icon: KeyRound, group: '系统' },
 ]
 
 function getInitialCollapsed() {

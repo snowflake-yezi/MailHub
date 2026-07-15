@@ -198,4 +198,5 @@ func (h *AdminHandler) RegisterProtectedRoutes(rg *gin.RouterGroup) {
 	rg.GET("/search", spa)
 	rg.GET("/config", spa)
 	rg.GET("/config/*path", spa)
+	rg.GET("/external-access", spa)
 }

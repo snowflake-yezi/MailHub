@@ -1,6 +1,6 @@
 # 系统架构概览
 
-> 版本: v1.2 | 日期: 2026-07-08 | 状态: 与当前代码实现对齐。本文是架构、数据模型和接口流向的事实源。
+> 版本: v1.3 | 日期: 2026-07-15 | 状态: 与当前代码实现对齐。本文是架构、数据模型和接口流向的事实源。
 
 ---
 
@@ -15,11 +15,11 @@ flowchart TB
     end
 
     subgraph mgmt["mgmt-system 控制面"]
-        auth["鉴权层<br/>Session / Bearer scope / Shared-Secret"]
-        web["React 管理后台<br/>邮箱 / 邮件 / 服务器 / 域名 / 过滤 / 配置 / 集成邮箱"]
+        auth["鉴权层<br/>Session / Bearer permission / Shared-Secret"]
+        web["React 管理后台<br/>邮箱 / 邮件 / 服务器 / 过滤 / 配置 / 外部访问"]
         api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 规则配置热加载"]
-        db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / domains<br/>server_config overrides / snapshots<br/>system_configs / admin_users<br/>filter_rules / api_tokens")]
+        db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / domains<br/>system_configs / admin_users<br/>api applications / credentials<br/>permissions / resources / access logs")]
     end
 
     subgraph nodes["mail-node 数据面集群"]
@@ -32,7 +32,7 @@ flowchart TB
     roundcube["Roundcube Webmail<br/>查看集成邮箱"]
 
     internet --> nginx
-    caller -->|"Bearer Token + scope"| api
+    caller -->|"Bearer Token + permission"| api
     nginx -->|"Session Cookie"| web
     nginx --> api
 
@@ -57,7 +57,7 @@ flowchart TB
 | # | 方向 | 鉴权 | 当前用途 |
 |---|------|------|----------|
 | 1 | 运营人员 -> mgmt-system | Session Cookie | React 后台页面和 `/api/v1/admin/*` |
-| 2 | 外部业务系统 -> mgmt-system | Bearer Token + scope | 创建/查询/禁用邮箱，读取邮件和附件 |
+| 2 | 外部业务系统 -> mgmt-system | Bearer Token + 应用权限 | 创建/查询/禁用邮箱，读取邮件和附件 |
 | 3 | mgmt-system -> mail-node | `X-Internal-Token` | 创建邮箱、修改密码、删除/恢复、同步域名、查询邮件、下载附件、健康探测、通知重载 |
 | 4 | mail-node -> mgmt-system | `X-Internal-Token` | 心跳上报、节点发现、拉取过滤规则、拉取动态配置、拉取 deleting 任务 |
 | 5 | mail-node -> 集成邮箱 | SMTP AUTH / STARTTLS | 将通过过滤的邮件转发到 active 集成邮箱 |
@@ -80,7 +80,8 @@ flowchart TB
 | 动态配置 | `system_configs` KV 表、后台可视化配置、缓存读取、配置变更通知 mail-node |
 | 集成邮箱 | 多个转发目标账号，唯一 active；激活时同步 `forward.target_address` 并通知数据面 |
 | 生命周期调度 | deleting Watchdog、soft_deleted 过期标记为 purged |
-| 鉴权 | Session、Bearer Token scope、内部 Shared-Secret |
+| 鉴权 | Session、外部应用 Bearer Token 权限、内部 Shared-Secret |
+| 外部访问管理 | 应用命名与启停、功能授权、哈希凭证签发/轮换/撤销、调用日志 |
 
 ### 2.2 核心数据模型
 
@@ -93,7 +94,10 @@ flowchart TB
 | `domains` | `name`, `mx_server`, `status` | 邮件域名池。 |
 | `server_domains` | `server_id`, `domain_id`, `status`, `sync_status`, `postfix_status`, `dkim_status`, `dkim_selector`, `dkim_public_key` | 服务器-域名绑定和远端同步快照。 |
 | `filter_rules` | `rule_type`, `pattern`, `action`, `priority`, `enabled` | 过滤规则，action 为 `pass / block / flag`。 |
-| `api_tokens` | `token`, `scopes`, `enabled`, `last_used_at` | 外部 API Bearer token。scope 按逗号分隔后精确匹配。 |
+| `api_applications` / `api_credentials` | 应用状态、Token 哈希、前缀、过期和最近使用信息 | 外部调用方与可轮换凭证。完整 Token 不落库。 |
+| `api_permissions` / `api_resources` / `api_application_permissions` | 权限编码、method/path、应用授权 | 业务功能与自动注册接口的权限模型。 |
+| `api_access_logs` | 应用、凭证、权限、状态码、IP、耗时 | 外部 API 调用审计。 |
+| `api_tokens` | `token`, `scopes`, `enabled`, `last_used_at` | 旧配置 Token 的升级兼容表。 |
 | `system_configs` | `config_key`, `config_value`, `value_type`, `category`, `reloadable` | 动态配置源。 |
 | `integrated_mailboxes` | `email_address`, `display_name`, `is_active` | 集成邮箱转发目标池；全局只有一个 active。 |
 | `admin_users` | `username`, `password_hash`, `credential_version`, `status` | 管理后台数据库身份和凭据版本。 |
@@ -101,7 +105,7 @@ flowchart TB
 | `server_config_snapshots` | `server_id`, `config_key`, `effective_value`, `source`, `applied_revision`, `boot_id`, `reported_at` | mail-node 实际配置、版本与启动身份快照。 |
 | `system_state` | `key`, `value`, `updated_at` | bootstrap 等系统内部状态。 |
 
-完整 14 张表及字段定义见 [控制面数据库字典](database-schema.md)。
+完整表结构及字段定义见 [控制面数据库字典](database-schema.md)。
 
 ### 2.3 对外 API
 
@@ -246,7 +250,7 @@ flowchart LR
     filter -->|"pass / flag"| union
     filter -->|"block：不转发，原件保留"| maildir
 
-    caller -->|"Bearer email:read"| mgmtAPI
+    caller -->|"Bearer email:list"| mgmtAPI
     mgmtAPI -->|"X-Internal-Token"| maildir
 ```
 
@@ -287,16 +291,20 @@ stateDiagram-v2
 |------|----------|----------|
 | `/admin/*` 页面 | `mgmt_session` Session Cookie | 重定向登录或返回 401 |
 | `/api/v1/admin/*` | Session Cookie | 返回 JSON 错误 |
-| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*` | Bearer Token + scope | Token 无效 401，scope 不足 403 |
+| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*` | 外部应用 Bearer Token + permission | Token 无效 401，权限不足 403 |
 | `mgmt-system /api/v1/internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 | `mail-node /internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 
-Scope 当前取值：
+细粒度权限当前取值：
 
 - `mailbox:create`
 - `mailbox:read`
-- `email:read`
-- `*`
+- `mailbox:disable`
+- `email:list`
+- `email:body`
+- `email:attachment`
+
+旧 `email:read`、`mailbox:create` 复用禁用能力和 `*` 仅在 `api_tokens` 兼容路径中映射。新应用在管理端“外部访问”页面创建并勾选具体功能。
 
 后台管理员由 `admin_users` 的 bcrypt hash 校验；`system_state.admin_bootstrap` 独立记录初始化状态。首次安装使用 `mgmt-server admin bootstrap`，忘记密码使用 `admin reset-password`；后台改密或 CLI 恢复会递增 `credential_version`，使旧 Session 立即失效。`config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 仅保留兼容字段，不参与运行期登录。
 

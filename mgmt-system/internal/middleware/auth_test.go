@@ -77,3 +77,41 @@ func TestRequireScope(t *testing.T) {
 		})
 	}
 }
+
+func TestRequirePermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name        string
+		principal   *APIPrincipal
+		legacyScope string
+		permission  string
+		wantStatus  int
+	}{
+		{name: "normalized exact permission", principal: &APIPrincipal{Permissions: map[string]struct{}{"email:list": {}}}, permission: "email:list", wantStatus: http.StatusOK},
+		{name: "normalized substring denied", principal: &APIPrincipal{Permissions: map[string]struct{}{"email:list:all": {}}}, permission: "email:list", wantStatus: http.StatusForbidden},
+		{name: "normalized wildcard", principal: &APIPrincipal{Permissions: map[string]struct{}{"*": {}}}, permission: "mailbox:disable", wantStatus: http.StatusOK},
+		{name: "legacy email read maps body", legacyScope: "email:read", permission: "email:body", wantStatus: http.StatusOK},
+		{name: "legacy create maps disable", legacyScope: "mailbox:create", permission: "mailbox:disable", wantStatus: http.StatusOK},
+		{name: "legacy read cannot create", legacyScope: "mailbox:read", permission: "mailbox:create", wantStatus: http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/protected", func(c *gin.Context) {
+				if tt.principal != nil {
+					c.Set("api_principal", tt.principal)
+				}
+				if tt.legacyScope != "" {
+					c.Set("api_token", &model.ApiToken{Scopes: tt.legacyScope})
+				}
+			}, RequirePermission(tt.permission), func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/protected", nil))
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", response.Code, tt.wantStatus, response.Body.String())
+			}
+		})
+	}
+}

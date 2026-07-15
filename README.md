@@ -11,7 +11,7 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 ### 控制面 `mgmt-system`
 
 - 管理后台：React SPA，入口为 `/admin/*`，Session 鉴权。
-- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`，Bearer Token + scope 鉴权。
+- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`，由管理端创建外部应用、勾选功能并签发 Bearer Token。
 - 内部 API：`/api/v1/internal/*`，与 mail-node 通过 `X-Internal-Token` Shared-Secret 互信。
 - 资源管理：邮箱账号、服务器池、域名池、过滤规则、系统配置、集成邮箱。
 - 调度能力：健康检查、心跳接收、生命周期 Watchdog、软删除过期标记、配置/规则热加载通知。
@@ -42,7 +42,7 @@ flowchart TB
         web["React 管理后台<br/>邮箱 / 服务器 / 域名 / 过滤 / 配置 / 集成邮箱"]
         api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 热加载通知"]
-        auth["鉴权<br/>Session / Bearer scope / Shared-Secret"]
+        auth["鉴权<br/>Session / Bearer permission / Shared-Secret"]
         db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token / 配置")]
     end
 
@@ -186,7 +186,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | 文档 | 用途 |
 |------|------|
 | [架构概览](docs/architecture-overview.md) | 当前组件职责、数据模型、接口流向、状态机 |
-| [数据库字典](docs/database-schema.md) | 当前 14 张控制面表、字段、关系、状态值和中文注释 |
+| [数据库字典](docs/database-schema.md) | 当前 21 张控制面表、字段、关系、状态值和中文注释 |
 | [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
 | [控制面部署指南](docs/control-plane-deployment.md) | Docker Compose、systemd、管理员 bootstrap、升级和恢复 |
 | [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/config"
 	"github.com/ticket/email-mgmt-system/internal/handler"
 	"github.com/ticket/email-mgmt-system/internal/healthcheck"
@@ -90,6 +92,7 @@ func main() {
 	healthH := handler.NewHealthHandler(db)
 	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)
 	integratedH := handler.NewIntegratedMailboxHandler(db, cfg.Auth.SharedSecret)
+	externalAccessH := handler.NewExternalAccessHandler(db)
 
 	// Session manager
 	sessionDuration := time.Duration(db.GetConfigInt("session.duration_hours", 24)) * time.Hour
@@ -140,6 +143,7 @@ func main() {
 	mailboxH.RegisterAdminRoutes(apiAdmin)
 	emailH.RegisterAdminRoutes(apiAdmin)
 	integratedH.RegisterAdminRoutes(apiAdmin)
+	externalAccessH.RegisterAdminRoutes(apiAdmin)
 	// Dashboard stats API
 	apiAdmin.GET("/dashboard", adminH.DashboardAPI)
 	// Domains list (for dropdown filters)
@@ -160,16 +164,45 @@ func main() {
 	// ---- External API v1 (Bearer Token auth + Scope) ----
 	api := r.Group("/api/v1")
 	api.Use(middleware.AuthRequired(db))
+	externalRegistry := apiregistry.New("/api/v1")
 
 	// Mailbox generation & query
-	api.POST("/mailboxes", middleware.RequireScope("mailbox:create"), mailboxH.CreateMailbox)
-	api.GET("/mailboxes/:order_id", middleware.RequireScope("mailbox:read"), mailboxH.GetMailbox)
-	api.POST("/mailboxes/:order_id/disable", middleware.RequireScope("mailbox:create"), mailboxH.DisableMailbox)
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodPost, Path: "/mailboxes", PermissionCode: "mailbox:create",
+		GroupName: "邮箱账号", Name: "创建或复用邮箱", SortOrder: 10, Handler: mailboxH.CreateMailbox,
+	})
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref", PermissionCode: "mailbox:read",
+		GroupName: "邮箱账号", Name: "查询邮箱", SortOrder: 20, Handler: mailboxH.GetMailbox,
+	})
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodPost, Path: "/mailboxes/:mailbox_ref/disable", PermissionCode: "mailbox:disable",
+		GroupName: "邮箱账号", Name: "禁用邮箱", SortOrder: 30, Handler: mailboxH.DisableMailbox,
+	})
 
 	// Email query
-	emailGroup := api.Group("")
-	emailGroup.Use(middleware.RequireScope("email:read"))
-	emailH.RegisterRoutes(emailGroup)
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodGet, Path: "/orders/:order_id/emails", PermissionCode: "email:list",
+		GroupName: "邮件读取", Name: "查询邮件列表", SortOrder: 110, Handler: emailH.GetOrderEmails,
+	})
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref/messages", PermissionCode: "email:list",
+		GroupName: "邮件读取", Name: "查询邮件列表", SortOrder: 110, Handler: emailH.GetMailboxMessages,
+	})
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodGet, Path: "/emails/:message_id/body", PermissionCode: "email:body",
+		GroupName: "邮件读取", Name: "查看邮件正文", SortOrder: 120, Handler: emailH.GetEmailBody,
+	})
+	externalRegistry.Register(api, apiregistry.Route{
+		Method: http.MethodGet, Path: "/emails/:message_id/attachments/:index", PermissionCode: "email:attachment",
+		GroupName: "邮件读取", Name: "下载附件", SortOrder: 130, Handler: emailH.GetEmailAttachment,
+	})
+	if err := externalRegistry.Sync(db); err != nil {
+		log.Fatalf("Failed to sync external API registry: %v", err)
+	}
+	if err := db.MigrateLegacyAPITokens(service.HashAPIToken); err != nil {
+		log.Fatalf("Failed to migrate legacy API tokens: %v", err)
+	}
 
 	// ---- Internal API (mail-node calls, Shared-Secret auth) ----
 	internal := r.Group("/api/v1/internal")
