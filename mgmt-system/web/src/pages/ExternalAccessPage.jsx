@@ -42,10 +42,14 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
-function TokenDialog({ token, onClose, onCopied }) {
+function TokenDialog({ token, onClose, onCopied, onCopyError }) {
   const copy = async () => {
-    await navigator.clipboard.writeText(token)
-    onCopied()
+    try {
+      await navigator.clipboard.writeText(token)
+      onCopied()
+    } catch {
+      onCopyError()
+    }
   }
   return (
     <div className="modal-overlay access-modal-overlay" onClick={onClose}>
@@ -157,7 +161,7 @@ function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave,
           {mode === 'edit' && (
             <>
               <section className="access-detail-section">
-                <div className="access-detail-heading"><div><h3>API 凭证</h3><span>{application.credentials?.length || 0} 个凭证</span></div><button className="btn btn-outline btn-sm" type="button" onClick={onIssue}><Plus size={15} /> 签发凭证</button></div>
+                <div className="access-detail-heading"><div><h3>API 凭证</h3><span>{application.credentials?.length || 0} 个凭证</span></div><button className="btn btn-outline btn-sm" type="button" onClick={onIssue}><Plus size={15} /> 签发并复制 Token</button></div>
                 <div className="credential-list">
                   {(application.credentials || []).map(credential => (
                     <div className="credential-row" key={credential.id}>
@@ -202,7 +206,7 @@ function CredentialDialog({ saving, onSave, onClose }) {
         <h3>签发新凭证</h3>
         <div className="form-group"><label>凭证名称</label><input value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} required /></div>
         <div className="form-group"><label>到期时间</label><input type="datetime-local" value={form.expires_at} onChange={event => setForm({ ...form, expires_at: event.target.value })} /></div>
-        <div className="modal-footer"><button className="btn btn-outline" type="button" onClick={onClose}>取消</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving && <span className="spinner" />} 签发</button></div>
+        <div className="modal-footer"><button className="btn btn-outline" type="button" onClick={onClose}>取消</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving && <span className="spinner" />} 签发并复制</button></div>
       </form>
     </div>
   )
@@ -363,7 +367,7 @@ export default function ExternalAccessPage() {
 
       {drawer && <ApplicationDrawer state={drawer} permissions={permissions} saving={saving} logs={logs} onChange={setDrawer} onSave={saveApplication} onClose={() => setDrawer(null)} onIssue={() => setCredentialDialog(true)} onRevoke={askRevoke} />}
       {credentialDialog && <CredentialDialog saving={saving} onSave={issueCredential} onClose={() => setCredentialDialog(false)} />}
-      {token && <TokenDialog token={token} onClose={() => setToken('')} onCopied={() => setToast({ type: 'success', message: 'Token 已复制' })} />}
+      {token && <TokenDialog token={token} onClose={() => setToken('')} onCopied={() => setToast({ type: 'success', message: 'Token 已复制' })} onCopyError={() => setToast({ type: 'error', message: '复制失败，请手动选择 Token' })} />}
       {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
