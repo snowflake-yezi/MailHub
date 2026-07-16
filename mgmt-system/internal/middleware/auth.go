@@ -19,10 +19,16 @@ type APIPrincipal struct {
 	Permissions     map[string]struct{}
 }
 
+type APIAuthStore interface {
+	AuthenticateAPICredential(tokenHash string, now time.Time) (*store.AuthenticatedAPIClient, error)
+	UpdateAPICredentialUsage(id uint64, usedAt time.Time, clientIP string)
+	CreateAPIAccessLog(entry *model.APIAccessLog)
+}
+
 // AuthRequired 验证 Bearer Token。
 // 外部 API（/api/v1/mailboxes、/api/v1/emails 等）需要此中间件。
 // 管理后台 API 由独立的 session 鉴权 group 保护，不再经过此中间件。
-func AuthRequired(store *store.Store) gin.HandlerFunc {
+func AuthRequired(store APIAuthStore) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		header := c.GetHeader("Authorization")
 		if header == "" {
@@ -43,60 +49,35 @@ func AuthRequired(store *store.Store) gin.HandlerFunc {
 		startedAt := time.Now()
 		tokenHash := service.HashAPIToken(tokenStr)
 		client, err := store.AuthenticateAPICredential(tokenHash, startedAt)
-		if err == nil {
-			permissions := make(map[string]struct{}, len(client.Permissions))
-			for _, permission := range client.Permissions {
-				permissions[permission] = struct{}{}
-			}
-			principal := &APIPrincipal{
-				ApplicationID: client.Application.ID, ApplicationName: client.Application.Name,
-				CredentialID: client.Credential.ID, Permissions: permissions,
-			}
-			c.Set("api_principal", principal)
-			store.UpdateAPICredentialUsage(client.Credential.ID, startedAt, c.ClientIP())
-			c.Next()
-			path := c.FullPath()
-			if path == "" {
-				path = c.Request.URL.Path
-			}
-			permission, _ := c.Get("api_permission_code")
-			store.CreateAPIAccessLog(&model.APIAccessLog{
-				ApplicationID: client.Application.ID, CredentialID: client.Credential.ID,
-				PermissionCode: fmtString(permission), Method: c.Request.Method, Path: path,
-				StatusCode: c.Writer.Status(), ClientIP: c.ClientIP(), DurationMS: time.Since(startedAt).Milliseconds(),
-			})
-			return
-		}
-
-		// A token that has entered api_credentials must use that record as its
-		// only source of truth. Falling back here would bypass revoke/disable/expiry.
-		normalized, lookupErr := store.HasAPICredentialHash(tokenHash)
-		if !allowLegacyFallback(normalized, lookupErr) {
+		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"code": 1004, "message": "invalid or disabled token",
 			})
 			return
 		}
 
-		// Compatibility fallback for tokens that only exist in legacy api_tokens.
-		token, legacyErr := store.FindToken(tokenStr)
-		if legacyErr != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"code": 1004, "message": "invalid or disabled token",
-			})
-			return
+		permissions := make(map[string]struct{}, len(client.Permissions))
+		for _, permission := range client.Permissions {
+			permissions[permission] = struct{}{}
 		}
-
-		store.UpdateTokenLastUsed(token.ID)
-
-		c.Set("api_token", token)
-		c.Set("api_token_name", token.Name)
+		principal := &APIPrincipal{
+			ApplicationID: client.Application.ID, ApplicationName: client.Application.Name,
+			CredentialID: client.Credential.ID, Permissions: permissions,
+		}
+		c.Set("api_principal", principal)
+		store.UpdateAPICredentialUsage(client.Credential.ID, startedAt, c.ClientIP())
 		c.Next()
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+		permission, _ := c.Get("api_permission_code")
+		store.CreateAPIAccessLog(&model.APIAccessLog{
+			ApplicationID: client.Application.ID, CredentialID: client.Credential.ID,
+			PermissionCode: fmtString(permission), Method: c.Request.Method, Path: path,
+			StatusCode: c.Writer.Status(), ClientIP: c.ClientIP(), DurationMS: time.Since(startedAt).Milliseconds(),
+		})
 	}
-}
-
-func allowLegacyFallback(normalizedCredentialExists bool, lookupErr error) bool {
-	return lookupErr == nil && !normalizedCredentialExists
 }
 
 func fmtString(value interface{}) string {
@@ -106,50 +87,7 @@ func fmtString(value interface{}) string {
 	return ""
 }
 
-func hasScope(scopes, required string) bool {
-	if required == "" {
-		return false
-	}
-
-	for _, item := range strings.Split(scopes, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		if item == "*" || item == required {
-			return true
-		}
-	}
-	return false
-}
-
-// RequireScope 检查 Token 权限范围
-func RequireScope(scope string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		tokenVal, exists := c.Get("api_token")
-		if !exists {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"code": 1005, "message": "no token context",
-			})
-			return
-		}
-
-		token := tokenVal.(*model.ApiToken)
-
-		// 简单 scope 检查：支持 "*" 通配和精确匹配
-		if hasScope(token.Scopes, scope) {
-			c.Next()
-			return
-		}
-
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"code": 1005, "message": "insufficient scope, required: " + scope,
-		})
-	}
-}
-
-// RequirePermission checks normalized application permissions and retains a
-// strict legacy scope mapping during the migration window.
+// RequirePermission checks normalized application permissions.
 func RequirePermission(permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Set("api_permission_code", permission)
@@ -167,38 +105,10 @@ func RequirePermission(permission string) gin.HandlerFunc {
 			}
 		}
 
-		if value, ok := c.Get("api_token"); ok {
-			if token, valid := value.(*model.ApiToken); valid && legacyAllows(token.Scopes, permission) {
-				c.Next()
-				return
-			}
-		}
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"code": 1005, "message": "insufficient permission, required: " + permission,
 		})
 	}
-}
-
-func legacyAllows(scopes, permission string) bool {
-	for _, scope := range strings.Split(scopes, ",") {
-		switch strings.TrimSpace(scope) {
-		case "*":
-			return true
-		case "mailbox:create":
-			if permission == "mailbox:create" || permission == "mailbox:disable" {
-				return true
-			}
-		case "mailbox:read":
-			if permission == "mailbox:read" {
-				return true
-			}
-		case "email:read":
-			if permission == "email:list" || permission == "email:body" || permission == "email:attachment" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // InternalAuthRequired validates the X-Internal-Token header against the configured

@@ -56,7 +56,6 @@ func New(dsn string, mode string) (*Store, error) {
 		&model.OrderMailboxMapping{},
 		&model.OrderMailbox{},
 		&model.FilterRule{},
-		&model.ApiToken{},
 		&model.APIApplication{},
 		&model.APICredential{},
 		&model.APIPermission{},
@@ -808,38 +807,15 @@ func (s *Store) ListAllRules() ([]model.FilterRule, error) {
 	return list, err
 }
 
-// ===== ApiToken =====
-
-func (s *Store) FindToken(token string) (*model.ApiToken, error) {
-	var t model.ApiToken
-	err := s.db.Where("token = ? AND enabled = ?", token, true).First(&t).Error
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-func (s *Store) UpdateTokenLastUsed(id uint64) {
-	now := time.Now()
-	s.db.Model(&model.ApiToken{}).Where("id = ?", id).Update("last_used_at", &now)
-}
-
 // ===== Seed =====
 
 // SeedDefaultData 初始化默认数据（首次部署时调用）
-func (s *Store) SeedDefaultData(domainName string, defaultRetention int, tokens []struct{ Name, Token, Scopes string }) error {
+func (s *Store) SeedDefaultData(domainName string) error {
 	// 域名
 	var count int64
 	s.db.Model(&model.Domain{}).Where("name = ?", domainName).Count(&count)
 	if count == 0 {
 		s.db.Create(&model.Domain{Name: domainName, MXServer: "mail." + domainName, Status: "active"})
-	}
-
-	// Token
-	for _, t := range tokens {
-		s.db.Model(&model.ApiToken{}).Where("token = ?", t.Token).Count(&count)
-		if count == 0 {
-			s.db.Create(&model.ApiToken{Name: t.Name, Token: t.Token, Scopes: t.Scopes, Enabled: true})
-		}
 	}
 
 	return nil

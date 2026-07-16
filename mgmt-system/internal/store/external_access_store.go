@@ -32,6 +32,28 @@ type AuthenticatedAPIClient struct {
 	Permissions []string
 }
 
+// LegacyAPITokenSeed is accepted only as an upgrade input. Its plaintext Token
+// is hashed into api_credentials and is never written back to the database.
+type LegacyAPITokenSeed struct {
+	Name   string
+	Token  string
+	Scopes string
+}
+
+type legacyAPITokenRow struct {
+	ID         uint64
+	Name       string
+	Token      string
+	Scopes     string
+	Enabled    bool
+	LastUsedAt *time.Time
+}
+
+type legacyAPITokenCandidate struct {
+	LegacyAPITokenSeed
+	LastUsedAt *time.Time
+}
+
 func normalizePermissionCodes(codes []string) []string {
 	seen := make(map[string]struct{}, len(codes))
 	result := make([]string, 0, len(codes))
@@ -257,14 +279,6 @@ func (s *Store) AuthenticateAPICredential(tokenHash string, now time.Time) (*Aut
 	return &AuthenticatedAPIClient{Application: *credential.Application, Credential: credential, Permissions: permissions}, nil
 }
 
-// HasAPICredentialHash reports whether a token has entered the normalized
-// credential system, regardless of its current enabled or expiry state.
-func (s *Store) HasAPICredentialHash(tokenHash string) (bool, error) {
-	var count int64
-	err := s.db.Model(&model.APICredential{}).Where("token_hash = ?", tokenHash).Count(&count).Error
-	return count > 0, err
-}
-
 func (s *Store) UpdateAPICredentialUsage(id uint64, usedAt time.Time, clientIP string) {
 	s.db.Model(&model.APICredential{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"last_used_at": usedAt, "last_used_ip": clientIP,
@@ -294,58 +308,185 @@ func (s *Store) ListAPIAccessLogs(applicationID uint64, page, size int) ([]model
 	return logs, total, nil
 }
 
-// MigrateLegacyAPITokens makes configured legacy callers visible in the new console.
-// The legacy plaintext row remains only for rollback compatibility.
-func (s *Store) MigrateLegacyAPITokens(hashToken func(string) string) error {
-	var tokens []model.ApiToken
-	if err := s.db.Where("enabled = ?", true).Find(&tokens).Error; err != nil {
+// RetireLegacyAPITokens imports active plaintext credentials into the hashed
+// credential store, verifies every import, and then removes api_tokens.
+func (s *Store) RetireLegacyAPITokens(configured []LegacyAPITokenSeed, hashToken func(string) string) error {
+	candidates, tableExists, err := s.legacyAPITokenCandidates(configured)
+	if err != nil {
 		return err
 	}
-	for _, token := range tokens {
-		token := token
-		if err := s.db.Transaction(func(tx *gorm.DB) error {
+	if !tableExists {
+		for _, seed := range configured {
+			tokenHash, err := legacyTokenHash(seed.Token, hashToken)
+			if err != nil {
+				return err
+			}
 			var count int64
-			if err := tx.Model(&model.APIApplication{}).Where("legacy_token_id = ?", token.ID).Count(&count).Error; err != nil {
-				return err
+			if err := s.db.Model(&model.APICredential{}).Where("token_hash = ?", tokenHash).Count(&count).Error; err != nil {
+				return fmt.Errorf("verify retired auth.tokens credential: %w", err)
 			}
-			if count > 0 {
-				return nil
+			if count != 1 {
+				return fmt.Errorf("auth.tokens is retired; create credential %q in External Access and remove it from config", seed.Name)
 			}
-			name := token.Name
-			if err := tx.Model(&model.APIApplication{}).Where("name = ?", name).Count(&count).Error; err != nil {
-				return err
-			}
-			if count > 0 {
-				name = fmt.Sprintf("%s（迁移 %d）", token.Name, token.ID)
-			}
-			app := model.APIApplication{Name: name, Description: "由旧 api_tokens 自动迁移", Enabled: true, LegacyTokenID: &token.ID}
-			if err := tx.Create(&app).Error; err != nil {
-				return err
-			}
-			codes := LegacyScopesToPermissions(token.Scopes)
-			if len(codes) == 1 && codes[0] == "*" {
-				if err := tx.Model(&model.APIPermission{}).Where("active = ?", true).
-					Order("sort_order ASC").Pluck("code", &codes).Error; err != nil {
-					return err
-				}
-			}
-			if err := replaceApplicationPermissions(tx, app.ID, codes); err != nil {
-				return err
-			}
-			prefix := token.Token
-			if len(prefix) > 16 {
-				prefix = prefix[:16]
-			}
-			credential := model.APICredential{
-				ApplicationID: app.ID, Name: "迁移凭证", TokenPrefix: prefix,
-				TokenHash: hashToken(token.Token), Enabled: true, LastUsedAt: token.LastUsedAt,
-			}
-			return tx.Create(&credential).Error
-		}); err != nil {
-			return fmt.Errorf("migrate legacy API token %d: %w", token.ID, err)
+		}
+		return nil
+	}
+
+	hashes := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		tokenHash, err := s.importLegacyAPIToken(candidate, hashToken)
+		if err != nil {
+			return err
+		}
+		hashes[tokenHash] = struct{}{}
+	}
+	for tokenHash := range hashes {
+		var count int64
+		if err := s.db.Model(&model.APICredential{}).Where("token_hash = ?", tokenHash).Count(&count).Error; err != nil {
+			return fmt.Errorf("verify imported API credential: %w", err)
+		}
+		if count != 1 {
+			return fmt.Errorf("verify imported API credential: hash %s has %d rows", tokenHash[:12], count)
+		}
+	}
+
+	if tableExists {
+		if err := s.db.Migrator().DropTable("api_tokens"); err != nil {
+			return fmt.Errorf("drop legacy api_tokens table: %w", err)
 		}
 	}
 	return nil
+}
+
+func (s *Store) legacyAPITokenCandidates(configured []LegacyAPITokenSeed) ([]legacyAPITokenCandidate, bool, error) {
+	var tableCount int64
+	if err := s.db.Raw(
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+		"api_tokens",
+	).Scan(&tableCount).Error; err != nil {
+		return nil, false, fmt.Errorf("inspect legacy api_tokens table: %w", err)
+	}
+	tableExists := tableCount > 0
+	if !tableExists {
+		return nil, false, nil
+	}
+	knownLegacyTokens := make(map[string]bool)
+	candidates := make([]legacyAPITokenCandidate, 0, len(configured))
+	if tableExists {
+		var rows []legacyAPITokenRow
+		if err := s.db.Table("api_tokens").Find(&rows).Error; err != nil {
+			return nil, true, fmt.Errorf("read legacy api_tokens: %w", err)
+		}
+		for _, row := range rows {
+			knownLegacyTokens[row.Token] = row.Enabled
+			if row.Enabled {
+				candidates = append(candidates, legacyAPITokenCandidate{
+					LegacyAPITokenSeed: LegacyAPITokenSeed{Name: row.Name, Token: row.Token, Scopes: row.Scopes},
+					LastUsedAt:         row.LastUsedAt,
+				})
+			}
+		}
+	}
+	for _, seed := range configured {
+		if _, existedInLegacyTable := knownLegacyTokens[seed.Token]; existedInLegacyTable {
+			continue
+		}
+		candidates = append(candidates, legacyAPITokenCandidate{LegacyAPITokenSeed: seed})
+	}
+	return candidates, tableExists, nil
+}
+
+func (s *Store) importLegacyAPIToken(candidate legacyAPITokenCandidate, hashToken func(string) string) (string, error) {
+	tokenHash, err := legacyTokenHash(candidate.Token, hashToken)
+	if err != nil {
+		return "", err
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		var credential model.APICredential
+		err := tx.Select("id").Where("token_hash = ?", tokenHash).First(&credential).Error
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		name, err := availableImportedApplicationName(tx, candidate.Name, tokenHash)
+		if err != nil {
+			return err
+		}
+		app := model.APIApplication{Name: name, Description: "由旧版明文 Token 一次性导入", Enabled: true}
+		if err := tx.Create(&app).Error; err != nil {
+			return err
+		}
+		codes := LegacyScopesToPermissions(candidate.Scopes)
+		if len(codes) == 1 && codes[0] == "*" {
+			if err := tx.Model(&model.APIPermission{}).Where("active = ?", true).
+				Order("sort_order ASC").Pluck("code", &codes).Error; err != nil {
+				return err
+			}
+		}
+		if err := replaceApplicationPermissions(tx, app.ID, codes); err != nil {
+			return err
+		}
+		credential = model.APICredential{
+			ApplicationID: app.ID, Name: "导入凭证", TokenPrefix: truncateRunes(candidate.Token, 16),
+			TokenHash: tokenHash, Enabled: true, LastUsedAt: candidate.LastUsedAt,
+		}
+		return tx.Create(&credential).Error
+	})
+	if err != nil {
+		return "", fmt.Errorf("import legacy API token %q: %w", candidate.Name, err)
+	}
+	return tokenHash, nil
+}
+
+func legacyTokenHash(token string, hashToken func(string) string) (string, error) {
+	if hashToken == nil || strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("legacy API token import requires a non-empty token and hash function")
+	}
+	tokenHash := hashToken(token)
+	if len(tokenHash) < 12 {
+		return "", fmt.Errorf("legacy API token import produced an invalid hash")
+	}
+	return tokenHash, nil
+}
+
+func availableImportedApplicationName(tx *gorm.DB, requested, tokenHash string) (string, error) {
+	base := strings.TrimSpace(requested)
+	if base == "" {
+		base = "旧版外部调用方"
+	}
+	names := []string{truncateRunes(base, 128)}
+	for _, hashLength := range []int{8, 16, 32, 64} {
+		if hashLength > len(tokenHash) {
+			continue
+		}
+		suffix := fmt.Sprintf("（导入 %s）", tokenHash[:hashLength])
+		names = append(names, truncateRunes(base, 128-len([]rune(suffix)))+suffix)
+	}
+	for _, name := range names {
+		var count int64
+		if err := tx.Model(&model.APIApplication{}).Where("name = ?", name).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("cannot allocate a unique imported application name")
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func LegacyScopesToPermissions(scopes string) []string {

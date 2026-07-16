@@ -61,7 +61,7 @@ func main() {
 	}
 
 	// Seed data
-	var tokenSeeds []struct{ Name, Token, Scopes string }
+	var tokenSeeds []store.LegacyAPITokenSeed
 	for _, t := range cfg.Auth.Tokens {
 		scopes := ""
 		for i, s := range t.Scopes {
@@ -70,10 +70,12 @@ func main() {
 			}
 			scopes += s
 		}
-		tokenSeeds = append(tokenSeeds, struct{ Name, Token, Scopes string }{t.Name, t.Token, scopes})
+		tokenSeeds = append(tokenSeeds, store.LegacyAPITokenSeed{Name: t.Name, Token: t.Token, Scopes: scopes})
 	}
 	for _, d := range cfg.Domains {
-		db.SeedDefaultData(d.Name, cfg.DefaultRetentionDays, tokenSeeds)
+		if err := db.SeedDefaultData(d.Name); err != nil {
+			log.Fatalf("Failed to seed domain %s: %v", d.Name, err)
+		}
 	}
 
 	// Init services
@@ -113,6 +115,10 @@ func main() {
 	}
 
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
+		c.Next()
+	})
 
 	// Load static assets (React SPA is at template/static/admin-app/)
 	r.LoadHTMLGlob("template/admin/*.html")
@@ -200,8 +206,8 @@ func main() {
 	if err := externalRegistry.Sync(db); err != nil {
 		log.Fatalf("Failed to sync external API registry: %v", err)
 	}
-	if err := db.MigrateLegacyAPITokens(service.HashAPIToken); err != nil {
-		log.Fatalf("Failed to migrate legacy API tokens: %v", err)
+	if err := db.RetireLegacyAPITokens(tokenSeeds, service.HashAPIToken); err != nil {
+		log.Fatalf("Failed to retire legacy API tokens: %v", err)
 	}
 
 	// ---- Internal API (mail-node calls, Shared-Secret auth) ----
@@ -237,7 +243,14 @@ func main() {
 	// Start
 	addr := fmt.Sprintf("0.0.0.0:%d", cfg.Server.Port)
 	log.Printf("Starting management system on %s (mode: %s)", addr, cfg.Server.Mode)
-	if err := r.Run(addr); err != nil {
+	server := &http.Server{
+		Addr: addr, Handler: r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

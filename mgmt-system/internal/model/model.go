@@ -168,17 +168,6 @@ type FilterRule struct {
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
-// ApiToken API 鉴权令牌
-type ApiToken struct {
-	ID         uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name       string     `gorm:"size:128;not null" json:"name"`
-	Token      string     `gorm:"uniqueIndex;size:191;not null" json:"token"`
-	Scopes     string     `gorm:"size:512;not null;default:*" json:"scopes"`
-	Enabled    bool       `gorm:"not null;default:true" json:"enabled"`
-	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	LastUsedAt *time.Time `json:"last_used_at"`
-}
-
 // AdminUser is the database-backed management console identity.
 type AdminUser struct {
 	ID                 uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
@@ -255,7 +244,6 @@ func (MailboxAccount) TableName() string      { return "mailbox_accounts" }
 func (OrderMailboxMapping) TableName() string { return "order_mailbox_mappings" }
 func (MailServer) TableName() string          { return "mail_servers" }
 func (FilterRule) TableName() string          { return "filter_rules" }
-func (ApiToken) TableName() string            { return "api_tokens" }
 func (Domain) TableName() string              { return "domains" }
 func (ServerDomain) TableName() string        { return "server_domains" }
 func (IntegratedMailbox) TableName() string   { return "integrated_mailboxes" }

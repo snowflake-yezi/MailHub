@@ -4,13 +4,12 @@ import "time"
 
 // APIApplication is an external system that consumes the public API.
 type APIApplication struct {
-	ID            uint64    `gorm:"primaryKey;autoIncrement;comment:主键ID" json:"id"`
-	Name          string    `gorm:"size:128;not null;uniqueIndex;comment:外部访问名称" json:"name"`
-	Description   string    `gorm:"size:512;comment:业务用途和负责人说明" json:"description"`
-	Enabled       bool      `gorm:"not null;default:true;index;comment:是否启用" json:"enabled"`
-	LegacyTokenID *uint64   `gorm:"uniqueIndex;comment:迁移来源的旧Token ID" json:"-"`
-	CreatedAt     time.Time `gorm:"autoCreateTime;comment:创建时间" json:"created_at"`
-	UpdatedAt     time.Time `gorm:"autoUpdateTime;comment:更新时间" json:"updated_at"`
+	ID          uint64    `gorm:"primaryKey;autoIncrement;comment:主键ID" json:"id"`
+	Name        string    `gorm:"size:128;not null;uniqueIndex;comment:外部访问名称" json:"name"`
+	Description string    `gorm:"size:512;comment:业务用途和负责人说明" json:"description"`
+	Enabled     bool      `gorm:"not null;default:true;index;comment:是否启用" json:"enabled"`
+	CreatedAt   time.Time `gorm:"autoCreateTime;comment:创建时间" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime;comment:更新时间" json:"updated_at"`
 }
 
 // APICredential is a revocable credential owned by one external application.

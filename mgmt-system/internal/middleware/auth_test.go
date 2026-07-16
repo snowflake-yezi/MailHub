@@ -5,107 +5,92 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
-func TestAllowLegacyFallback(t *testing.T) {
-	if allowLegacyFallback(true, nil) {
-		t.Fatal("normalized credential must never fall back to legacy token")
-	}
-	if allowLegacyFallback(false, errors.New("database unavailable")) {
-		t.Fatal("credential lookup errors must fail closed")
-	}
-	if !allowLegacyFallback(false, nil) {
-		t.Fatal("legacy-only token should remain compatible")
-	}
+type stubAPIAuthStore struct {
+	client     *store.AuthenticatedAPIClient
+	err        error
+	usageCalls int
+	logs       []*model.APIAccessLog
 }
 
-func TestHasScope(t *testing.T) {
-	tests := []struct {
-		name     string
-		scopes   string
-		required string
-		want     bool
-	}{
-		{name: "wildcard", scopes: "*", required: "email:read", want: true},
-		{name: "wildcard in list", scopes: "mailbox:create, *", required: "email:read", want: true},
-		{name: "exact", scopes: "mailbox:create,email:read", required: "email:read", want: true},
-		{name: "trim spaces", scopes: "mailbox:create, email:read ", required: "email:read", want: true},
-		{name: "substring suffix denied", scopes: "email:readonly", required: "email:read", want: false},
-		{name: "substring wrapper denied", scopes: "fooemail:readbar", required: "email:read", want: false},
-		{name: "empty denied", scopes: "", required: "email:read", want: false},
-		{name: "empty items ignored", scopes: ",,email:read,,", required: "email:read", want: true},
-		{name: "empty required denied", scopes: "*", required: "", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hasScope(tt.scopes, tt.required); got != tt.want {
-				t.Fatalf("hasScope(%q, %q) = %v, want %v", tt.scopes, tt.required, got, tt.want)
-			}
-		})
-	}
+func (s *stubAPIAuthStore) AuthenticateAPICredential(string, time.Time) (*store.AuthenticatedAPIClient, error) {
+	return s.client, s.err
 }
 
-func TestRequireScope(t *testing.T) {
+func (s *stubAPIAuthStore) UpdateAPICredentialUsage(uint64, time.Time, string) {
+	s.usageCalls++
+}
+
+func (s *stubAPIAuthStore) CreateAPIAccessLog(entry *model.APIAccessLog) {
+	s.logs = append(s.logs, entry)
+}
+
+func TestAuthRequiredFailsClosedWithoutLegacyFallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	tests := []struct {
-		name       string
-		token      *model.ApiToken
-		wantStatus int
-		wantCalled bool
-	}{
-		{name: "missing token context", token: nil, wantStatus: http.StatusForbidden},
-		{name: "insufficient scope", token: &model.ApiToken{Scopes: "mailbox:create"}, wantStatus: http.StatusForbidden},
-		{name: "substring scope denied", token: &model.ApiToken{Scopes: "email:readonly"}, wantStatus: http.StatusForbidden},
-		{name: "exact scope allowed", token: &model.ApiToken{Scopes: "mailbox:create,email:read"}, wantStatus: http.StatusOK, wantCalled: true},
-		{name: "wildcard allowed", token: &model.ApiToken{Scopes: "*"}, wantStatus: http.StatusOK, wantCalled: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			r := gin.New()
-			r.GET("/protected", func(c *gin.Context) {
-				if tt.token != nil {
-					c.Set("api_token", tt.token)
-				}
-			}, RequireScope("email:read"), func(c *gin.Context) {
-				called = true
-				c.Status(http.StatusOK)
-			})
-
-			w := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-			r.ServeHTTP(w, req)
-
-			if w.Code != tt.wantStatus {
-				t.Fatalf("status = %d, want %d, body = %s", w.Code, tt.wantStatus, w.Body.String())
-			}
-			if called != tt.wantCalled {
-				t.Fatalf("handler called = %v, want %v", called, tt.wantCalled)
-			}
+	for _, testErr := range []error{store.ErrInvalidAPICredential, errors.New("database unavailable")} {
+		st := &stubAPIAuthStore{err: testErr}
+		called := false
+		router := gin.New()
+		router.GET("/protected", AuthRequired(st), func(c *gin.Context) {
+			called = true
+			c.Status(http.StatusOK)
 		})
+
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		request.Header.Set("Authorization", "Bearer legacy-plaintext-token")
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized || called {
+			t.Fatalf("err=%v status=%d called=%v body=%s", testErr, response.Code, called, response.Body.String())
+		}
+		if st.usageCalls != 0 || len(st.logs) != 0 {
+			t.Fatalf("invalid credential produced usage=%d logs=%d", st.usageCalls, len(st.logs))
+		}
+	}
+}
+
+func TestAuthRequiredUsesNormalizedPrincipal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	st := &stubAPIAuthStore{client: &store.AuthenticatedAPIClient{
+		Application: model.APIApplication{ID: 7, Name: "ticket"},
+		Credential:  model.APICredential{ID: 11},
+		Permissions: []string{"email:list"},
+	}}
+	router := gin.New()
+	router.GET("/protected", AuthRequired(st), RequirePermission("email:list"), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer normalized-token")
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if st.usageCalls != 1 || len(st.logs) != 1 || st.logs[0].CredentialID != 11 {
+		t.Fatalf("usage=%d logs=%+v", st.usageCalls, st.logs)
 	}
 }
 
 func TestRequirePermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
-		name        string
-		principal   *APIPrincipal
-		legacyScope string
-		permission  string
-		wantStatus  int
+		name       string
+		principal  *APIPrincipal
+		permission string
+		wantStatus int
 	}{
 		{name: "normalized exact permission", principal: &APIPrincipal{Permissions: map[string]struct{}{"email:list": {}}}, permission: "email:list", wantStatus: http.StatusOK},
 		{name: "normalized substring denied", principal: &APIPrincipal{Permissions: map[string]struct{}{"email:list:all": {}}}, permission: "email:list", wantStatus: http.StatusForbidden},
 		{name: "normalized wildcard", principal: &APIPrincipal{Permissions: map[string]struct{}{"*": {}}}, permission: "mailbox:disable", wantStatus: http.StatusOK},
-		{name: "legacy email read maps body", legacyScope: "email:read", permission: "email:body", wantStatus: http.StatusOK},
-		{name: "legacy create maps disable", legacyScope: "mailbox:create", permission: "mailbox:disable", wantStatus: http.StatusOK},
-		{name: "legacy read cannot create", legacyScope: "mailbox:read", permission: "mailbox:create", wantStatus: http.StatusForbidden},
+		{name: "missing principal", permission: "mailbox:create", wantStatus: http.StatusForbidden},
 	}
 
 	for _, tt := range tests {
@@ -114,9 +99,6 @@ func TestRequirePermission(t *testing.T) {
 			router.GET("/protected", func(c *gin.Context) {
 				if tt.principal != nil {
 					c.Set("api_principal", tt.principal)
-				}
-				if tt.legacyScope != "" {
-					c.Set("api_token", &model.ApiToken{Scopes: tt.legacyScope})
 				}
 			}, RequirePermission(tt.permission), func(c *gin.Context) { c.Status(http.StatusOK) })
 
