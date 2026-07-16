@@ -70,15 +70,15 @@ function TokenDialog({ token, onClose, onCopied, onCopyError }) {
   )
 }
 
-function ConfirmDialog({ title, message, onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel = '确认', saving = false, onConfirm, onCancel }) {
   return (
-    <div className="modal-overlay access-modal-overlay" onClick={onCancel}>
+    <div className="modal-overlay access-modal-overlay" onClick={saving ? undefined : onCancel}>
       <div className="modal confirm-modal" onClick={event => event.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
-          <button className="btn btn-danger" type="button" onClick={onConfirm}>撤销</button>
+          <button className="btn btn-outline" type="button" disabled={saving} onClick={onCancel}>取消</button>
+          <button className="btn btn-danger" type="button" disabled={saving} onClick={onConfirm}>{saving ? '删除中...' : confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -115,7 +115,7 @@ function PermissionSelector({ permissions, selected, onChange }) {
   )
 }
 
-function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave, onClose, onIssue, onRevoke }) {
+function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave, onClose, onIssue, onDelete }) {
   const { mode, form, application } = state
   const update = (field, value) => onChange({ ...state, form: { ...form, [field]: value } })
 
@@ -167,7 +167,7 @@ function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave,
                     <div className="credential-row" key={credential.id}>
                       <span className={`credential-state ${credential.enabled ? 'active' : ''}`}><KeyRound size={15} /></span>
                       <div><strong>{credential.name}</strong><code>{credential.token_prefix}...</code><small>最近使用：{formatDate(credential.last_used_at)}</small></div>
-                      {credential.enabled ? <button className="icon-button compact danger" type="button" title="撤销凭证" onClick={() => onRevoke(credential)}><Trash2 size={15} /></button> : <span className="status-badge status-down">已撤销</span>}
+                      <button className="icon-button compact danger" type="button" title="永久删除凭证" onClick={() => onDelete(credential)}><Trash2 size={15} /></button>
                     </div>
                   ))}
                 </div>
@@ -309,18 +309,22 @@ export default function ExternalAccessPage() {
     }
   }
 
-  const askRevoke = (credential) => setConfirm({
-    title: '撤销 API 凭证',
-    message: `撤销「${credential.name}」后，使用该 Token 的请求会立即失败。`,
+  const askDelete = (credential) => setConfirm({
+    title: '永久删除 API 凭证',
+    message: `确定永久删除「${credential.name}」吗？删除后该 Token 会立即失效，凭证记录无法恢复。`,
+    confirmLabel: '永久删除',
     onConfirm: async () => {
+      setSaving(true)
       try {
-        await externalAccessAPI.revokeCredential(drawer.application.id, credential.id)
+        await externalAccessAPI.deleteCredential(drawer.application.id, credential.id)
         await refreshOpenApplication(drawer.application.id)
-        setToast({ type: 'success', message: '凭证已撤销' })
+        setToast({ type: 'success', message: '凭证已永久删除' })
       } catch (error) {
         setToast({ type: 'error', message: error.message })
+      } finally {
+        setSaving(false)
+        setConfirm(null)
       }
-      setConfirm(null)
     },
   })
 
@@ -365,10 +369,10 @@ export default function ExternalAccessPage() {
         </div>
       </section>
 
-      {drawer && <ApplicationDrawer state={drawer} permissions={permissions} saving={saving} logs={logs} onChange={setDrawer} onSave={saveApplication} onClose={() => setDrawer(null)} onIssue={() => setCredentialDialog(true)} onRevoke={askRevoke} />}
+      {drawer && <ApplicationDrawer state={drawer} permissions={permissions} saving={saving} logs={logs} onChange={setDrawer} onSave={saveApplication} onClose={() => setDrawer(null)} onIssue={() => setCredentialDialog(true)} onDelete={askDelete} />}
       {credentialDialog && <CredentialDialog saving={saving} onSave={issueCredential} onClose={() => setCredentialDialog(false)} />}
       {token && <TokenDialog token={token} onClose={() => setToken('')} onCopied={() => setToast({ type: 'success', message: 'Token 已复制' })} onCopyError={() => setToast({ type: 'error', message: '复制失败，请手动选择 Token' })} />}
-      {confirm && <ConfirmDialog {...confirm} onCancel={() => setConfirm(null)} />}
+      {confirm && <ConfirmDialog {...confirm} saving={saving} onCancel={() => setConfirm(null)} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>
   )

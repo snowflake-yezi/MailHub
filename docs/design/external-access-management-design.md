@@ -134,7 +134,7 @@ Bearer Token
 - 列表显示名称、状态、授权功能、有效凭证数、最近调用和创建时间。
 - 新建抽屉填写名称、说明并按功能组勾选权限。
 - 创建成功后弹出一次性凭证对话框，支持复制；关闭后无法再次查看完整值。
-- 详情抽屉可修改授权和状态、签发新凭证、撤销旧凭证、查看最近调用。
+- 详情抽屉可修改授权和状态、签发新凭证、永久删除凭证、查看最近调用。
 - 权限变更即时生效，不需要重启服务。
 
 停用应用会使其全部凭证立即失效；撤销单个凭证不影响同应用的其他凭证。
@@ -147,9 +147,12 @@ Bearer Token
 - `POST /external-applications`
 - `PUT /external-applications/:id`
 - `POST /external-applications/:id/credentials`
+- `DELETE /external-applications/:id/credentials/:credential_id`
 - `POST /external-applications/:id/credentials/:credential_id/revoke`
 - `GET /external-applications/:id/logs`
 - `GET /api-permissions`
+
+管理端页面使用 `DELETE` 永久删除凭证，并在提交前二次确认。`revoke` 接口仅保留兼容；它只将凭证设为不可用，不包含定时清理逻辑。
 
 ## 9. 安全约束
 

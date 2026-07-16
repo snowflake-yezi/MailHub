@@ -259,6 +259,18 @@ func (s *Store) RevokeAPICredential(applicationID, credentialID uint64) error {
 	return nil
 }
 
+func (s *Store) DeleteAPICredential(applicationID, credentialID uint64) error {
+	result := s.db.Where("id = ? AND application_id = ?", credentialID, applicationID).
+		Delete(&model.APICredential{})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (s *Store) AuthenticateAPICredential(tokenHash string, now time.Time) (*AuthenticatedAPIClient, error) {
 	var credential model.APICredential
 	if err := s.db.Preload("Application").Where("token_hash = ? AND enabled = ?", tokenHash, true).First(&credential).Error; err != nil {

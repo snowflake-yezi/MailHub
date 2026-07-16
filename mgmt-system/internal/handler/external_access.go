@@ -218,6 +218,19 @@ func (h *ExternalAccessHandler) RevokeCredential(c *gin.Context) {
 	success(c, "credential revoked", nil)
 }
 
+func (h *ExternalAccessHandler) DeleteCredential(c *gin.Context) {
+	err := h.store.DeleteAPICredential(parseUint64(c.Param("id")), parseUint64(c.Param("credential_id")))
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		notFound(c, "credential not found")
+		return
+	}
+	if err != nil {
+		serverError(c, ErrCodeInternal, "failed to delete credential")
+		return
+	}
+	success(c, "credential deleted", nil)
+}
+
 func (h *ExternalAccessHandler) ListAccessLogs(c *gin.Context) {
 	page := parsePageValue(c.Query("page"), 1)
 	size := parsePageValue(c.Query("size"), 20)
@@ -236,6 +249,7 @@ func (h *ExternalAccessHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/external-applications/:id", h.GetApplication)
 	r.PUT("/external-applications/:id", h.UpdateApplication)
 	r.POST("/external-applications/:id/credentials", h.CreateCredential)
+	r.DELETE("/external-applications/:id/credentials/:credential_id", h.DeleteCredential)
 	r.POST("/external-applications/:id/credentials/:credential_id/revoke", h.RevokeCredential)
 	r.GET("/external-applications/:id/logs", h.ListAccessLogs)
 }

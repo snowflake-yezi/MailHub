@@ -1,12 +1,49 @@
 package store
 
 import (
+	"errors"
 	"reflect"
 	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"gorm.io/gorm"
 )
+
+func TestDeleteAPICredentialPermanentlyDeletesOwnedCredential(t *testing.T) {
+	s, mock, closeDB := newMockStore(t)
+	defer closeDB()
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `api_credentials` WHERE id = \\? AND application_id = \\?").
+		WithArgs(uint64(12), uint64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := s.DeleteAPICredential(7, 12); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteAPICredentialRejectsMismatchedApplication(t *testing.T) {
+	s, mock, closeDB := newMockStore(t)
+	defer closeDB()
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `api_credentials` WHERE id = \\? AND application_id = \\?").
+		WithArgs(uint64(12), uint64(99)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := s.DeleteAPICredential(99, 12)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("error = %v, want gorm.ErrRecordNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestLegacyAPITokenCandidatesDoNotResurrectDisabledRows(t *testing.T) {
 	s, mock, closeDB := newMockStore(t)
