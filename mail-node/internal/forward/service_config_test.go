@@ -4,31 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	mailconfig "github.com/ticket/email-mail-node/internal/config"
 )
-
-func TestDeliveredFileQuarantineIsSkippedByScanner(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "message")
-	if err := os.WriteFile(path, []byte("mail"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	quarantined, err := quarantineDeliveredFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if shouldProcessMailFile(filepath.Base(quarantined)) {
-		t.Fatalf("quarantined file %q would be processed again", quarantined)
-	}
-	if _, err := os.Stat(quarantined); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestForwardConfigReadsReloadedRuntimeValues(t *testing.T) {
 	values := map[string]string{

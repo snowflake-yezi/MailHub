@@ -238,7 +238,7 @@ func (h *NodeHandler) scanMailboxFiles(email string) []string {
 			continue // 目录不存在视为空
 		}
 		for _, e := range entries {
-			if !e.IsDir() && !strings.HasSuffix(e.Name(), ".forwarded-error") {
+			if !e.IsDir() {
 				files = append(files, filepath.Join(mailboxDir, sub, e.Name()))
 			}
 		}
@@ -735,7 +735,7 @@ func generatePassword() string {
 
 // RegisterInternalRoutes registers all /internal/* routes on the given router group.
 // The caller is responsible for applying auth middleware to the group.
-// The deprecated /smtp/filter endpoint is intentionally not registered.
+// /smtp/filter (deprecated) is registered separately on the engine.
 func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮箱管理
 	rg.POST("/mailboxes", h.CreateMailbox)

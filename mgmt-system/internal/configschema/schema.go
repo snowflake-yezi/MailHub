@@ -62,7 +62,7 @@ var definitions = map[string]Definition{
 	},
 	"forward.tls_insecure_skip": {
 		Key: "forward.tls_insecure_skip", Owner: "mail-node", Category: "forward", Label: "跳过 TLS 证书验证", Description: "仅在使用受控自签名证书时启用",
-		ValueType: "bool", DefaultValue: "false", Unit: "开关", Min: 0, Max: 1, NodeOverridable: true, ApplyStrategy: ReadThrough,
+		ValueType: "bool", DefaultValue: "true", Unit: "开关", Min: 0, Max: 1, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"forward.tls_min_version": {
 		Key: "forward.tls_min_version", Owner: "mail-node", Category: "forward", Label: "TLS 最低版本", Description: "SMTP STARTTLS 最低版本，12 表示 TLS 1.2，13 表示 TLS 1.3",

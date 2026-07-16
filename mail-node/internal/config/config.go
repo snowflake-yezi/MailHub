@@ -79,10 +79,9 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Server:     ServerConfig{Port: 8081, Mode: "release"},
-		Management: ManagementConfig{HeartbeatInterval: 30, FilterSyncInterval: 3600},
-		Filter:     FilterConfig{DefaultAction: "pass", FlagSubjectPrefix: "[疑似]"},
-		DKIM:       DKIMConfig{Selector: "mail"},
+		Server: ServerConfig{Port: 8081, Mode: "release"},
+		Filter: FilterConfig{DefaultAction: "pass", FlagSubjectPrefix: "[疑似]"},
+		DKIM:   DKIMConfig{Selector: "mail"},
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
