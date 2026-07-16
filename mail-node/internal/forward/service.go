@@ -40,7 +40,7 @@ type ForwardConfig struct {
 	// ── 以下为远程动态配置项（0 表示使用默认值） ──
 	BodyPreviewSize   int64         // 正文预览大小（bytes），默认 64KB
 	SMTPDialTimeout   time.Duration // SMTP 拨号超时，默认 15s
-	TLSInsecureSkip   bool          // 跳过 TLS 证书验证，默认 true
+	TLSInsecureSkip   bool          // 跳过 TLS 证书验证，默认 false
 	TLSMinVersion     int           // TLS 最低版本（12=1.2），默认 12
 	TrashRetention    time.Duration // 回收站保留，默认 24h
 	GCInterval        time.Duration // GC 间隔，默认 1h
@@ -276,7 +276,7 @@ func (s *Service) ScanOnce() (processed int, errors int) {
 			sourceAddr := uEnt.Name() + "@" + dEnt.Name()
 
 			for _, fEnt := range files {
-				if fEnt.IsDir() {
+				if fEnt.IsDir() || !shouldProcessMailFile(fEnt.Name()) {
 					continue
 				}
 				filePath := filepath.Join(newDir, fEnt.Name())
@@ -310,14 +310,18 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	headers, bodyPreview, err := readForFiltering(filePath, s.currentMaxEmailSize(), s.currentBodyPreviewSize())
 	if err != nil {
 		// Oversized or unparseable → move to cur/ to avoid re-scan
-		moveToCur(filePath)
+		if moveErr := moveToCur(filePath); moveErr != nil {
+			return fmt.Errorf("parse: %v; move to cur: %w", err, moveErr)
+		}
 		return fmt.Errorf("parse: %w", err)
 	}
 
 	// 2. Anti-loop: detect X-Forwarded-By
 	if strings.Contains(headers["x-forwarded-by"], "mail-node") {
 		// Already forwarded by us (shouldn't hit for new/, but safe)
-		moveToCur(filePath)
+		if err := moveToCur(filePath); err != nil {
+			return fmt.Errorf("loop guard move to cur: %w", err)
+		}
 		log.Printf("[forward] skipped (loop guard): %s → not re-forwarding", sourceAddr)
 		return nil
 	}
@@ -333,7 +337,9 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 
 	// 4. Block → keep original for LLM API, move to cur/ so we don't re-scan
 	if result.Action == filter.ActionBlock {
-		moveToCur(filePath)
+		if err := moveToCur(filePath); err != nil {
+			return fmt.Errorf("blocked message move to cur: %w", err)
+		}
 		log.Printf("[forward] blocked: from=%s to=%s rule=%d reason=%s",
 			msg.From, msg.To, result.RuleID, result.Reason)
 		return nil
@@ -350,7 +356,13 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	}
 
 	// 6. Forward success → move to cur/ (Maildir Seen semantics)
-	moveToCur(filePath)
+	if err := moveToCur(filePath); err != nil {
+		quarantined, quarantineErr := quarantineDeliveredFile(filePath)
+		if quarantineErr != nil {
+			return fmt.Errorf("delivered but commit failed: %v; quarantine failed: %w", err, quarantineErr)
+		}
+		return fmt.Errorf("delivered but commit failed: %v; quarantined at %s", err, quarantined)
+	}
 
 	elapsed := time.Since(start).Milliseconds()
 	log.Printf("[forward] forwarded: %s → %s (action=%s, rule=%d, latency=%dms)",
@@ -361,15 +373,14 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 
 // moveToCur moves a file from new/ to the sibling cur/ directory.
 // On failure, the file stays in new/ and gets retried next scan.
-func moveToCur(filePath string) {
+func moveToCur(filePath string) error {
 	dir := filepath.Dir(filePath)   // .../new
 	base := filepath.Base(filePath) // <timestamp>.<pid>.<host>
 	curDir := filepath.Join(filepath.Dir(dir), "cur")
 
 	// Ensure cur/ exists
 	if err := os.MkdirAll(curDir, 0700); err != nil {
-		log.Printf("[forward] mkdir cur %s: %v", curDir, err)
-		return
+		return fmt.Errorf("mkdir cur %s: %w", curDir, err)
 	}
 
 	// Append Maildir info suffix: ":2,S" = Seen flag
@@ -378,9 +389,23 @@ func moveToCur(filePath string) {
 	if err := os.Rename(filePath, dest); err != nil {
 		// If Rename fails (cross-device), try copy + remove
 		if err := copyAndRemove(filePath, dest); err != nil {
-			log.Printf("[forward] move to cur failed: %v", err)
+			return err
 		}
 	}
+	return nil
+}
+
+func shouldProcessMailFile(name string) bool {
+	return !strings.HasSuffix(name, ".forwarded-error")
+}
+
+func quarantineDeliveredFile(filePath string) (string, error) {
+	destination := filePath + ".forwarded-error"
+	if err := os.Rename(filePath, destination); err != nil {
+		return "", err
+	}
+	log.Printf("[forward] delivered message quarantined after commit failure: %s", destination)
+	return destination, nil
 }
 
 // copyAndRemove is a fallback for os.Rename across filesystem boundaries.
