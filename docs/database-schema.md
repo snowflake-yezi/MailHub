@@ -21,7 +21,6 @@
 | `api_credentials` | 外部应用凭证表 | Token 哈希、前缀、过期和最近使用信息 |
 | `api_permissions` | API 业务权限表 | 管理端可勾选的稳定功能权限 |
 | `api_resources` | 外部 API 资源表 | 代码自动登记的 method/path 与权限映射 |
-| `api_tokens` | 历史外部 API 令牌表 | 升级回滚期兼容的明文 Token 与 scope |
 | `config_change_audits` | 配置变更审计表 | 全局和节点配置修改记录 |
 | `domains` | 邮件域名表 | 可用邮件域名基础信息 |
 | `filter_rules` | 邮件过滤规则表 | 白名单、黑名单、关键词和正则规则 |
@@ -72,24 +71,11 @@ erDiagram
 | `password_changed_at` | DATETIME(3) | NULL | 密码修改时间 |
 | `created_at`, `updated_at` | DATETIME(3) | NULL | 创建时间、更新时间 |
 
-### 3.2 `api_tokens`
-
-该表仅用于旧配置 Token 的升级兼容。新凭证由管理端签发，并只在 `api_credentials` 保存哈希。
-
-| 字段 | 类型 | 约束/默认值 | 中文注释 |
-|------|------|-------------|----------|
-| `id` | BIGINT UNSIGNED | PK, AUTO_INCREMENT | 主键ID |
-| `name` | VARCHAR(128) | NOT NULL | 令牌名称 |
-| `token` | VARCHAR(191) | UNIQUE, NOT NULL | 访问令牌 |
-| `scopes` | VARCHAR(512) | `*` | 权限范围列表，按逗号分隔后精确匹配 |
-| `enabled` | TINYINT(1) | `1` | 是否启用 |
-| `created_at`, `last_used_at` | DATETIME(3) | NULL | 创建时间、最后使用时间 |
-
-### 3.2.1 外部访问管理表
+### 3.2 外部访问管理表
 
 | 表 | 关键字段 | 说明 |
 |---|---|---|
-| `api_applications` | `name`, `description`, `enabled`, `legacy_token_id` | 外部调用方主体；停用后其全部凭证立即失效。 |
+| `api_applications` | `name`, `description`, `enabled` | 外部调用方主体；停用后其全部凭证立即失效。 |
 | `api_credentials` | `application_id`, `name`, `token_prefix`, `token_hash`, `enabled`, `expires_at`, `last_used_at`, `last_used_ip` | Token 只保存 SHA-256 哈希；完整值只在签发时返回一次。 |
 | `api_permissions` | `code`, `group_name`, `name`, `sort_order`, `active` | 管理员勾选的稳定业务能力。 |
 | `api_resources` | `method`, `path`, `permission_code`, `name`, `status` | 服务启动时由统一路由注册器 upsert；删除的代码路由标记为 `retired`。 |

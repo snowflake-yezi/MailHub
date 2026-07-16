@@ -12,13 +12,7 @@ auth:
   shared_secret: ""
   admin_user: ""
   admin_pass: ""
-  tokens:
-    - name: ticket-center
-      token: sk-ticket-CHANGE-ME
-      scopes: ["mailbox:create", "mailbox:read"]
-    - name: llm-system
-      token: sk-llm-CHANGE-ME
-      scopes: ["email:read"]
+  # 外部 API Token 在管理端“外部访问”页面签发，不写入部署配置。
 
 domains:
   - name: example.com

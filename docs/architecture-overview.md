@@ -97,7 +97,6 @@ flowchart TB
 | `api_applications` / `api_credentials` | 应用状态、Token 哈希、前缀、过期和最近使用信息 | 外部调用方与可轮换凭证。完整 Token 不落库。 |
 | `api_permissions` / `api_resources` / `api_application_permissions` | 权限编码、method/path、应用授权 | 业务功能与自动注册接口的权限模型。 |
 | `api_access_logs` | 应用、凭证、权限、状态码、IP、耗时 | 外部 API 调用审计。 |
-| `api_tokens` | `token`, `scopes`, `enabled`, `last_used_at` | 旧配置 Token 的升级兼容表。 |
 | `system_configs` | `config_key`, `config_value`, `value_type`, `category`, `reloadable` | 动态配置源。 |
 | `integrated_mailboxes` | `email_address`, `display_name`, `is_active` | 集成邮箱转发目标池；全局只有一个 active。 |
 | `admin_users` | `username`, `password_hash`, `credential_version`, `status` | 管理后台数据库身份和凭据版本。 |
@@ -304,7 +303,7 @@ stateDiagram-v2
 - `email:body`
 - `email:attachment`
 
-旧 `email:read`、`mailbox:create` 复用禁用能力和 `*` 仅在 `api_tokens` 兼容路径中映射。新应用在管理端“外部访问”页面创建并勾选具体功能。
+旧 `email:read`、`mailbox:create` 和 `*` 仅在一次性升级导入时映射为新权限；运行期只使用 `api_credentials`。新应用在管理端“外部访问”页面创建并勾选具体功能。
 
 后台管理员由 `admin_users` 的 bcrypt hash 校验；`system_state.admin_bootstrap` 独立记录初始化状态。首次安装使用 `mgmt-server admin bootstrap`，忘记密码使用 `admin reset-password`；后台改密或 CLI 恢复会递增 `credential_version`，使旧 Session 立即失效。`config.yaml` 的 `auth.admin_user` / `auth.admin_pass` 仅保留兼容字段，不参与运行期登录。
 

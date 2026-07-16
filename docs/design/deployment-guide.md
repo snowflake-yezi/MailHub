@@ -1,11 +1,12 @@
 # 数据面部署指南：DNS + Postfix + Dovecot + OpenDKIM + mail-node
 
-> 域名：`example.com` | 服务器 IP：`203.0.113.20` | 最后校准：2026-07-11
+> 域名：`example.com` | 服务器 IP：`203.0.113.20` | 最后校准：2026-07-16
 >
 > **本文覆盖新 mail-node 的数据面部署。** 控制面基础配置见 [README](../../README.md) 与 `mgmt-system/config.example.yaml`；不要依赖未纳入版本控制的根目录 `DEPLOY.md`。
 >
 > 管理后台凭据由数据库 bcrypt hash 管理。首次安装先执行 `mgmt-server admin bootstrap`，恢复密码使用 `admin reset-password`；`config.yaml` 的旧管理员字段不参与运行期登录。完整流程见 [O2-P5](ui-second-optimization-p5-admin-bootstrap-design.md)。
 > 旧版本升级可执行一次 `mgmt-server admin bootstrap-from-config --config <path>` 迁移原配置密码；迁移账号会被标记为首次登录必须改密。
+> 控制面会自动创建当前数据库表；新部署不配置 `auth.tokens`。旧版明文 Token 的导入、删表和回滚限制见[控制面部署指南](../control-plane-deployment.md)。
 >
 > 实在不行直接让ai来帮忙部署
 
@@ -463,7 +464,8 @@ Windows 适合运行控制面、前端和单元测试；不建议直接在 Windo
 ```powershell
 cd mgmt-system
 copy config.example.yaml config.yaml
-# 编辑 config.yaml：填写 DSN、admin、shared_secret、api_tokens
+# 编辑 config.yaml：填写 DSN 和 shared_secret
+# 初始化管理员：mgmt-server admin bootstrap --username admin --password-file <path>
 
 go run ./cmd/server
 ```

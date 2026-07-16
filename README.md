@@ -15,7 +15,7 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 - 内部 API：`/api/v1/internal/*`，与 mail-node 通过 `X-Internal-Token` Shared-Secret 互信。
 - 资源管理：邮箱账号、服务器池、域名池、过滤规则、系统配置、集成邮箱。
 - 调度能力：健康检查、心跳接收、生命周期 Watchdog、软删除过期标记、配置/规则热加载通知。
-- 数据存储：MySQL / MariaDB，使用 GORM AutoMigrate，并保留历史 `order_mailboxes` 到新账号模型的迁移路径。
+- 数据存储：MySQL / MariaDB；控制面启动时使用 GORM AutoMigrate 自动创建/更新当前表，并保留历史 `order_mailboxes` 到新账号模型的迁移路径。
 
 ### 数据面 `mail-node`
 
@@ -43,7 +43,7 @@ flowchart TB
         api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 热加载通知"]
         auth["鉴权<br/>Session / Bearer permission / Shared-Secret"]
-        db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token / 配置")]
+        db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token 哈希 / 配置")]
     end
 
     subgraph nodes["mail-node 数据面集群"]
@@ -138,10 +138,19 @@ cp mail-node/config.example.yaml mail-node/config.yaml
 - `database.dsn`：控制面数据库连接。
 - 管理员凭据：通过 `mgmt-server admin bootstrap` 写入数据库 hash；`auth.admin_user` / `auth.admin_pass` 已废弃且不参与运行期登录。
 - `auth.shared_secret`：mgmt-system 与 mail-node 必须一致。
-- `auth.tokens`：外部 API token 与 scope。
+- 外部 API Token：控制面启动后在管理端“外部访问”页面创建；新部署不要配置 `auth.tokens`。
 - `management.api_url`：mail-node 访问 mgmt-system 的地址。
 - `forward.smtp_*`：转发用 SMTP 连接参数；转发目标地址由后台“集成邮箱”管理，并同步到动态配置。
 - `dkim.*`、`postfix.*`、`maildir.*`：数据面落地 Postfix / Dovecot / OpenDKIM 所需路径。
+
+#### 数据库自动建表与升级
+
+`mgmt-server` 会自动创建和更新表结构，但不会创建 DSN 中指定的数据库本身。部署前需先创建数据库，并确保连接账号在该库拥有 `CREATE`、`ALTER`、`INDEX`、`DROP` 及常规读写权限；缺少权限时服务会拒绝启动。
+
+- 新部署：自动创建 `api_applications`、`api_credentials`、`api_permissions`、`api_resources`、`api_application_permissions`、`api_access_logs` 等当前表；不会创建历史明文表 `api_tokens`。
+- 旧版本升级：首次启动新版本时，先自动创建/更新当前表，再把 `api_tokens` 中仍启用的 Token 和已有 `auth.tokens` 导入为哈希凭证。每个凭证验证成功后才删除 `api_tokens`；任一步失败都会阻止服务启动。
+- 升级成功后：确认外部 API 正常且数据库中已无 `api_tokens`，再从实际配置文件删除 `auth.tokens`。之后新增外部凭证只能通过管理端签发。
+- 回滚限制：`api_tokens` 删除后不要直接回滚旧二进制；旧版本可能重新创建明文表并从旧配置恢复 Token。回滚必须同时恢复升级前数据库备份和匹配的配置文件。
 
 首次启动控制面前初始化管理员：
 
@@ -186,7 +195,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | 文档 | 用途 |
 |------|------|
 | [架构概览](docs/architecture-overview.md) | 当前组件职责、数据模型、接口流向、状态机 |
-| [数据库字典](docs/database-schema.md) | 当前 21 张控制面表、字段、关系、状态值和中文注释 |
+| [数据库字典](docs/database-schema.md) | 当前 20 张控制面表、字段、关系、状态值和中文注释 |
 | [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
 | [控制面部署指南](docs/control-plane-deployment.md) | Docker Compose、systemd、管理员 bootstrap、升级和恢复 |
 | [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |
