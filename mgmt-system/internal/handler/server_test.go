@@ -59,6 +59,19 @@ func TestNormalizeMXHost(t *testing.T) {
 	}
 }
 
+func TestValidDomainNameRejectsPathAndConfigInjection(t *testing.T) {
+	for _, value := range []string{"example.com", "mail.example.com", "a-b.example"} {
+		if !validDomainName(value) {
+			t.Fatalf("valid domain %q rejected", value)
+		}
+	}
+	for _, value := range []string{"..", ".example.com", "example..com", "example.com\n", "example.com\nother.com", "bad_domain.com", "-bad.example"} {
+		if validDomainName(value) {
+			t.Fatalf("invalid domain %q accepted", value)
+		}
+	}
+}
+
 func TestNormalizeMXHostRejectsExternalHost(t *testing.T) {
 	if _, err := normalizeMXHost("mail.other.com", "example.com"); err == nil {
 		t.Fatal("expected error")

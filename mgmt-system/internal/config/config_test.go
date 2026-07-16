@@ -23,3 +23,18 @@ func TestLoadAppliesDockerSecretOverrides(t *testing.T) {
 		t.Fatalf("overrides not applied: dsn=%q secret=%q", cfg.Database.DSN, cfg.Auth.SharedSecret)
 	}
 }
+
+func TestValidateNormalizesAndRejectsInjectedDomains(t *testing.T) {
+	base := Config{Database: DatabaseConfig{DSN: "dsn"}, DefaultRetentionDays: 30}
+	base.Domains = []DomainConfig{{Name: "Mail.Example.COM."}}
+	if err := base.Validate(); err != nil || base.Domains[0].Name != "mail.example.com" {
+		t.Fatalf("normalized domain=%q err=%v", base.Domains[0].Name, err)
+	}
+
+	for _, domain := range []string{"example.com\n", "example.com\rother", "../example.com", "bad_domain.com", "example..com"} {
+		cfg := Config{Database: DatabaseConfig{DSN: "dsn"}, DefaultRetentionDays: 30, Domains: []DomainConfig{{Name: domain}}}
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("invalid config domain %q accepted", domain)
+		}
+	}
+}

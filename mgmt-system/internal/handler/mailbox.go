@@ -232,7 +232,7 @@ func parseCSV(r io.Reader) ([]BatchCreateItem, error) {
 
 		item := BatchCreateItem{Prefix: strings.TrimSpace(record[0])}
 		if len(record) >= 2 {
-			item.Password = strings.TrimSpace(record[1])
+			item.Password = record[1]
 		}
 		if len(record) >= 3 && strings.TrimSpace(record[2]) != "" {
 			domainID, err := strconv.ParseUint(strings.TrimSpace(record[2]), 10, 64)
@@ -621,6 +621,10 @@ func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
 	minPwdLen := h.store.GetConfigInt("general.password_min_length", 6)
 	if len(req.Password) < minPwdLen {
 		badRequest(c, ErrCodeParamInvalid, fmt.Sprintf("password must be at least %d characters", minPwdLen))
+		return
+	}
+	if err := service.ValidateMailboxPassword(req.Password); err != nil {
+		badRequest(c, ErrCodeParamInvalid, err.Error())
 		return
 	}
 

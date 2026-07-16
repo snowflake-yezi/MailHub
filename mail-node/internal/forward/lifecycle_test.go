@@ -187,6 +187,28 @@ func TestPullDeletingTasksSendsInternalToken(t *testing.T) {
 	}
 }
 
+func TestMoveToTrashStopsWhenMailboxConfigReloadFails(t *testing.T) {
+	base := t.TempDir()
+	usersFile, vmailboxFile := setupConfigFiles(t)
+	if err := os.WriteFile(usersFile, []byte("alice@example.com:{PLAIN}password::::::\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vmailboxFile, []byte("alice@example.com example.com/alice/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	maildir := filepath.Join(base, "example.com", "alice")
+	mustMkdir(t, filepath.Join(maildir, "new"))
+	mgr := newTestManager(t, base, usersFile, vmailboxFile)
+	mgr.SetCommandRunner(func(string, ...string) error { return errors.New("reload failed") })
+	lifecycle := NewLifecycle(mgr, nil, time.Hour, time.Second, time.Millisecond, time.Hour, nil)
+	if _, err := lifecycle.MoveToTrash("alice@example.com"); err == nil || !strings.Contains(err.Error(), "reload failed") {
+		t.Fatalf("MoveToTrash() error = %v", err)
+	}
+	if _, err := os.Stat(maildir); err != nil {
+		t.Fatalf("maildir moved despite config failure: %v", err)
+	}
+}
+
 func setupConfigFiles(t *testing.T) (string, string) {
 	t.Helper()
 	dir := t.TempDir()

@@ -126,12 +126,10 @@ func (l *Lifecycle) currentTrashRetention() time.Duration {
 //
 // Returns the trash path on success.
 func (l *Lifecycle) MoveToTrash(email string) (string, error) {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid email: %s", email)
+	localPart, domain, err := mailbox.ParseAddress(email)
+	if err != nil {
+		return "", err
 	}
-	localPart := parts[0]
-	domain := parts[1]
 
 	maildirPath := filepath.Join(l.mgr.MaildirBase(), domain, localPart)
 
@@ -139,7 +137,7 @@ func (l *Lifecycle) MoveToTrash(email string) (string, error) {
 	// Do this before checking maildir existence — stale config entries
 	// should be cleaned up even when the maildir is already gone.
 	if err := l.mgr.RemoveFromConfigs(email); err != nil {
-		log.Printf("[lifecycle] remove configs warning: %v", err)
+		return "", fmt.Errorf("remove mailbox configs: %w", err)
 	}
 
 	// Verify the mailbox directory exists.
@@ -183,12 +181,10 @@ var ErrNotInTrash = errors.New("mailbox not in trash or already purged")
 //
 // 无可恢复目录时返回 ErrNotInTrash。
 func (l *Lifecycle) RestoreFromTrash(email, password string) (string, error) {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid email: %s", email)
+	localPart, domain, err := mailbox.ParseAddress(email)
+	if err != nil {
+		return "", err
 	}
-	localPart := parts[0]
-	domain := parts[1]
 
 	maildirPath := filepath.Join(l.mgr.MaildirBase(), domain, localPart)
 

@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +30,7 @@ type DatabaseConfig struct {
 }
 
 type AuthConfig struct {
-	Tokens       []TokenConfig `yaml:"tokens"`
+	Tokens       []TokenConfig `yaml:"tokens"` // Deprecated: one-time upgrade verification only.
 	SharedSecret string        `yaml:"shared_secret"`
 	AdminUser    string        `yaml:"admin_user"`
 	AdminPass    string        `yaml:"admin_pass"`
@@ -94,6 +96,16 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Domains) == 0 {
 		return fmt.Errorf("at least one domain is required")
+	}
+	for i := range c.Domains {
+		if strings.ContainsAny(c.Domains[i].Name, "\r\n\x00") {
+			return fmt.Errorf("domains[%d].name is invalid", i)
+		}
+		name, err := mailboxaddr.NormalizeDomain(c.Domains[i].Name)
+		if err != nil {
+			return fmt.Errorf("domains[%d].name is invalid: %w", i, err)
+		}
+		c.Domains[i].Name = name
 	}
 	if c.DefaultRetentionDays <= 0 {
 		return fmt.Errorf("default_retention_days must be positive")

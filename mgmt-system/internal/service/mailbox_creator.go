@@ -11,9 +11,18 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ticket/email-mgmt-system/internal/config"
+	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
+
+func ValidateMailboxLocalPart(value string) error {
+	return mailboxaddr.ValidateLocalPart(value)
+}
+
+func ValidateMailboxPassword(value string) error {
+	return mailboxaddr.ValidatePassword(value)
+}
 
 type MailboxCreateInput struct {
 	OrderID       string
@@ -57,8 +66,6 @@ func NewMailboxCreator(s *store.Store, cfg *config.Config, sharedSecret string) 
 
 func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult, error) {
 	input.OrderID = strings.TrimSpace(input.OrderID)
-	input.LocalPart = strings.TrimSpace(input.LocalPart)
-	input.Password = strings.TrimSpace(input.Password)
 	if input.OrderID == "" {
 		return nil, fmt.Errorf("order_id is required")
 	}
@@ -77,10 +84,16 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 	if localPart == "" {
 		return nil, fmt.Errorf("local_part is required")
 	}
+	if err := ValidateMailboxLocalPart(localPart); err != nil {
+		return nil, err
+	}
 
 	password := input.Password
 	if password == "" {
 		password = generatePassword()
+	}
+	if err := ValidateMailboxPassword(password); err != nil {
+		return nil, err
 	}
 
 	retentionDays := input.RetentionDays
@@ -92,7 +105,11 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 	if err != nil {
 		return nil, err
 	}
-	emailAddress := localPart + "@" + domain.Name
+	domainName, err := mailboxaddr.NormalizeDomain(domain.Name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid selected domain: %w", err)
+	}
+	emailAddress := localPart + "@" + domainName
 
 	if existing, err := m.store.GetMailboxByEmail(emailAddress); err == nil {
 		return nil, fmt.Errorf("email already exists: %s", existing.EmailAddress)

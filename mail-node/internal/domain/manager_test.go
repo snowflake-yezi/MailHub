@@ -43,6 +43,17 @@ func TestAddDomainProvisionsDKIM(t *testing.T) {
 	assertDNSRecord(t, setup.DNSRecords, "TXT", "mail-s2._domainkey.example.com", "v=DKIM1; k=rsa; p=ABCDEF123")
 }
 
+func TestNormalizeDomainRejectsPathAndConfigInjection(t *testing.T) {
+	for _, value := range []string{"..", ".example.com", "example..com", "example.com\n", "example.com\nother.com", "bad_domain.com", "-bad.example"} {
+		if _, err := normalizeDomain(value); err == nil {
+			t.Fatalf("invalid domain %q accepted", value)
+		}
+	}
+	if got, err := normalizeDomain("Example.COM."); err != nil || got != "example.com" {
+		t.Fatalf("normalized domain = %q, err=%v", got, err)
+	}
+}
+
 func TestAddDomainDKIMTableUpsertIsIdempotent(t *testing.T) {
 	tmp := t.TempDir()
 	restore := stubDKIMCommands(t, "v=DKIM1; k=rsa; p=FIRST")

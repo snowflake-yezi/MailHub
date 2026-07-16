@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type Config struct {
@@ -22,6 +23,7 @@ type Config struct {
 }
 
 type Manager struct {
+	mu  sync.RWMutex
 	cfg Config
 }
 
@@ -76,12 +78,14 @@ func NewManager(cfg Config) *Manager {
 }
 
 func (m *Manager) AddDomain(name string) (*DomainSetup, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	domain, err := normalizeDomain(name)
 	if err != nil {
 		return nil, err
 	}
 
-	domains, err := m.ListDomains()
+	domains, err := m.listDomains()
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +122,12 @@ func (m *Manager) AddDomain(name string) (*DomainSetup, error) {
 }
 
 func (m *Manager) ListDomains() ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.listDomains()
+}
+
+func (m *Manager) listDomains() ([]string, error) {
 	if m.cfg.VirtualDomainsFile != "" {
 		return m.readDomainsFile()
 	}
@@ -129,6 +139,8 @@ func (m *Manager) ListDomains() ([]string, error) {
 }
 
 func (m *Manager) RemoveDomain(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	domain, err := normalizeDomain(name)
 	if err != nil {
 		return err
@@ -139,7 +151,7 @@ func (m *Manager) RemoveDomain(name string) error {
 		return fmt.Errorf("domain has mailbox accounts")
 	}
 
-	domains, err := m.ListDomains()
+	domains, err := m.listDomains()
 	if err != nil {
 		return err
 	}
@@ -301,12 +313,36 @@ func (m *Manager) dnsRecords(domain, selector, publicKey string) []DNSRecord {
 }
 
 func normalizeDomain(name string) (string, error) {
+	if strings.ContainsAny(name, "\r\n\x00") {
+		return "", fmt.Errorf("invalid domain")
+	}
 	d := strings.ToLower(strings.TrimSpace(name))
 	d = strings.TrimSuffix(d, ".")
-	if d == "" || strings.ContainsAny(d, "/\\@ ") || !strings.Contains(d, ".") {
+	if !validDomainName(d) {
 		return "", fmt.Errorf("invalid domain")
 	}
 	return d, nil
+}
+
+func validDomainName(value string) bool {
+	if len(value) == 0 || len(value) > 253 {
+		return false
+	}
+	labels := strings.Split(value, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func parseDomains(raw string) []string {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 	"gorm.io/gorm"
@@ -138,8 +139,8 @@ func (h *ServerHandler) AddServerDomain(c *gin.Context) {
 		badRequest(c, ErrCodeParamMissing, "domain name required")
 		return
 	}
-	name := strings.ToLower(strings.TrimSpace(strings.TrimSuffix(req.Name, ".")))
-	if name == "" || strings.ContainsAny(name, "/\\@ ") || !strings.Contains(name, ".") {
+	name, err := mailboxaddr.NormalizeDomain(req.Name)
+	if err != nil {
 		badRequest(c, ErrCodeParamInvalid, "invalid domain name")
 		return
 	}
@@ -231,6 +232,11 @@ func (h *ServerHandler) AddServerDomain(c *gin.Context) {
 		"server_domain": gin.H{"server_id": srv.ID, "domain_id": domain.ID, "sync_status": syncStatus},
 		"setup":         setup,
 	})
+}
+
+func validDomainName(value string) bool {
+	_, err := mailboxaddr.NormalizeDomain(value)
+	return err == nil
 }
 
 // RemoveServerDomain 从服务器域名池移除域名；有邮箱账号时拒绝。

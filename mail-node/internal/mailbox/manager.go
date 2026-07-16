@@ -7,16 +7,27 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Manager 邮箱账户管理（操作 Dovecot userdb + Postfix virtual）
 type Manager struct {
-	maildirBase  string // Maildir 基础路径
-	usersFile    string // Dovecot passwd-file 路径
-	vmailboxFile string // Postfix virtual_mailbox_maps 路径
-	vmailUID     int    // Maildir 属主 UID（默认 5000，宝塔共存机用 150）
-	vmailGID     int    // Maildir 属组 GID
+	mu            sync.RWMutex
+	commandRunner func(name string, args ...string) error
+	maildirBase   string // Maildir 基础路径
+	usersFile     string // Dovecot passwd-file 路径
+	vmailboxFile  string // Postfix virtual_mailbox_maps 路径
+	vmailUID      int    // Maildir 属主 UID（默认 5000，宝塔共存机用 150）
+	vmailGID      int    // Maildir 属组 GID
+}
+
+func defaultSystemCommand(name string, args ...string) error {
+	output, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 // MaildirBase 返回 Maildir 基础路径
@@ -27,6 +38,8 @@ func (m *Manager) MaildirBase() string {
 // ActiveCount 返回本节点当前活跃邮箱账号数（Dovecot users.conf 中的有效行数）。
 // 供心跳上报为 load，供 mgmt 周期性校准 mail_servers.current_load。
 func (m *Manager) ActiveCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	data, err := os.ReadFile(m.usersFile)
 	if err != nil {
 		return 0
@@ -45,11 +58,12 @@ func (m *Manager) ActiveCount() int {
 // NewManager 创建邮箱管理器
 func NewManager(maildirBase string, vmailUID, vmailGID int) *Manager {
 	return &Manager{
-		maildirBase:  maildirBase,
-		usersFile:    "/etc/dovecot/users.conf",
-		vmailboxFile: "/etc/postfix/vmailbox",
-		vmailUID:     vmailUID,
-		vmailGID:     vmailGID,
+		maildirBase:   maildirBase,
+		usersFile:     "/etc/dovecot/users.conf",
+		vmailboxFile:  "/etc/postfix/vmailbox",
+		vmailUID:      vmailUID,
+		vmailGID:      vmailGID,
+		commandRunner: defaultSystemCommand,
 	}
 }
 
@@ -58,7 +72,18 @@ func NewManagerWithFiles(maildirBase string, vmailUID, vmailGID int, usersFile, 
 	m := NewManager(maildirBase, vmailUID, vmailGID)
 	m.usersFile = usersFile
 	m.vmailboxFile = vmailboxFile
+	m.commandRunner = func(string, ...string) error { return nil }
 	return m
+}
+
+// SetCommandRunner replaces the operating-system command executor.
+func (m *Manager) SetCommandRunner(runner func(name string, args ...string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if runner == nil {
+		runner = defaultSystemCommand
+	}
+	m.commandRunner = runner
 }
 
 // mailboxExists 检查邮箱是否已存在（Dovecot users.conf 里有记录）
@@ -105,23 +130,21 @@ type MailboxInfo struct {
 // 3. 创建 Maildir 目录
 // 4. 重新加载 Postfix
 func (m *Manager) Create(email, password string) (*MailboxInfo, error) {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("invalid email address: %s", email)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	localPart, domain, err := validateMailboxAddress(email)
+	if err != nil {
+		return nil, fmt.Errorf("invalid email address %q: %w", email, err)
 	}
-	localPart := parts[0]
-	domain := parts[1]
+	if err := validateMailboxPassword(password); err != nil {
+		return nil, err
+	}
 
 	info := &MailboxInfo{
 		EmailAddress: email,
 		Domain:       domain,
 		LocalPart:    localPart,
 		MaildirPath:  filepath.Join(m.maildirBase, domain, localPart),
-	}
-
-	// 幂等：邮箱已存在则直接返回，不重复追加 users.conf / vmailbox
-	if m.mailboxExists(email) {
-		return info, nil
 	}
 
 	// 1. 创建 Maildir 目录结构
@@ -135,30 +158,42 @@ func (m *Manager) Create(email, password string) (*MailboxInfo, error) {
 	// 递归设置属主：从 domain 目录起 chown（覆盖 MkdirAll 以 root 建的 domain 层 + 本邮箱子树）。
 	// 之前只 chown mailbox 子树(info.MaildirPath)，漏了 domain 层 → virtual 进程(vmailUID) 进不去
 	// domain 目录 → 投递 Permission denied。干净机(非宝塔)每个新域首个邮箱都会触发。
-	domainDir := filepath.Join(m.maildirBase, domain)
-	filepath.Walk(domainDir, func(p string, _ os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	if runtime.GOOS != "windows" {
+		domainDir := filepath.Join(m.maildirBase, domain)
+		if err := filepath.Walk(domainDir, func(p string, _ os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			return os.Chown(p, m.vmailUID, m.vmailGID)
+		}); err != nil {
+			return nil, fmt.Errorf("chown maildir: %w", err)
 		}
-		return os.Chown(p, m.vmailUID, m.vmailGID)
-	})
+	}
 
 	// 2. 添加到 Dovecot users.conf
 	// 格式: email:{SHA512-CRYPT}password::::::
-	entry := fmt.Sprintf("%s:{PLAIN}%s::::::\n", email, password)
-	if err := m.appendToFile(m.usersFile, entry); err != nil {
-		return nil, fmt.Errorf("add dovecot user: %w", err)
+	if !m.mailboxExists(email) {
+		entry := fmt.Sprintf("%s:{PLAIN}%s::::::\n", email, password)
+		if err := m.appendToFile(m.usersFile, entry); err != nil {
+			return nil, fmt.Errorf("add dovecot user: %w", err)
+		}
 	}
 
 	// 3. 添加到 Postfix virtual mailbox maps
-	vmailEntry := fmt.Sprintf("%s %s/\n", email, filepath.Join(domain, localPart))
-	if err := m.appendToFile(m.vmailboxFile, vmailEntry); err != nil {
-		return nil, fmt.Errorf("add postfix vmailbox: %w", err)
+	if !m.vmailboxExists(email) {
+		vmailEntry := fmt.Sprintf("%s %s/\n", email, filepath.Join(domain, localPart))
+		if err := m.appendToFile(m.vmailboxFile, vmailEntry); err != nil {
+			return nil, fmt.Errorf("add postfix vmailbox: %w", err)
+		}
 	}
 
 	// 4. 重新生成 postfix 哈希表并重载
-	exec.Command("postmap", m.vmailboxFile).Run()
-	exec.Command("postfix", "reload").Run()
+	if err := m.commandRunner("postmap", m.vmailboxFile); err != nil {
+		return nil, err
+	}
+	if err := m.commandRunner("postfix", "reload"); err != nil {
+		return nil, err
+	}
 
 	return info, nil
 }
@@ -167,6 +202,14 @@ func (m *Manager) Create(email, password string) (*MailboxInfo, error) {
 // It reads the file, replaces the matching line, writes atomically (.tmp → rename),
 // and runs doveadm reload.
 func (m *Manager) UpdatePassword(email, newPassword string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, _, err := validateMailboxAddress(email); err != nil {
+		return err
+	}
+	if err := validateMailboxPassword(newPassword); err != nil {
+		return err
+	}
 	if !m.mailboxExists(email) {
 		return fmt.Errorf("mailbox not found: %s", email)
 	}
@@ -196,19 +239,12 @@ func (m *Manager) UpdatePassword(email, newPassword string) error {
 		return fmt.Errorf("mailbox entry not found in users.conf: %s", email)
 	}
 
-	// Atomic write: write to .tmp first, then rename (atomic on same filesystem).
-	tmpPath := m.usersFile + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
-		return fmt.Errorf("write tmp users.conf: %w", err)
-	}
-	if err := os.Rename(tmpPath, m.usersFile); err != nil {
-		return fmt.Errorf("rename users.conf: %w", err)
+	if err := writeFileAtomic(m.usersFile, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		return fmt.Errorf("replace users.conf: %w", err)
 	}
 
 	// Reload Dovecot so the new password takes effect immediately.
-	exec.Command("doveadm", "reload").Run()
-
-	return nil
+	return m.commandRunner("doveadm", "reload")
 }
 
 // Delete 安全删除邮箱（软删除：Rename 到 .trash/ 而非 rm -rf）。
@@ -217,12 +253,12 @@ func (m *Manager) UpdatePassword(email, newPassword string) error {
 // 调用方如需完整的"摘除 Postfix/Dovecot → 等待转发排空 → 软删除"协议，
 // 请使用 forward.Lifecycle.MoveToTrash 代替本方法。
 func (m *Manager) Delete(email string) error {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid email: %s", email)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	localPart, domain, err := ParseAddress(email)
+	if err != nil {
+		return err
 	}
-	localPart := parts[0]
-	domain := parts[1]
 
 	maildirPath := filepath.Join(m.maildirBase, domain, localPart)
 
@@ -232,9 +268,8 @@ func (m *Manager) Delete(email string) error {
 	}
 
 	// Remove from Postfix & Dovecot configs
-	if err := m.RemoveFromConfigs(email); err != nil {
-		// Non-fatal: the critical step is the rename
-		fmt.Printf("manager.Delete: remove configs warning: %v\n", err)
+	if err := m.removeFromConfigsLocked(email); err != nil {
+		return err
 	}
 
 	// Atomically move to .trash/ — does not break Postfix virtual(8)
@@ -258,19 +293,32 @@ func (m *Manager) Delete(email string) error {
 // and Dovecot users.conf, then reloads Postfix. New mail to this address will
 // bounce rather than land in a missing directory.
 func (m *Manager) RemoveFromConfigs(email string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.removeFromConfigsLocked(email)
+}
+
+func (m *Manager) removeFromConfigsLocked(email string) error {
+	if _, _, err := validateMailboxAddress(email); err != nil {
+		return err
+	}
 	// 1. Remove from Postfix virtual mailbox maps
 	if err := m.removeLineFromFile(m.vmailboxFile, email); err != nil {
 		return fmt.Errorf("postfix vmailbox: %w", err)
 	}
-	exec.Command("postmap", m.vmailboxFile).Run()
-	exec.Command("postfix", "reload").Run()
+	if err := m.commandRunner("postmap", m.vmailboxFile); err != nil {
+		return err
+	}
+	if err := m.commandRunner("postfix", "reload"); err != nil {
+		return err
+	}
 
 	// 2. Remove from Dovecot users.conf
 	if err := m.removeLineFromFile(m.usersFile, email); err != nil {
 		return fmt.Errorf("dovecot users: %w", err)
 	}
 
-	return nil
+	return m.commandRunner("doveadm", "reload")
 }
 
 // ReinstallConfigs 把邮箱重新写回 Dovecot users.conf + Postfix vmailbox 并 reload，
@@ -278,12 +326,15 @@ func (m *Manager) RemoveFromConfigs(email string) error {
 // 恢复邮箱的收信/登录能力。前提：配置行已在 MoveToTrash 阶段被 RemoveFromConfigs 摘除。
 // 幂等：若 Dovecot/Postfix 行异常残留则不重复追加。
 func (m *Manager) ReinstallConfigs(email, password string) error {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid email: %s", email)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	localPart, domain, err := validateMailboxAddress(email)
+	if err != nil {
+		return err
 	}
-	localPart := parts[0]
-	domain := parts[1]
+	if err := validateMailboxPassword(password); err != nil {
+		return err
+	}
 
 	// Dovecot users.conf：幂等，异常残留时不重复追加
 	if !m.mailboxExists(email) {
@@ -301,15 +352,24 @@ func (m *Manager) ReinstallConfigs(email, password string) error {
 		}
 	}
 
-	exec.Command("postmap", m.vmailboxFile).Run()
-	exec.Command("postfix", "reload").Run()
-	exec.Command("doveadm", "reload").Run()
+	if err := m.commandRunner("postmap", m.vmailboxFile); err != nil {
+		return err
+	}
+	if err := m.commandRunner("postfix", "reload"); err != nil {
+		return err
+	}
+	if err := m.commandRunner("doveadm", "reload"); err != nil {
+		return err
+	}
 	return nil
 }
 
 // ChownMaildirTree recursively sets ownership on the domain directory that contains
 // the mailbox, matching Create's ownership repair for domain + mailbox layers.
 func (m *Manager) ChownMaildirTree(domain string) error {
+	if !validDNSName(strings.ToLower(domain)) {
+		return fmt.Errorf("invalid domain")
+	}
 	if runtime.GOOS == "windows" {
 		return nil
 	}
@@ -331,12 +391,37 @@ func (m *Manager) removeLineFromFile(path, substr string) error {
 
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.Contains(line, substr) {
+		if !configLineMatchesEmail(line, substr) {
 			kept = append(kept, line)
 		}
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(kept, "\n")), 0644)
+	return writeFileAtomic(path, []byte(strings.Join(kept, "\n")), 0644)
+}
+
+func configLineMatchesEmail(line, email string) bool {
+	return strings.HasPrefix(line, email+":") || strings.HasPrefix(line, email+" ")
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mailhub-config-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // appendToFile 追加一行到文件
