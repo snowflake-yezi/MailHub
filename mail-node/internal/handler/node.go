@@ -226,11 +226,11 @@ func (h *NodeHandler) RemoveDomain(c *gin.Context) {
 // scanMailboxFiles 扫描邮箱 Maildir 的 new/ 和 cur/，返回全部邮件文件路径。
 // Maildir 规范：新邮件落 new/，已读移到 cur/；只扫 cur/ 会漏掉所有新到达邮件。
 func (h *NodeHandler) scanMailboxFiles(email string) []string {
-	parts := strings.SplitN(email, "@", 2)
-	if len(parts) != 2 {
+	localPart, domain, err := mailbox.ParseAddress(email)
+	if err != nil {
 		return nil
 	}
-	mailboxDir := filepath.Join(h.mailboxMgr.MaildirBase(), parts[1], parts[0])
+	mailboxDir := filepath.Join(h.mailboxMgr.MaildirBase(), domain, localPart)
 	var files []string
 	for _, sub := range []string{"new", "cur"} {
 		entries, err := os.ReadDir(filepath.Join(mailboxDir, sub))
@@ -238,7 +238,7 @@ func (h *NodeHandler) scanMailboxFiles(email string) []string {
 			continue // 目录不存在视为空
 		}
 		for _, e := range entries {
-			if !e.IsDir() {
+			if !e.IsDir() && !strings.HasSuffix(e.Name(), ".forwarded-error") {
 				files = append(files, filepath.Join(mailboxDir, sub, e.Name()))
 			}
 		}
@@ -735,7 +735,7 @@ func generatePassword() string {
 
 // RegisterInternalRoutes registers all /internal/* routes on the given router group.
 // The caller is responsible for applying auth middleware to the group.
-// /smtp/filter (deprecated) is registered separately on the engine.
+// The deprecated /smtp/filter endpoint is intentionally not registered.
 func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮箱管理
 	rg.POST("/mailboxes", h.CreateMailbox)

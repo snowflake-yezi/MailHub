@@ -67,9 +67,36 @@ type Engine struct {
 
 // New 创建过滤引擎
 func New(defaultAction Action, flagPrefix string) *Engine {
+	if !validAction(defaultAction) {
+		defaultAction = ActionPass
+	}
 	return &Engine{
 		defaultAction: defaultAction,
 		flagPrefix:    flagPrefix,
+	}
+}
+
+func validAction(action Action) bool {
+	return action == ActionPass || action == ActionBlock || action == ActionFlag
+}
+
+// ValidateConfig validates filter values before RemoteConfig commits a revision.
+func ValidateConfig(_, next map[string]string) error {
+	if value, ok := next["filter.default_action"]; ok && !validAction(Action(value)) {
+		return fmt.Errorf("filter.default_action must be pass, block or flag")
+	}
+	return nil
+}
+
+// UpdateConfig applies an already validated remote configuration revision.
+func (e *Engine) UpdateConfig(values map[string]string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if value := values["filter.default_action"]; value != "" {
+		e.defaultAction = Action(value)
+	}
+	if value := values["filter.flag_subject_prefix"]; value != "" {
+		e.flagPrefix = value
 	}
 }
 
@@ -130,7 +157,15 @@ func (e *Engine) Filter(msg *EmailMessage) Result {
 
 // GetFlagPrefix 获取疑似邮件的标题前缀
 func (e *Engine) GetFlagPrefix() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return e.flagPrefix
+}
+
+func (e *Engine) ruleCount() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.rules)
 }
 
 // SyncFromManager 从管理系统拉取最新规则
@@ -167,6 +202,9 @@ func (e *Engine) SyncFromManager(managerURL, sharedSecret string) error {
 
 // StartAutoSync 启动定时同步
 func (e *Engine) StartAutoSync(managerURL string, intervalSec int, sharedSecret string) {
+	if intervalSec <= 0 {
+		intervalSec = 3600
+	}
 	go func() {
 		ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 		defer ticker.Stop()
@@ -175,7 +213,7 @@ func (e *Engine) StartAutoSync(managerURL string, intervalSec int, sharedSecret 
 		if err := e.SyncFromManager(managerURL, sharedSecret); err != nil {
 			fmt.Printf("filter sync failed: %v\n", err)
 		} else {
-			fmt.Printf("filter synced: %d rules loaded\n", len(e.rules))
+			fmt.Printf("filter synced: %d rules loaded\n", e.ruleCount())
 		}
 
 		for range ticker.C {

@@ -56,6 +56,7 @@ func main() {
 	remoteCfg.SetBootIdentity(bootID, startedAt)
 	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
+	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -67,6 +68,9 @@ func main() {
 		filter.Action(remoteCfg.GetString("filter.default_action", cfg.Filter.DefaultAction)),
 		remoteCfg.GetString("filter.flag_subject_prefix", cfg.Filter.FlagSubjectPrefix),
 	)
+	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
+		engine.UpdateConfig(remoteCfg.Configs())
+	})
 
 	// 启动定时同步规则
 	engine.StartAutoSync(
@@ -99,7 +103,7 @@ func main() {
 		MaxEmailSize:    remoteCfg.GetInt64("forward.max_email_size", cfg.Forward.MaxEmailSize),
 		BodyPreviewSize: int64(remoteCfg.GetInt("forward.body_preview_size", 65536)),
 		SMTPDialTimeout: remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", 15*time.Second),
-		TLSInsecureSkip: remoteCfg.GetBool("forward.tls_insecure_skip", true),
+		TLSInsecureSkip: remoteCfg.GetBool("forward.tls_insecure_skip", false),
 		TLSMinVersion:   remoteCfg.GetInt("forward.tls_min_version", 12),
 	}
 	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
@@ -177,15 +181,15 @@ func main() {
 	}
 
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<20)
+		c.Next()
+	})
 
 	// 注册内部路由（Shared-Secret 鉴权）
 	internalGroup := r.Group("/internal")
 	internalGroup.Use(middleware.InternalAuthRequired(cfg.SharedSecret))
 	nodeH.RegisterInternalRoutes(internalGroup)
-
-	// Deprecated: /smtp/filter is 方案 A (Postfix content_filter)。
-	// 当前架构已决策方案 B（Maildir 异步扫描 → forward.Service）。
-	r.POST("/smtp/filter", nodeH.SMTPFilter)
 
 	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
 	go startHeartbeat(cfg, mailboxMgr, remoteCfg)
@@ -201,7 +205,14 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Printf("Starting mail node '%s' on %s", cfg.Node.Name, addr)
-	if err := r.Run(addr); err != nil {
+	server := &http.Server{
+		Addr: addr, Handler: r,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start: %v", err)
 	}
 }

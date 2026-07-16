@@ -42,6 +42,16 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 	}
 }
 
+func TestTLSVerificationIsSecureByDefault(t *testing.T) {
+	definition, ok := Get("forward.tls_insecure_skip")
+	if !ok {
+		t.Fatal("TLS verification definition missing")
+	}
+	if definition.DefaultValue != "false" {
+		t.Fatalf("TLS insecure default = %q, want false", definition.DefaultValue)
+	}
+}
+
 func TestNodeOverridesAreStableAndComplete(t *testing.T) {
 	definitions := NodeOverrides()
 	expectedKeys := make([]string, 0, len(definitionOrder))
