@@ -127,7 +127,7 @@ mgmt-server admin reset-password --username admin --password-file <path>
 | mgmt | `/api/v1/internal/*` | `InternalAuthRequired` |
 | mail-node | `/internal/*` | `InternalAuthRequired` |
 
-`/smtp/filter`（deprecated）不加鉴权，保留向后兼容。
+`/smtp/filter`（deprecated）已从节点公开路由移除；过滤主链路使用 Maildir 异步扫描。
 
 ### 4.4 出站调用
 

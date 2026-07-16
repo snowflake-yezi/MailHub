@@ -27,6 +27,8 @@ import (
 	"github.com/ticket/email-mail-node/internal/middleware"
 )
 
+const maxNodeRequestBodyBytes int64 = 16 << 20
+
 func main() {
 	// 加载配置
 	configPath := os.Getenv("CONFIG_PATH")
@@ -99,7 +101,7 @@ func main() {
 		MaxEmailSize:    remoteCfg.GetInt64("forward.max_email_size", cfg.Forward.MaxEmailSize),
 		BodyPreviewSize: int64(remoteCfg.GetInt("forward.body_preview_size", 65536)),
 		SMTPDialTimeout: remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", 15*time.Second),
-		TLSInsecureSkip: remoteCfg.GetBool("forward.tls_insecure_skip", true),
+		TLSInsecureSkip: tlsInsecureSkip(remoteCfg),
 		TLSMinVersion:   remoteCfg.GetInt("forward.tls_min_version", 12),
 	}
 	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
@@ -177,15 +179,8 @@ func main() {
 	}
 
 	r := gin.Default()
-
-	// 注册内部路由（Shared-Secret 鉴权）
-	internalGroup := r.Group("/internal")
-	internalGroup.Use(middleware.InternalAuthRequired(cfg.SharedSecret))
-	nodeH.RegisterInternalRoutes(internalGroup)
-
-	// Deprecated: /smtp/filter is 方案 A (Postfix content_filter)。
-	// 当前架构已决策方案 B（Maildir 异步扫描 → forward.Service）。
-	r.POST("/smtp/filter", nodeH.SMTPFilter)
+	r.Use(requestBodyLimit(maxNodeRequestBodyBytes))
+	registerNodeRoutes(r, nodeH, cfg.SharedSecret)
 
 	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
 	go startHeartbeat(cfg, mailboxMgr, remoteCfg)
@@ -204,6 +199,23 @@ func main() {
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start: %v", err)
 	}
+}
+
+func tlsInsecureSkip(remoteCfg *config.RemoteConfig) bool {
+	return remoteCfg.GetBool("forward.tls_insecure_skip", false)
+}
+
+func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
+func registerNodeRoutes(r *gin.Engine, nodeH *handler.NodeHandler, sharedSecret string) {
+	internalGroup := r.Group("/internal")
+	internalGroup.Use(middleware.InternalAuthRequired(sharedSecret))
+	nodeH.RegisterInternalRoutes(internalGroup)
 }
 
 func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) error {

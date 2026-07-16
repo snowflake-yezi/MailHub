@@ -735,7 +735,7 @@ func generatePassword() string {
 
 // RegisterInternalRoutes registers all /internal/* routes on the given router group.
 // The caller is responsible for applying auth middleware to the group.
-// /smtp/filter (deprecated) is registered separately on the engine.
+// The deprecated /smtp/filter endpoint is intentionally not registered.
 func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	// 邮箱管理
 	rg.POST("/mailboxes", h.CreateMailbox)

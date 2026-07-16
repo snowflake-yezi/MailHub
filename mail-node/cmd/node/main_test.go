@@ -3,13 +3,67 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/forward"
+	"github.com/ticket/email-mail-node/internal/handler"
 )
+
+func TestTLSVerificationIsEnabledByDefault(t *testing.T) {
+	if tlsInsecureSkip(config.NewRemoteConfig("", "")) {
+		t.Fatal("empty node config must verify SMTP TLS certificates")
+	}
+}
+
+func TestRequestBodyLimitRejectsOversizedBody(t *testing.T) {
+	if maxNodeRequestBodyBytes != 16<<20 {
+		t.Fatalf("node request limit = %d, want 16 MiB", maxNodeRequestBodyBytes)
+	}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(requestBodyLimit(4))
+	r.POST("/body", func(c *gin.Context) {
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/body", strings.NewReader("12345")))
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized request status = %d, want %d", w.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestNodeRoutesDoNotExposeDeprecatedSMTPFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	nodeH := handler.NewNodeHandler(nil, nil, nil, nil, 0, "", "", "", nil)
+	registerNodeRoutes(r, nodeH, "secret")
+
+	foundInternalRoute := false
+	for _, route := range r.Routes() {
+		if route.Path == "/smtp/filter" {
+			t.Fatalf("deprecated public route is still registered: %#v", route)
+		}
+		if route.Path == "/internal/health" {
+			foundInternalRoute = true
+		}
+	}
+	if !foundInternalRoute {
+		t.Fatal("internal routes were not registered")
+	}
+}
 
 func TestClampHeartbeat(t *testing.T) {
 	tests := []struct {

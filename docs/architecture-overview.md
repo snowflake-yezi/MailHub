@@ -202,7 +202,7 @@ GET  /sync/deleting?server_id={id}
 
 ### 3.2 对内 API
 
-以下接口挂在 `/internal`，必须带 `X-Internal-Token`。`/smtp/filter` 仍保留为兼容入口，但当前主链路使用 Maildir 异步扫描。
+以下接口挂在 `/internal`，必须带 `X-Internal-Token`。节点对所有请求体设置 16 MiB 上限；废弃的公开 `/smtp/filter` 已移除，过滤主链路使用 Maildir 异步扫描。
 
 ```text
 POST   /mailboxes

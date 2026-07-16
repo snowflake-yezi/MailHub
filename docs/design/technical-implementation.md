@@ -282,7 +282,7 @@ stateDiagram-v2
 | 历史表述 | 当前实现 |
 |----------|----------|
 | Go template + htmx 后台 | React + Vite SPA |
-| Postfix `content_filter` 作为主过滤路径 | Maildir 异步扫描为主路径，`/smtp/filter` 仅保留兼容 |
+| Postfix `content_filter` 作为主过滤路径 | Maildir 异步扫描为主路径，废弃的 `/smtp/filter` 已移除 |
 | `order_mailboxes` 为主表 | `mailbox_accounts` + `order_mailbox_mappings` 为主，`order_mailboxes` 只做历史兼容 |
 | 早期 T8/T9/T10 状态 | MIME 解析、生命周期、规则热加载和 message_id 兼容均已落地 |
 | 附件只返回元数据 | 已支持附件二进制下载 |

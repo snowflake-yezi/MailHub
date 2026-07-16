@@ -210,7 +210,7 @@ func defaultConfigs() []seedConfig {
 		{Key: "forward.max_email_size", Value: "10485760", Type: "int", Category: "forward", Label: "最大邮件大小（字节）", Desc: "单封邮件最大处理字节数，默认 10MB", Default: "10485760", Reloadable: true},
 		{Key: "forward.body_preview_size", Value: "65536", Type: "int", Category: "forward", Label: "正文预览大小（字节）", Desc: "过滤时读取的正文预览上限，默认 64KB", Default: "65536", Reloadable: true},
 		{Key: "forward.smtp_dial_timeout", Value: "15", Type: "int", Category: "forward", Label: "SMTP 拨号超时（秒）", Desc: "连接 SMTP 服务器的超时时间", Default: "15", Reloadable: false},
-		{Key: "forward.tls_insecure_skip", Value: "true", Type: "bool", Category: "forward", Label: "跳过 TLS 证书验证", Desc: "true=跳过 SMTP TLS 证书验证（仅内网环境）", Default: "true", Reloadable: false},
+		{Key: "forward.tls_insecure_skip", Value: "false", Type: "bool", Category: "forward", Label: "跳过 TLS 证书验证", Desc: "true=跳过 SMTP TLS 证书验证（仅受控自签名环境）", Default: "false", Reloadable: false},
 		{Key: "forward.tls_min_version", Value: "12", Type: "int", Category: "forward", Label: "TLS 最低版本", Desc: "SMTP STARTTLS 最低 TLS 版本（12=1.2, 13=1.3）", Default: "12", Reloadable: false},
 		{Key: "forward.target_address", Value: "union@asadad.bond", Type: "string", Category: "forward", Label: "转发目标邮箱", Desc: "非垃圾邮件汇总转发的集成邮箱地址（当前生效项，由集成邮箱管理页联动写入）", Default: "union@asadad.bond", Reloadable: true},
 

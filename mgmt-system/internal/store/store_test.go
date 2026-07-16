@@ -81,6 +81,18 @@ func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigVerifiesSMTPTLSCertificates(t *testing.T) {
+	for _, cfg := range defaultConfigs() {
+		if cfg.Key == "forward.tls_insecure_skip" {
+			if cfg.Value != "false" || cfg.Default != "false" {
+				t.Fatalf("TLS insecure seed = value %q default %q, want false/false", cfg.Value, cfg.Default)
+			}
+			return
+		}
+	}
+	t.Fatal("forward.tls_insecure_skip seed missing")
+}
+
 func TestBumpAllServerDesiredRevisions(t *testing.T) {
 	st, mock, cleanup := newMockStore(t)
 	defer cleanup()
