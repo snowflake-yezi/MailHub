@@ -2,7 +2,7 @@
 
 > 日期：2026-07-16
 > 范围：`mgmt-system`、`mail-node`、管理端调用契约、控制面与数据面通信
-> 状态：已完成代码修复与本地回归
+> 状态：SEC-1、SEC-2 已完成并发布；后续风险项暂停，等待逐项验收
 
 ## 1. 修复目标
 
@@ -21,14 +21,14 @@
 |---|---|---|---|---|---|
 | SEC-1 | P0 | 迁移 Token 撤销后回退旧明文 Token | 将有效旧 Token 一次性导入并验证，随后删除 `api_tokens`；运行期只查询哈希凭证 | 禁用应用、撤销凭证、凭证过期均返回 401；数据库不存在明文 Token 表 | 已完成 |
 | SEC-2 | P0 | 邮箱、密码、域名可注入路径/配置行 | 控制面和节点双层校验；限制 local-part、DNS 域名和控制字符；所有 Maildir 入口复用同一解析器 | `..`、路径分隔符、CR/LF、冒号密码均被拒绝 | 已完成 |
-| SEC-3 | P1 | SMTP TLS 默认跳过证书校验 | 新安装默认 `false`，节点 fallback 同步调整 | 默认配置构造出的 TLS 配置启用证书校验 | 已完成 |
-| SEC-4 | P1 | 废弃 `/smtp/filter` 公开且无限读取 | 从公开路由移除；全局请求体限制为 16 MiB | 节点启动路由不再暴露该路径 | 已完成 |
-| REL-1 | P0 | SMTP 成功后 move 失败导致重复转发 | `moveToCur` 返回错误；成功投递但提交失败时改名为隔离文件并跳过后续扫描 | move 失败不会把邮件留作下一轮正常投递；错误可观察 | 已完成 |
-| REL-2 | P0 | postmap/postfix/doveadm 失败被吞掉 | 命令包装为可注入执行器并传播 stderr/exit error | 任一命令失败时节点返回失败，删除不会继续移动 Maildir | 已完成 |
-| REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成 |
-| CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 已完成 |
-| CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 已完成 |
-| OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 已完成 |
+| SEC-3 | P1 | SMTP TLS 默认跳过证书校验 | 新安装默认 `false`，节点 fallback 同步调整 | 默认配置构造出的 TLS 配置启用证书校验 | 待验收（已暂停） |
+| SEC-4 | P1 | 废弃 `/smtp/filter` 公开且无限读取 | 从公开路由移除；全局请求体限制为 16 MiB | 节点启动路由不再暴露该路径 | 待验收（已暂停） |
+| REL-1 | P0 | SMTP 成功后 move 失败导致重复转发 | `moveToCur` 返回错误；成功投递但提交失败时改名为隔离文件并跳过后续扫描 | move 失败不会把邮件留作下一轮正常投递；错误可观察 | 待验收（已暂停） |
+| REL-2 | P0 | postmap/postfix/doveadm 失败被吞掉 | 命令包装为可注入执行器并传播 stderr/exit error | 任一命令失败时节点返回失败，删除不会继续移动 Maildir | 已完成（SEC-2 配套） |
+| REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成（SEC-2 配套） |
+| CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 待验收（已暂停） |
+| CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 待验收（已暂停） |
+| OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 待验收（已暂停） |
 
 ## 3. 兼容性决策
 
@@ -48,22 +48,21 @@
 
 ### 3.3 转发一致性
 
-SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at-least-once 语义。此次修复消除“已经明确收到 SMTP 成功，但 move 失败后每轮重复发送”的确定性重复：邮件会进入带 `.forwarded-error` 后缀的隔离状态，记录告警并等待人工核对。SMTP 返回结果不确定的网络故障仍可能产生一次重复，这是协议层残余风险。
+SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at-least-once 语义。REL-1 的隔离方案尚未进入本轮发布，当前仍保留“SMTP 已成功但本地 move 失败后可能重复转发”的已知风险，等待后续单独验收。
 
 ## 4. 验证矩阵
 
-- 定向单元测试：Token 回退、邮箱/密码/域名校验、命令失败传播、转发隔离、filter apply、ticker 默认值。
+- 定向单元测试：Token 退役、邮箱/密码/域名校验、命令失败传播与配置并发写入。
 - 后端全量：两个模块分别运行 `go test ./...` 与 `go vet ./...`。
-- 竞态：环境具备 CGO 和 C 编译器时运行 `go test -race ./...`；当前 Windows 环境缺少 `gcc`，需在 Linux CI 补跑。
+- 竞态：两个模块分别运行 `go test -race ./...`。
 - 前端：运行生产构建，确认 API 契约未破坏。
 - 工作区：不覆盖审查前已有的未跟踪文件。
 
 ## 5. 发布注意事项
 
-1. 已有数据库中的 `forward.tls_insecure_skip=true` 不自动覆盖，升级后应在配置页显式改为 `false`，确认 SMTP 证书链正常后发布。
-2. 首次升级启动后确认 `api_tokens` 已删除、外部调用正常，再从配置文件移除 `auth.tokens` 明文项。
-3. 上线后监控 `[forward] delivered but commit failed` 日志和 `.forwarded-error` 文件。
-4. Linux 发布流水线必须补跑 race test，并在真实 Postfix/Dovecot 测试节点验证命令失败传播。
+1. 首次升级启动后确认 `api_tokens` 已删除、外部调用正常，再从配置文件移除 `auth.tokens` 明文项。
+2. SEC-2 发布后确认两个节点健康、配置 revision 一致，并验证非法邮箱、密码和域名被控制面与节点同时拒绝。
+3. SEC-3 及后续项目不得随 SEC-1/SEC-2 发布；开始下一项前先单独验收并确认范围。
 
 ## 6. 本地验证记录
 
@@ -74,6 +73,7 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - `mgmt-system/web`: Vite 生产构建通过，产物写入临时目录。
 - Token 退役：覆盖无旧表回退、禁用旧记录不复活、重复导入幂等、验证失败不删表、验证成功后删表，以及退役后配置不得签发新 Token。
 - SEC-2 注入矩阵：控制面和节点均覆盖路径分隔符、`..`、CR/LF/NUL、冒号密码、DNS label 与长度边界；实际 Mailbox Manager 入口同步验证。
-- 其他定向场景：命令失败传播、并发配置写、转发隔离、filter 热更新、配置默认值均有自动化覆盖。
-- 真实 MySQL/MariaDB 升级环境仍需验证旧数据导入、`api_tokens` 物理删除及现有外部调用连续性。
-- `go test -race ./...`：当前 Windows 环境缺少 `gcc`，未完成；保留为 Linux CI 发布门禁。
+- SEC-2 配套场景：命令失败传播和 mailbox/domain 配置并发写入均有自动化覆盖。
+- 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
+- 两个模块的 `go test -race -count=1 ./...` 已通过。
+- SEC-3、SEC-4、REL-1、CFG-1、CFG-2 和 OPS-1 的实现已撤回，暂停等待后续指令。
