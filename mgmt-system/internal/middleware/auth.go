@@ -41,7 +41,8 @@ func AuthRequired(store *store.Store) gin.HandlerFunc {
 		}
 
 		startedAt := time.Now()
-		client, err := store.AuthenticateAPICredential(service.HashAPIToken(tokenStr), startedAt)
+		tokenHash := service.HashAPIToken(tokenStr)
+		client, err := store.AuthenticateAPICredential(tokenHash, startedAt)
 		if err == nil {
 			permissions := make(map[string]struct{}, len(client.Permissions))
 			for _, permission := range client.Permissions {
@@ -67,7 +68,17 @@ func AuthRequired(store *store.Store) gin.HandlerFunc {
 			return
 		}
 
-		// Compatibility fallback for legacy plaintext api_tokens.
+		// A token that has entered api_credentials must use that record as its
+		// only source of truth. Falling back here would bypass revoke/disable/expiry.
+		normalized, lookupErr := store.HasAPICredentialHash(tokenHash)
+		if !allowLegacyFallback(normalized, lookupErr) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code": 1004, "message": "invalid or disabled token",
+			})
+			return
+		}
+
+		// Compatibility fallback for tokens that only exist in legacy api_tokens.
 		token, legacyErr := store.FindToken(tokenStr)
 		if legacyErr != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -82,6 +93,10 @@ func AuthRequired(store *store.Store) gin.HandlerFunc {
 		c.Set("api_token_name", token.Name)
 		c.Next()
 	}
+}
+
+func allowLegacyFallback(normalizedCredentialExists bool, lookupErr error) bool {
+	return lookupErr == nil && !normalizedCredentialExists
 }
 
 func fmtString(value interface{}) string {

@@ -257,6 +257,14 @@ func (s *Store) AuthenticateAPICredential(tokenHash string, now time.Time) (*Aut
 	return &AuthenticatedAPIClient{Application: *credential.Application, Credential: credential, Permissions: permissions}, nil
 }
 
+// HasAPICredentialHash reports whether a token has entered the normalized
+// credential system, regardless of its current enabled or expiry state.
+func (s *Store) HasAPICredentialHash(tokenHash string) (bool, error) {
+	var count int64
+	err := s.db.Model(&model.APICredential{}).Where("token_hash = ?", tokenHash).Count(&count).Error
+	return count > 0, err
+}
+
 func (s *Store) UpdateAPICredentialUsage(id uint64, usedAt time.Time, clientIP string) {
 	s.db.Model(&model.APICredential{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"last_used_at": usedAt, "last_used_ip": clientIP,

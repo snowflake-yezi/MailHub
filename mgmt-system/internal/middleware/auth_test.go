@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,6 +9,18 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/model"
 )
+
+func TestAllowLegacyFallback(t *testing.T) {
+	if allowLegacyFallback(true, nil) {
+		t.Fatal("normalized credential must never fall back to legacy token")
+	}
+	if allowLegacyFallback(false, errors.New("database unavailable")) {
+		t.Fatal("credential lookup errors must fail closed")
+	}
+	if !allowLegacyFallback(false, nil) {
+		t.Fatal("legacy-only token should remain compatible")
+	}
+}
 
 func TestHasScope(t *testing.T) {
 	tests := []struct {

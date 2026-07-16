@@ -2,8 +2,25 @@ package store
 
 import (
 	"reflect"
+	"regexp"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
+
+func TestHasAPICredentialHashIncludesDisabledRows(t *testing.T) {
+	s, mock, closeDB := newMockStore(t)
+	defer closeDB()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `api_credentials` WHERE token_hash = ?")).
+		WithArgs("hash").WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(1))
+	exists, err := s.HasAPICredentialHash("hash")
+	if err != nil || !exists {
+		t.Fatalf("exists=%v err=%v, want true", exists, err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestLegacyScopesToPermissions(t *testing.T) {
 	tests := []struct {
