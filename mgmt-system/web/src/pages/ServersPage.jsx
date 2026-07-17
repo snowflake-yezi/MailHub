@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   CircleOff,
   Database,
+  Globe2,
   Settings2,
   Pencil,
   Plus,
@@ -461,6 +462,7 @@ export default function ServersPage() {
                     </td>
                     <td>
                       <div className="row-actions">
+                        <button className="icon-button compact" type="button" title={t('servers.list.domainPool')} onClick={() => navigate(`/servers/${server.id}/domains`)}><Globe2 size={15} /></button>
                         <button className="icon-button compact" type="button" title={t('servers.list.config')} onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
                         <button className="icon-button compact" type="button" title={t('common:actions.edit')} onClick={() => openEdit(server)}>
                           <Pencil size={15} />

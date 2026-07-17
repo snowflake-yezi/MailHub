@@ -206,6 +206,7 @@ type ServerDomain struct {
 	SyncedAt      *time.Time `json:"synced_at"`
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	MailboxCount  int64      `gorm:"-" json:"mailbox_count"`
 
 	Server MailServer `gorm:"foreignKey:ServerID" json:"server,omitempty"`
 	Domain Domain     `gorm:"foreignKey:DomainID" json:"domain,omitempty"`

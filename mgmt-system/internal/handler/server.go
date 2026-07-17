@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -112,10 +113,22 @@ func (h *ServerHandler) ListServerDomains(c *gin.Context) {
 		badRequest(c, ErrCodeParamMissing, "invalid server id")
 		return
 	}
+	if _, err := h.store.GetServer(id); err != nil {
+		notFound(c, "server not found")
+		return
+	}
 	list, err := h.store.ListDomainsByServer(id)
 	if err != nil {
 		serverError(c, ErrCodeInternal, "failed to list server domains")
 		return
+	}
+	for i := range list {
+		count, countErr := h.store.CountMailboxesOnServerDomain(id, list[i].DomainID)
+		if countErr != nil {
+			serverError(c, ErrCodeInternal, "failed to count server domain mailboxes")
+			return
+		}
+		list[i].MailboxCount = count
 	}
 	success(c, "success", list)
 }
@@ -251,6 +264,15 @@ func (h *ServerHandler) RemoveServerDomain(c *gin.Context) {
 	srv, err := h.store.GetServer(serverID)
 	if err != nil {
 		notFound(c, "server not found")
+		return
+	}
+	_, err = h.store.GetActiveServerDomain(serverID, domainID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			notFound(c, "active server-domain binding not found")
+			return
+		}
+		serverError(c, ErrCodeInternal, "failed to load server-domain binding")
 		return
 	}
 	domain, err := h.store.GetDomainByID(domainID)

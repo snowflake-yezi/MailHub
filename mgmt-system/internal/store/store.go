@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -250,6 +251,17 @@ func (s *Store) GetServerDomain(serverID, domainID uint64) (*model.ServerDomain,
 	return &sd, nil
 }
 
+// GetActiveServerDomain 取指定服务器与域名之间当前有效的绑定。
+func (s *Store) GetActiveServerDomain(serverID, domainID uint64) (*model.ServerDomain, error) {
+	var sd model.ServerDomain
+	err := s.db.Where("server_id = ? AND domain_id = ? AND status = ?", serverID, domainID, "active").
+		First(&sd).Error
+	if err != nil {
+		return nil, err
+	}
+	return &sd, nil
+}
+
 // BindServerDomain 建立绑定（按 server_id+domain_id 幂等），返回当前绑定。
 // 命中已有记录（如曾被移除留下的 inactive 绑定）时，用 Assign 把绑定状态拉回 active
 // 并把远端同步状态重置为 pending、清空旧的 dkim_selector/dkim_public_key，
@@ -286,8 +298,8 @@ func (s *Store) SetServerDomainStatus(serverID, domainID uint64, status string) 
 // remote mail-node has removed the domain from Postfix/OpenDKIM.
 func (s *Store) MarkServerDomainRemoved(serverID, domainID uint64) error {
 	now := time.Now()
-	return s.db.Model(&model.ServerDomain{}).
-		Where("server_id = ? AND domain_id = ?", serverID, domainID).
+	result := s.db.Model(&model.ServerDomain{}).
+		Where("server_id = ? AND domain_id = ? AND status = ?", serverID, domainID, "active").
 		Updates(map[string]interface{}{
 			"status":         "inactive",
 			"sync_status":    "partial",
@@ -295,8 +307,17 @@ func (s *Store) MarkServerDomainRemoved(serverID, domainID uint64) error {
 			"dkim_status":    "sync_failed",
 			"sync_error":     "domain removed from remote server",
 			"synced_at":      &now,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrServerDomainBindingNotActive
+	}
+	return nil
 }
+
+var ErrServerDomainBindingNotActive = errors.New("server-domain binding is not active")
 
 // ListDomainsByServer 列出某服务器绑定的域名（preload Domain + Server）
 func (s *Store) ListDomainsByServer(serverID uint64) ([]model.ServerDomain, error) {
@@ -385,11 +406,13 @@ func (s *Store) GetAllocatableDomain() (*model.Domain, error) {
 	return &domain, nil
 }
 
-// CountMailboxesOnServerDomain 统计某服务器某域的邮箱数（移除域名保护检查）
+// CountMailboxesOnServerDomain 统计仍占用服务器域名绑定的邮箱数。
+// purged 是只保留历史记录的终态，远端邮箱已不可恢复，不应继续阻止域名移除。
 func (s *Store) CountMailboxesOnServerDomain(serverID, domainID uint64) (int64, error) {
 	var count int64
 	err := s.db.Model(&model.MailboxAccount{}).
-		Where("server_id = ? AND domain_id = ?", serverID, domainID).Count(&count).Error
+		Where("server_id = ? AND domain_id = ? AND status <> ?", serverID, domainID, "purged").
+		Count(&count).Error
 	return count, err
 }
 

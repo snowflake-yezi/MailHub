@@ -127,8 +127,8 @@ export default function MailboxesPage() {
 
   const [createPrefix, setCreatePrefix] = useState('')
   const [createPassword, setCreatePassword] = useState('')
-  const [createServerId, setCreateServerId] = useState('0')
-  const [createDomainId, setCreateDomainId] = useState('0')
+  const [createServerId, setCreateServerId] = useState(initialView === 'create' ? initialParams.get('server_id') || '0' : '0')
+  const [createDomainId, setCreateDomainId] = useState(initialView === 'create' ? initialParams.get('domain_id') || '0' : '0')
   const [batchText, setBatchText] = useState('')
   const [createTab, setCreateTab] = useState('single')
   const [creating, setCreating] = useState(false)
@@ -170,6 +170,10 @@ export default function MailboxesPage() {
     setDomainId(params.get('domain_id') || '')
     setServerId(params.get('server_id') || '')
     setStatusFilter(params.get('status') || '')
+    if (nextView === 'create') {
+      setCreateServerId(params.get('server_id') || '0')
+      setCreateDomainId(params.get('domain_id') || '0')
+    }
     setPage(1)
   }, [location.search])
 

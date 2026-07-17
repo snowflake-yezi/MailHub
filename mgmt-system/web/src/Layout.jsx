@@ -47,6 +47,11 @@ const NAV_ITEMS = [
   { path: '/external-access', labelKey: 'nav.externalAccess', icon: KeyRound, groupKey: 'groups.system' },
 ]
 
+function pathIsActive(itemPath, pathname) {
+  if (itemPath === '/') return pathname === '/'
+  return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
+}
+
 function getInitialCollapsed() {
   if (typeof window === 'undefined') return false
   return window.localStorage.getItem(SIDEBAR_KEY) === 'true'
@@ -170,7 +175,7 @@ export default function Layout({ children }) {
 
   const activeItem = useMemo(() => {
     if (pathname === '/search') return { label: t('nav.search') }
-    return navItems.find(item => item.path === pathname) || navItems[0]
+    return navItems.find(item => pathIsActive(item.path, pathname)) || navItems[0]
   }, [navItems, pathname, t])
 
   const submitGlobalSearch = (e) => {
@@ -249,7 +254,7 @@ export default function Layout({ children }) {
                 <Link
                   to={item.path}
                   title={collapsed ? item.label : undefined}
-                  className={`nav-item ${pathname === item.path ? 'active' : ''}`}
+                  className={`nav-item ${pathIsActive(item.path, pathname) ? 'active' : ''}`}
                 >
                   <Icon className="nav-icon" size={19} />
                   <span className="nav-label">{item.label}</span>

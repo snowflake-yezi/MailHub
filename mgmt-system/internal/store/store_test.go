@@ -60,6 +60,61 @@ func newMockStore(t *testing.T) (*Store, sqlmock.Sqlmock, func()) {
 	return &Store{db: db}, mock, func() { sqlDB.Close() }
 }
 
+func TestCountMailboxesOnServerDomainIgnoresPurgedHistory(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SELECT count\\(\\*\\) FROM `mailbox_accounts` WHERE server_id = \\? AND domain_id = \\? AND status <> \\?").
+		WithArgs(uint64(7), uint64(11), "purged").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+
+	count, err := st.CountMailboxesOnServerDomain(7, 11)
+	if err != nil {
+		t.Fatalf("CountMailboxesOnServerDomain() error: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("CountMailboxesOnServerDomain() = %d, want 2", count)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestGetActiveServerDomainRequiresPairAndActiveStatus(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectQuery("SELECT \\* FROM `server_domains` WHERE server_id = \\? AND domain_id = \\? AND status = \\?").
+		WithArgs(uint64(7), uint64(11), "active", 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "server_id", "domain_id", "status"}))
+
+	_, err := st.GetActiveServerDomain(7, 11)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("GetActiveServerDomain() error = %v, want gorm.ErrRecordNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
+func TestMarkServerDomainRemovedRequiresActiveBinding(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `server_domains` SET .* WHERE server_id = \\? AND domain_id = \\? AND status = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+
+	err := st.MarkServerDomainRemoved(7, 11)
+	if !errors.Is(err, ErrServerDomainBindingNotActive) {
+		t.Fatalf("MarkServerDomainRemoved() error = %v, want ErrServerDomainBindingNotActive", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
+	}
+}
+
 func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 	configs := make(map[string]seedConfig)
 	for _, cfg := range defaultConfigs() {
