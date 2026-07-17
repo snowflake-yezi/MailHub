@@ -2,7 +2,7 @@
 
 > 日期：2026-07-16（最后更新：2026-07-17）
 > 范围：`mgmt-system`、`mail-node`、管理端调用契约、控制面与数据面通信
-> 状态：SEC-1 至 SEC-4、REL-1、CFG-1、CFG-2 已完成并发布；OPS-1 已完成本地验收，待提交发布
+> 状态：SEC-1 至 SEC-4、REL-1、CFG-1、CFG-2、OPS-1 已完成并发布
 
 ## 1. 修复目标
 
@@ -28,7 +28,7 @@
 | REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成（SEC-2 配套） |
 | CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 已完成并发布 |
 | CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 已完成并发布 |
-| OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 已完成本地验收，待发布 |
+| OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 已完成并发布 |
 
 ## 3. 兼容性决策
 
@@ -103,4 +103,6 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - CFG-2 发布后验收：控制面 health/ready 均正常；两台节点 healthy，revision 分别为 `2/2`、`1/1`，apply/reload error 均为空，未鉴权内部健康请求均为 401，近 10 分钟目标错误日志计数均为 0。节点 1 的 Postfix/Dovecot 账号仍为 14/14、虚拟域仍为 2 个，节点 2 仍为 0/0；真实 `union@asadad.bond` 当前页 19 封邮件的列表、正文、附件均为 200，附件 125553 字节。
 - 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
 - 两个模块的 `go test -race -count=1 ./...` 已通过。
-- OPS-1 原始复现中，真实 mail-node 收到未完成请求头后停顿 7.08 秒，补全请求仍返回 401，证明鉴权前连接没有请求头超时。修复后 mail-node 使用显式 `http.Server`，配置 `ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`WriteTimeout=2m`、`IdleTimeout=2m`；普通内部健康请求仍返回 401，同一慢请求停顿 7.02 秒后连接已由服务端关闭，未进入鉴权。双模块普通全量测试、`go vet ./...` 和全量 race 均通过；Linux/amd64 mail-node 构建成功，大小 16,090,299 字节，SHA256 为 `5ae070087112f444b9650b6cee7192733108b342d5a210b7b73f05f008e8816d`。当前仅完成本地验收，尚未提交和发布。
+- OPS-1 原始复现中，真实 mail-node 收到未完成请求头后停顿 7.08 秒，补全请求仍返回 401，证明鉴权前连接没有请求头超时。修复后 mail-node 使用显式 `http.Server`，配置 `ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`WriteTimeout=2m`、`IdleTimeout=2m`；普通内部健康请求仍返回 401，同一慢请求停顿 7.02 秒后连接已由服务端关闭，未进入鉴权。双模块普通全量测试、`go vet ./...` 和全量 race 均通过。
+- OPS-1 生产发布：提交 `77a2f0a` 已进入远端 `main`；Linux/amd64 发布产物大小 11,493,538 字节，SHA256 为 `05bd5612e1b149755c8ee017498123eb7f32405e3b73924ef7f324ae6b44e608`，两台 mail-node 均完成备份和原子替换。节点 1 回滚点为 `/opt/mgmt-system/backups/ops1-77a2f0a-20260717-193328`，PID `472 -> 8871`；节点 2 回滚点为 `/root/mailhub-backups/ops1-77a2f0a-20260717-193328`，PID `23658 -> 1165`。
+- OPS-1 生产验收：两台节点替换前的 7 秒慢请求均继续返回 401；替换后向已关闭连接补写均失败且无 HTTP 响应，正常未鉴权请求仍为 401，携带本机 Shared-Secret 的健康请求均为 200。控制面 health/ready 为 200，两节点 healthy、revision `4/4` 与 `3/3`、apply/reload error 为空；节点 1 Postfix/Dovecot 账号仍为 14/14、两个虚拟域不变，真实 `union@asadad.bond` 邮件列表为 200，节点 2 账号仍为 0/0，两台目标错误日志计数均为 0。
