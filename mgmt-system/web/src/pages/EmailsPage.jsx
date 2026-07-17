@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Copy,
   Download,
@@ -15,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
+import { formatDateTime } from '../i18n'
 
 function normalizeContentID(value) {
   let normalized = String(value || '').trim()
@@ -102,12 +104,6 @@ function buildSafeEmailHtml(detail, mailbox) {
 </html>`
 }
 
-function formatDate(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
-
 function formatBytes(value) {
   const size = Number(value) || 0
   if (size < 1024) return `${size} B`
@@ -147,31 +143,32 @@ async function readPreviewError(resp) {
 }
 
 function AttachmentPreviewModal({ preview, onClose, onCopy }) {
+  const { t } = useTranslation('pages')
   if (!preview) return null
   const name = preview.attachment?.filename || `attachment-${preview.attachment?.index}`
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal attachment-preview-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="附件预览">
+      <div className="modal attachment-preview-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={t('emails.preview.aria')}>
         <div className="attachment-preview-head">
           <div>
             <div className="drawer-kicker">Attachment preview</div>
             <h3 title={name}>{name}</h3>
             <p>{preview.contentType || preview.attachment?.content_type || '-'} · {formatBytes(preview.attachment?.size)}</p>
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="关闭预览">
+          <button className="icon-button" type="button" onClick={onClose} aria-label={t('emails.preview.closeAria')}>
             <X size={18} />
           </button>
         </div>
 
         <div className="attachment-preview-body">
-          {preview.loading && <div className="empty-state"><span className="spinner" /><strong>加载预览...</strong></div>}
+          {preview.loading && <div className="empty-state"><span className="spinner" /><strong>{t('emails.preview.loading')}</strong></div>}
           {preview.error && (
             <div className="empty-state error-state">
               <Paperclip size={28} />
-              <strong>无法预览</strong>
+              <strong>{t('emails.preview.failed')}</strong>
               <span>{preview.error}</span>
               <a className="btn btn-sm btn-outline" href={preview.downloadUrl} download={name}>
-                <Download size={14} /> 下载附件
+                <Download size={14} /> {t('emails.preview.downloadAttachment')}
               </a>
             </div>
           )}
@@ -187,7 +184,7 @@ function AttachmentPreviewModal({ preview, onClose, onCopy }) {
             <div className="attachment-preview-text">
               <div className="attachment-preview-actions">
                 <button className="btn btn-sm btn-outline" type="button" onClick={() => onCopy(preview.text || '')}>
-                  <Copy size={14} /> 复制
+                  <Copy size={14} /> {t('emails.preview.copy')}
                 </button>
               </div>
               <pre>{preview.text || ''}</pre>
@@ -197,9 +194,9 @@ function AttachmentPreviewModal({ preview, onClose, onCopy }) {
 
         <div className="modal-footer">
           <a className="btn btn-outline" href={preview.downloadUrl} download={name}>
-            <Download size={15} /> 下载
+            <Download size={15} /> {t('emails.preview.download')}
           </a>
-          <button className="btn btn-primary" type="button" onClick={onClose}>关闭</button>
+          <button className="btn btn-primary" type="button" onClick={onClose}>{t('common:actions.close')}</button>
         </div>
       </div>
     </div>
@@ -207,21 +204,22 @@ function AttachmentPreviewModal({ preview, onClose, onCopy }) {
 }
 
 function DeleteMessageDialog({ message, mailbox, deleting, onConfirm, onCancel }) {
+  const { t } = useTranslation('pages')
   if (!message) return null
   return (
     <div className="modal-overlay" onClick={deleting ? undefined : onCancel}>
-      <div className="modal confirm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="确认删除邮件">
-        <h3>确认永久删除这封邮件？</h3>
-        <p>此操作会直接删除 Maildir 中的邮件文件，无法从回收站恢复。</p>
+      <div className="modal confirm-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={t('emails.deleteDialog.aria')}>
+        <h3>{t('emails.deleteDialog.title')}</h3>
+        <p>{t('emails.deleteDialog.desc')}</p>
         <div className="email-meta-grid">
-          <span>主题</span><strong>{message.subject || '(无标题)'}</strong>
-          <span>邮箱</span><code>{mailbox}</code>
+          <span>{t('emails.deleteDialog.subject')}</span><strong>{message.subject || t('emails.list.noSubject')}</strong>
+          <span>{t('emails.deleteDialog.mailbox')}</span><code>{mailbox}</code>
           <span>Message-ID</span><code>{message.message_id}</code>
         </div>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel} disabled={deleting}>取消</button>
+          <button className="btn btn-outline" type="button" onClick={onCancel} disabled={deleting}>{t('common:actions.cancel')}</button>
           <button className="btn btn-danger" type="button" onClick={onConfirm} disabled={deleting}>
-            {deleting ? <span className="spinner" /> : <Trash2 size={15} />} 确认永久删除
+            {deleting ? <span className="spinner" /> : <Trash2 size={15} />} {t('emails.deleteDialog.confirm')}
           </button>
         </div>
       </div>
@@ -230,6 +228,7 @@ function DeleteMessageDialog({ message, mailbox, deleting, onConfirm, onCancel }
 }
 
 export default function EmailsPage() {
+  const { t } = useTranslation('pages')
   const location = useLocation()
   const appliedURLSearch = useRef('')
   const [mailbox, setMailbox] = useState('')
@@ -318,12 +317,12 @@ export default function EmailsPage() {
     }
     if (messageID) {
       setSearched(true)
-      setError('Message-ID 查询需要同时提供邮箱地址。请先输入邮箱地址查询邮件，再打开对应邮件详情。')
+      setError(t('emails.errors.messageIdNeedsMailbox'))
       setMessages([])
       setSelected(messageID)
       setDetail(null)
     }
-  }, [fetchMessageByID, fetchMessages, location.search, size])
+  }, [fetchMessageByID, fetchMessages, location.search, size, t])
 
   useEffect(() => () => {
     if (attachmentPreview?.objectUrl) {
@@ -389,7 +388,7 @@ export default function EmailsPage() {
       }
       setAttachmentPreview({ attachment, downloadUrl, loading: false, kind: 'text', text: await blob.text(), contentType })
     } catch (err) {
-      setAttachmentPreview({ attachment, downloadUrl, loading: false, error: err.message || '预览失败' })
+      setAttachmentPreview({ attachment, downloadUrl, loading: false, error: err.message || t('emails.preview.failedFallback') })
     }
   }
 
@@ -413,7 +412,7 @@ export default function EmailsPage() {
       setAttachmentPreview(null)
       setDeleteConfirm(null)
     } catch (err) {
-      setError(err.message || '删除邮件失败')
+      setError(err.message || t('emails.errors.deleteFailed'))
     } finally {
       setDeleting(false)
     }
@@ -423,13 +422,13 @@ export default function EmailsPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>邮件查询</h1>
-          <p className="page-subtitle">按邮箱维度查看结构化邮件，支持正文审阅、HTML 预览和附件下载。</p>
+          <h1>{t('emails.title')}</h1>
+          <p className="page-subtitle">{t('emails.subtitle')}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={() => fetchMessages(query || mailbox, page, size)} disabled={loading || !(query || mailbox).trim()}>
             {loading ? <span className="spinner" /> : <RefreshCw size={16} />}
-            刷新
+            {t('common:actions.refresh')}
           </button>
         </div>
       </div>
@@ -439,21 +438,21 @@ export default function EmailsPage() {
           <span className="summary-icon"><Inbox size={18} /></span>
           <div>
             <div className="summary-value">{messages.length}</div>
-            <div className="summary-label">当前页邮件</div>
+            <div className="summary-label">{t('emails.summary.current')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="info">
           <span className="summary-icon"><Paperclip size={18} /></span>
           <div>
             <div className="summary-value">{totalAttachments}</div>
-            <div className="summary-label">附件入口</div>
+            <div className="summary-label">{t('emails.summary.attachments')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="success">
           <span className="summary-icon"><ShieldCheck size={18} /></span>
           <div>
             <div className="summary-value">{detail?.parse_status || (detail ? 'ok' : '-')}</div>
-            <div className="summary-label">解析状态</div>
+            <div className="summary-label">{t('emails.summary.parseStatus')}</div>
           </div>
         </div>
       </div>
@@ -462,13 +461,13 @@ export default function EmailsPage() {
         <form className="email-search-form" onSubmit={doSearch}>
           <div className="search-input-wrap">
             <Search size={17} />
-            <input value={mailbox} onChange={e => setMailbox(e.target.value)} placeholder="输入邮箱地址，例如 order-001@example.com" />
+            <input value={mailbox} onChange={e => setMailbox(e.target.value)} placeholder={t('emails.search.placeholder')} />
           </div>
-          <input type="number" value={size} onChange={e => setSize(parseInt(e.target.value, 10) || 20)} min={1} max={100} aria-label="每页条数" />
+          <input type="number" value={size} onChange={e => setSize(parseInt(e.target.value, 10) || 20)} min={1} max={100} aria-label={t('emails.search.pageSize')} />
           <button className="btn btn-primary" type="submit" disabled={loading || !mailbox.trim()}>
-            {loading && <span className="spinner" />} 查询
+            {loading && <span className="spinner" />} {t('emails.search.submit')}
           </button>
-          <button className="btn btn-outline" type="button" onClick={reset}>重置</button>
+          <button className="btn btn-outline" type="button" onClick={reset}>{t('emails.search.reset')}</button>
         </form>
       </section>
 
@@ -476,17 +475,17 @@ export default function EmailsPage() {
         <section className="section email-list-panel">
           <div className="panel-header">
             <div>
-              <h3>邮件列表</h3>
-              <div className="panel-caption" title={query || undefined}>{query ? query : '等待输入邮箱地址'}</div>
+              <h3>{t('emails.list.title')}</h3>
+              <div className="panel-caption" title={query || undefined}>{query ? query : t('emails.list.waiting')}</div>
             </div>
           </div>
 
           <div className="email-list">
             {loading && (
-              <div className="empty-state"><span className="spinner" /><strong>加载邮件...</strong></div>
+              <div className="empty-state"><span className="spinner" /><strong>{t('emails.list.loading')}</strong></div>
             )}
             {error && (
-              <div className="empty-state error-state"><MailOpen size={28} /><strong>查询失败</strong><span>{error}</span></div>
+              <div className="empty-state error-state"><MailOpen size={28} /><strong>{t('emails.list.failed')}</strong><span>{error}</span></div>
             )}
             {!loading && !error && messages.map(msg => (
               <button
@@ -496,29 +495,29 @@ export default function EmailsPage() {
                 onClick={() => loadMessage(msg)}
               >
                 <div className="email-list-top">
-                  <strong title={msg.subject || '(无标题)'}>{msg.subject || '(无标题)'}</strong>
+                  <strong title={msg.subject || t('emails.list.noSubject')}>{msg.subject || t('emails.list.noSubject')}</strong>
                   {(msg.attachments_count || 0) > 0 && <span className="tag tag-info"><Paperclip size={12} /> {msg.attachments_count}</span>}
                 </div>
                 <div className="email-list-meta">
                   <span title={msg.from || '-'}>{msg.from || '-'}</span>
-                  <span title={formatDate(msg.date || msg.received_at)}>{formatDate(msg.date || msg.received_at)}</span>
+                  <span title={formatDateTime(msg.date || msg.received_at)}>{formatDateTime(msg.date || msg.received_at)}</span>
                 </div>
-                <p>{msg.text_preview || '无正文预览'}</p>
+                <p>{msg.text_preview || t('emails.list.noPreview')}</p>
               </button>
             ))}
             {!loading && !error && searched && messages.length === 0 && (
-              <div className="empty-state"><Inbox size={28} /><strong>暂无邮件</strong><span>该邮箱当前没有可展示的结构化邮件。</span></div>
+              <div className="empty-state"><Inbox size={28} /><strong>{t('emails.list.empty')}</strong><span>{t('emails.list.emptyDesc')}</span></div>
             )}
             {!searched && (
-              <div className="empty-state"><Search size={28} /><strong>输入邮箱后查询</strong><span>查询结果会以紧凑列表展示，点击即可审阅详情。</span></div>
+              <div className="empty-state"><Search size={28} /><strong>{t('emails.list.initial')}</strong><span>{t('emails.list.initialDesc')}</span></div>
             )}
           </div>
 
           {searched && !loading && (
             <div className="pagination-bar email-pagination">
-              <button className="btn btn-sm btn-outline" disabled={page <= 1} onClick={() => fetchMessages(query, page - 1, size)}>上一页</button>
-              <span>第 <strong>{page}</strong> 页</span>
-              <button className="btn btn-sm btn-outline" disabled={messages.length < size} onClick={() => fetchMessages(query, page + 1, size)}>下一页</button>
+              <button className="btn btn-sm btn-outline" disabled={page <= 1} onClick={() => fetchMessages(query, page - 1, size)}>{t('emails.list.previous')}</button>
+              <span>{t('emails.list.page', { page })}</span>
+              <button className="btn btn-sm btn-outline" disabled={messages.length < size} onClick={() => fetchMessages(query, page + 1, size)}>{t('emails.list.next')}</button>
             </div>
           )}
         </section>
@@ -526,31 +525,31 @@ export default function EmailsPage() {
         <section className="section email-detail-panel">
           <div className="panel-header">
             <div>
-              <h3>邮件详情</h3>
-              <div className="panel-caption">正文、HTML 和附件在同一审阅器中处理。</div>
+              <h3>{t('emails.detail.title')}</h3>
+              <div className="panel-caption">{t('emails.detail.caption')}</div>
             </div>
             {detail && !detail._error && (
               <div className="page-actions">
-                <span className="tag tag-success">已解析</span>
+                <span className="tag tag-success">{t('emails.detail.parsed')}</span>
                 <button className="btn btn-sm btn-danger" type="button" onClick={() => setDeleteConfirm(detail)}>
-                  <Trash2 size={14} /> 删除邮件
+                  <Trash2 size={14} /> {t('emails.detail.delete')}
                 </button>
               </div>
             )}
           </div>
 
-          {detailLoading && <div className="empty-state"><span className="spinner" /><strong>加载详情...</strong></div>}
-          {detail && detail._error && <div className="empty-state error-state"><MailOpen size={28} /><strong>详情加载失败</strong><span>{detail._error}</span></div>}
+          {detailLoading && <div className="empty-state"><span className="spinner" /><strong>{t('emails.detail.loading')}</strong></div>}
+          {detail && detail._error && <div className="empty-state error-state"><MailOpen size={28} /><strong>{t('emails.detail.failed')}</strong><span>{detail._error}</span></div>}
           {detail && !detail._error && (
             <div className="email-detail">
               <div className="email-detail-head">
-                <h2 title={detail.subject || '(无标题)'}>{detail.subject || '(无标题)'}</h2>
+                <h2 title={detail.subject || t('emails.list.noSubject')}>{detail.subject || t('emails.list.noSubject')}</h2>
                 <div className="email-meta-grid">
                   <span>Message-ID</span><code title={detail.message_id || '-'}>{detail.message_id || '-'}</code>
-                  <span>发件人</span><strong title={detail.from || '-'}>{detail.from || '-'}</strong>
-                  <span>收件人</span><strong title={(detail.to || []).join(', ') || '-'}>{(detail.to || []).join(', ') || '-'}</strong>
-                  <span>时间</span><strong>{formatDate(detail.date || detail.received_at)}</strong>
-                  <span>解析</span>
+                  <span>{t('emails.detail.sender')}</span><strong title={detail.from || '-'}>{detail.from || '-'}</strong>
+                  <span>{t('emails.detail.recipient')}</span><strong title={(detail.to || []).join(', ') || '-'}>{(detail.to || []).join(', ') || '-'}</strong>
+                  <span>{t('emails.detail.time')}</span><strong>{formatDateTime(detail.date || detail.received_at)}</strong>
+                  <span>{t('emails.detail.parse')}</span>
                   <strong>
                     {detail.parse_status || 'ok'}
                     {detail.parse_error && <em className="parse-error">{detail.parse_error}</em>}
@@ -562,7 +561,7 @@ export default function EmailsPage() {
                 {[
                   ['text', 'Text'],
                   ['html', 'HTML'],
-                  ['meta', 'Raw 元信息'],
+                  ['meta', t('emails.detail.rawMeta')],
                 ].map(([value, label]) => (
                   <button className={bodyView === value ? 'active' : ''} type="button" key={value} onClick={() => setBodyView(value)}>
                     {label}
@@ -572,25 +571,25 @@ export default function EmailsPage() {
 
               {bodyView === 'text' && (
                 <div className="email-body-card">
-                  <div className="body-card-title"><FileText size={15} /> 正文</div>
+                  <div className="body-card-title"><FileText size={15} /> {t('emails.detail.body')}</div>
                   <pre>{detail.text_body || '-'}</pre>
                 </div>
               )}
               {bodyView === 'html' && (
                 <div className="email-body-card">
-                  <div className="body-card-title"><ShieldCheck size={15} /> HTML 预览</div>
+                  <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.htmlPreview')}</div>
                   {detail.html_body ? (
                     <iframe
-                      title="邮件 HTML 预览"
+                      title={t('emails.detail.htmlAria')}
                       sandbox="allow-same-origin"
                       srcDoc={buildSafeEmailHtml(detail, query)}
                     />
-                  ) : <div className="muted-text">无 HTML 正文</div>}
+                  ) : <div className="muted-text">{t('emails.detail.noHtml')}</div>}
                 </div>
               )}
               {bodyView === 'meta' && (
                 <div className="email-body-card">
-                  <div className="body-card-title"><FileText size={15} /> 元信息</div>
+                  <div className="body-card-title"><FileText size={15} /> {t('emails.detail.metadata')}</div>
                   <pre>{JSON.stringify({
                     message_id: detail.message_id,
                     from: detail.from,
@@ -603,7 +602,7 @@ export default function EmailsPage() {
               )}
 
               <div className="attachments-panel">
-                <div className="body-card-title"><Paperclip size={15} /> 附件</div>
+                <div className="body-card-title"><Paperclip size={15} /> {t('emails.detail.attachments')}</div>
                 {detail.attachments && detail.attachments.length > 0 ? (
                   <div className="attachment-list">
                     {detail.attachments.map(a => (
@@ -617,22 +616,22 @@ export default function EmailsPage() {
                         <div className="attachment-actions">
                           {isPreviewableAttachment(a) && (
                             <button className="btn btn-sm btn-outline" type="button" onClick={() => openAttachmentPreview(a)}>
-                              <Eye size={14} /> 预览
+                              <Eye size={14} /> {t('emails.detail.preview')}
                             </button>
                           )}
                           <a className="btn btn-sm btn-outline" href={emailAPI.attachmentUrl(detail.message_id, a.index, query)} download={a.filename || `attachment-${a.index}`}>
-                            <Download size={14} /> 下载
+                            <Download size={14} /> {t('emails.detail.download')}
                           </a>
                         </div>
                       </div>
                     ))}
                   </div>
-                ) : <div className="muted-text">无附件</div>}
+                ) : <div className="muted-text">{t('emails.detail.noAttachments')}</div>}
               </div>
             </div>
           )}
           {!detail && !detailLoading && (
-            <div className="empty-state"><MailOpen size={28} /><strong>选择一封邮件</strong><span>详情会展示主题、收发件人、正文和附件。</span></div>
+            <div className="empty-state"><MailOpen size={28} /><strong>{t('emails.detail.select')}</strong><span>{t('emails.detail.selectDesc')}</span></div>
           )}
         </section>
       </div>

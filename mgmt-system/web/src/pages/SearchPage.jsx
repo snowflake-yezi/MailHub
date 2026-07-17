@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   ArrowUpRight,
   Inbox,
@@ -8,6 +9,7 @@ import {
   Server,
 } from 'lucide-react'
 import { emailAPI, mailboxAPI, serverAPI } from '../api'
+import { formatDateTime } from '../i18n'
 
 function isEmail(value) {
   return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String(value || '').trim())
@@ -34,12 +36,6 @@ function matchesServer(server, query) {
   ].some(value => String(value || '').toLowerCase().includes(needle))
 }
 
-function formatDate(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
-}
-
 function SearchSection({ icon: Icon, title, caption, children, action }) {
   return (
     <section className="section data-section search-result-section">
@@ -59,6 +55,7 @@ function SearchSection({ icon: Icon, title, caption, children, action }) {
 }
 
 export default function SearchPage() {
+  const { t } = useTranslation('pages')
   const [params] = useSearchParams()
   const query = (params.get('q') || '').trim()
   const [mailboxes, setMailboxes] = useState([])
@@ -89,7 +86,7 @@ export default function SearchPage() {
       } else {
         setMailboxes([])
         setMailboxTotal(0)
-        setErrors(prev => ({ ...prev, mailboxes: mailboxResult.reason?.message || '邮箱搜索失败' }))
+        setErrors(prev => ({ ...prev, mailboxes: mailboxResult.reason?.message || t('search.mailboxes.failed') }))
       }
 
       if (serverResult.status === 'fulfilled') {
@@ -97,7 +94,7 @@ export default function SearchPage() {
         setServers(list.filter(server => matchesServer(server, query)))
       } else {
         setServers([])
-        setErrors(prev => ({ ...prev, servers: serverResult.reason?.message || '服务器搜索失败' }))
+        setErrors(prev => ({ ...prev, servers: serverResult.reason?.message || t('search.servers.failed') }))
       }
 
       if (canSearchEmailMessages) {
@@ -111,7 +108,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false)
     }
-  }, [canSearchEmailMessages, query])
+  }, [canSearchEmailMessages, query, t])
 
   useEffect(() => {
     load()
@@ -127,8 +124,8 @@ export default function SearchPage() {
     return (
       <section className="section empty-state">
         <Search size={30} />
-        <strong>输入关键词开始搜索</strong>
-        <span>可以搜索邮箱地址、邮箱前缀、服务器名称、API 地址或绑定域名。</span>
+        <strong>{t('search.emptyTitle')}</strong>
+        <span>{t('search.emptyDesc')}</span>
       </section>
     )
   }
@@ -137,13 +134,13 @@ export default function SearchPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>搜索结果</h1>
-          <p className="page-subtitle">关键词「{query}」会同时匹配邮箱账户、服务器节点；邮箱地址还会拉取邮件列表。</p>
+          <h1>{t('search.title')}</h1>
+          <p className="page-subtitle">{t('search.subtitle', { query })}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={load} disabled={loading}>
             {loading ? <span className="spinner" /> : <Search size={16} />}
-            重新搜索
+            {t('search.retry')}
           </button>
         </div>
       </div>
@@ -153,21 +150,21 @@ export default function SearchPage() {
           <span className="summary-icon"><Inbox size={18} /></span>
           <div>
             <div className="summary-value">{summary.mailboxes}</div>
-            <div className="summary-label">邮箱匹配</div>
+            <div className="summary-label">{t('search.summary.mailboxes')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="info">
           <span className="summary-icon"><Server size={18} /></span>
           <div>
             <div className="summary-value">{summary.servers}</div>
-            <div className="summary-label">节点匹配</div>
+            <div className="summary-label">{t('search.summary.servers')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="success">
           <span className="summary-icon"><Mail size={18} /></span>
           <div>
             <div className="summary-value">{canSearchEmailMessages ? summary.messages : '-'}</div>
-            <div className="summary-label">邮件匹配</div>
+            <div className="summary-label">{t('search.summary.emails')}</div>
           </div>
         </div>
       </div>
@@ -176,28 +173,28 @@ export default function SearchPage() {
         <SearchSection
           icon={Mail}
           title="Message-ID"
-          caption="Message-ID 需要邮箱上下文才能读取正文。"
-          action={<Link className="btn btn-sm btn-outline" to={`/emails?message_id=${encodeURIComponent(messageID)}`}>去邮件页 <ArrowUpRight size={14} /></Link>}
+          caption={t('search.messageId.caption')}
+          action={<Link className="btn btn-sm btn-outline" to={`/emails?message_id=${encodeURIComponent(messageID)}`}>{t('search.messageId.action')} <ArrowUpRight size={14} /></Link>}
         >
           <div className="empty-state">
             <Mail size={28} />
-            <strong>需要先指定邮箱地址</strong>
-            <span>请在邮件查询页输入邮箱地址，或使用带 mailbox 参数的链接打开具体 Message-ID。</span>
+            <strong>{t('search.messageId.title')}</strong>
+            <span>{t('search.messageId.desc')}</span>
           </div>
         </SearchSection>
       )}
 
       <SearchSection
         icon={Inbox}
-        title="邮箱账户"
-        caption={errors.mailboxes || `按邮箱地址和前缀匹配，展示前 ${mailboxes.length} 条。`}
-        action={<Link className="btn btn-sm btn-outline" to={`/mailboxes?search=${encodeURIComponent(query)}`}>查看邮箱 <ArrowUpRight size={14} /></Link>}
+        title={t('search.mailboxes.title')}
+        caption={errors.mailboxes || t('search.mailboxes.caption', { count: mailboxes.length })}
+        action={<Link className="btn btn-sm btn-outline" to={`/mailboxes?search=${encodeURIComponent(query)}`}>{t('search.mailboxes.action')} <ArrowUpRight size={14} /></Link>}
       >
         {mailboxes.length > 0 ? (
           <div className="table-wrap">
             <table className="data-table">
               <thead>
-                <tr><th>邮箱</th><th>域名</th><th>服务器</th><th>状态</th><th>创建时间</th></tr>
+                <tr><th>{t('search.columns.mailbox')}</th><th>{t('search.columns.domain')}</th><th>{t('search.columns.server')}</th><th>{t('search.columns.status')}</th><th>{t('search.columns.createdAt')}</th></tr>
               </thead>
               <tbody>
                 {mailboxes.map(item => (
@@ -205,8 +202,8 @@ export default function SearchPage() {
                     <td><code>{item.email_address}</code></td>
                     <td>{item.domain?.name || `#${item.domain_id}`}</td>
                     <td>{item.server?.name || `#${item.server_id}`}</td>
-                    <td><span className="tag tag-info">{item.status || '-'}</span></td>
-                    <td>{formatDate(item.created_at)}</td>
+                    <td><span className="tag tag-info">{t(`mailboxes.status.${item.status}`, { defaultValue: item.status || '-' })}</span></td>
+                    <td>{formatDateTime(item.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -215,30 +212,30 @@ export default function SearchPage() {
         ) : (
           <div className="empty-state">
             <Inbox size={28} />
-            <strong>{errors.mailboxes ? '邮箱搜索失败' : '没有匹配邮箱'}</strong>
-            <span>{errors.mailboxes || '换个邮箱地址或前缀试试。'}</span>
+            <strong>{errors.mailboxes ? t('search.mailboxes.failed') : t('search.mailboxes.empty')}</strong>
+            <span>{errors.mailboxes || t('search.mailboxes.emptyDesc')}</span>
           </div>
         )}
       </SearchSection>
 
       <SearchSection
         icon={Server}
-        title="服务器节点"
-        caption={errors.servers || '匹配节点名称、API 地址、状态和绑定域名。'}
-        action={<Link className="btn btn-sm btn-outline" to={`/servers?search=${encodeURIComponent(query)}`}>查看节点 <ArrowUpRight size={14} /></Link>}
+        title={t('search.servers.title')}
+        caption={errors.servers || t('search.servers.caption')}
+        action={<Link className="btn btn-sm btn-outline" to={`/servers?search=${encodeURIComponent(query)}`}>{t('search.servers.action')} <ArrowUpRight size={14} /></Link>}
       >
         {servers.length > 0 ? (
           <div className="table-wrap">
             <table className="data-table">
               <thead>
-                <tr><th>节点</th><th>API</th><th>状态</th><th>负载</th><th>绑定域名</th></tr>
+                <tr><th>{t('search.columns.node')}</th><th>API</th><th>{t('search.columns.status')}</th><th>{t('search.columns.load')}</th><th>{t('search.columns.domains')}</th></tr>
               </thead>
               <tbody>
                 {servers.map(server => (
                   <tr key={server.id}>
                     <td><strong>{server.name || `server-${server.id}`}</strong></td>
                     <td><code>{server.api_host || '-'}</code></td>
-                    <td><span className="tag tag-info">{server.status || '-'}</span></td>
+                    <td><span className="tag tag-info">{t(`servers.status.${server.status}`, { defaultValue: server.status || '-' })}</span></td>
                     <td>{server.current_load || 0} / {server.capacity || 0}</td>
                     <td>{(server.domains || []).map(domain => domain.name).join(', ') || '-'}</td>
                   </tr>
@@ -249,8 +246,8 @@ export default function SearchPage() {
         ) : (
           <div className="empty-state">
             <Server size={28} />
-            <strong>{errors.servers ? '节点搜索失败' : '没有匹配节点'}</strong>
-            <span>{errors.servers || '可以搜索节点名、API 地址或绑定域名。'}</span>
+            <strong>{errors.servers ? t('search.servers.failed') : t('search.servers.empty')}</strong>
+            <span>{errors.servers || t('search.servers.emptyDesc')}</span>
           </div>
         )}
       </SearchSection>
@@ -258,9 +255,9 @@ export default function SearchPage() {
       {canSearchEmailMessages && (
         <SearchSection
           icon={Mail}
-          title="邮件列表"
-          caption={errors.emails || `邮箱 ${query} 的最近邮件。`}
-          action={<Link className="btn btn-sm btn-outline" to={`/emails?mailbox=${encodeURIComponent(query)}`}>打开邮件查询 <ArrowUpRight size={14} /></Link>}
+          title={t('search.emails.title')}
+          caption={errors.emails || t('search.emails.caption', { query })}
+          action={<Link className="btn btn-sm btn-outline" to={`/emails?mailbox=${encodeURIComponent(query)}`}>{t('search.emails.action')} <ArrowUpRight size={14} /></Link>}
         >
           {messages.length > 0 ? (
             <div className="email-list search-email-list">
@@ -271,22 +268,22 @@ export default function SearchPage() {
                   to={`/emails?mailbox=${encodeURIComponent(query)}&message_id=${encodeURIComponent(msg.message_id)}`}
                 >
                   <div className="email-list-top">
-                    <strong>{msg.subject || '(无标题)'}</strong>
-                    {(msg.attachments_count || 0) > 0 && <span className="tag tag-info">{msg.attachments_count} 附件</span>}
+                    <strong>{msg.subject || t('search.emails.noSubject')}</strong>
+                    {(msg.attachments_count || 0) > 0 && <span className="tag tag-info">{t('search.emails.attachments', { count: msg.attachments_count })}</span>}
                   </div>
                   <div className="email-list-meta">
                     <span>{msg.from || '-'}</span>
-                    <span>{formatDate(msg.date || msg.received_at)}</span>
+                    <span>{formatDateTime(msg.date || msg.received_at)}</span>
                   </div>
-                  <p>{msg.text_preview || '无正文预览'}</p>
+                  <p>{msg.text_preview || t('search.emails.noPreview')}</p>
                 </Link>
               ))}
             </div>
           ) : (
             <div className="empty-state">
               <Mail size={28} />
-              <strong>{errors.emails ? '邮件搜索失败' : '暂无邮件'}</strong>
-              <span>{errors.emails || '该邮箱当前没有可展示的结构化邮件。'}</span>
+              <strong>{errors.emails ? t('search.emails.failed') : t('search.emails.empty')}</strong>
+              <span>{errors.emails || t('search.emails.emptyDesc')}</span>
             </div>
           )}
         </SearchSection>

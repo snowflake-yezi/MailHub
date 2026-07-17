@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -15,16 +16,16 @@ import {
 import { filterAPI } from '../api'
 
 const RULE_TYPES = [
-  { value: 'whitelist_sender', label: '发件人白名单' },
-  { value: 'blacklist_sender', label: '发件人黑名单' },
-  { value: 'keyword', label: '关键词' },
-  { value: 'regex', label: '正则表达式' },
+  { value: 'whitelist_sender' },
+  { value: 'blacklist_sender' },
+  { value: 'keyword' },
+  { value: 'regex' },
 ]
 
 const ACTIONS = [
-  { value: 'pass', label: 'pass 放行转发', icon: CheckCircle2, tone: 'success' },
-  { value: 'flag', label: 'flag 标记疑似', icon: Flag, tone: 'warning' },
-  { value: 'block', label: 'block 直接丢弃', icon: ShieldOff, tone: 'danger' },
+  { value: 'pass', icon: CheckCircle2, tone: 'success' },
+  { value: 'flag', icon: Flag, tone: 'warning' },
+  { value: 'block', icon: ShieldOff, tone: 'danger' },
 ]
 
 const TYPE_TAG = {
@@ -49,15 +50,16 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
-function ConfirmDialog({ title, message, confirmLabel = '确认', onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }) {
+  const { t } = useTranslation('common')
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
-          <button className="btn btn-danger" type="button" onClick={onConfirm}>{confirmLabel}</button>
+          <button className="btn btn-outline" type="button" onClick={onCancel}>{t('actions.cancel')}</button>
+          <button className="btn btn-danger" type="button" onClick={onConfirm}>{confirmLabel || t('actions.confirm')}</button>
         </div>
       </div>
     </div>
@@ -77,70 +79,71 @@ function SummaryTile({ icon: Icon, label, value, tone }) {
 }
 
 function FilterDrawer({ modal, saving, onChange, onSave, onClose }) {
+  const { t } = useTranslation('pages')
   const updateField = (field, value) => {
     onChange({ ...modal, data: { ...modal.data, [field]: value } })
   }
 
   return (
     <div className="drawer-overlay" onClick={onClose}>
-      <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={modal.mode === 'add' ? '新增过滤规则' : '编辑过滤规则'}>
+      <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={modal.mode === 'add' ? t('filters.drawer.addAria') : t('filters.drawer.editAria')}>
         <div className="drawer-header">
           <div className="drawer-title-with-icon">
             <span className="module-icon"><SlidersHorizontal size={18} /></span>
             <div>
               <div className="drawer-kicker">Filter policy</div>
-              <h2>{modal.mode === 'add' ? '新增过滤规则' : `编辑 ${modal.data.name || `#${modal.data.id}`}`}</h2>
+              <h2>{modal.mode === 'add' ? t('filters.drawer.addTitle') : t('filters.drawer.editTitle', { name: modal.data.name || `#${modal.data.id}` })}</h2>
             </div>
           </div>
-          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
+          <button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button>
         </div>
 
         <form className="drawer-body" onSubmit={onSave}>
           <div className="form-group">
-            <label>规则名称</label>
-            <input value={modal.data.name} onChange={e => updateField('name', e.target.value)} placeholder="例如：白名单-航司通知" required />
+            <label>{t('filters.drawer.name')}</label>
+            <input value={modal.data.name} onChange={e => updateField('name', e.target.value)} placeholder={t('filters.drawer.namePlaceholder')} required />
           </div>
           <div className="field-grid">
             <div className="form-group">
-              <label>类型</label>
+              <label>{t('filters.drawer.type')}</label>
               <select value={modal.data.rule_type} onChange={e => updateField('rule_type', e.target.value)}>
-                {RULE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                {RULE_TYPES.map(type => <option key={type.value} value={type.value}>{t(`filters.ruleTypes.${type.value}`)}</option>)}
               </select>
             </div>
             <div className="form-group">
-              <label>动作</label>
+              <label>{t('filters.drawer.action')}</label>
               <select value={modal.data.action} onChange={e => updateField('action', e.target.value)}>
-                {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                {ACTIONS.map(action => <option key={action.value} value={action.value}>{t(`filters.actions.${action.value}`)}</option>)}
               </select>
             </div>
           </div>
           <div className="form-group">
-            <label>匹配模式</label>
-            <input value={modal.data.pattern} onChange={e => updateField('pattern', e.target.value)} placeholder="@airline.com / 行程单 / (?i)itinerary" required />
-            <div className="form-hint">白名单和黑名单通常填写发件人域名；关键词填写要匹配的词；正则使用 Go 正则表达式。</div>
+            <label>{t('filters.drawer.pattern')}</label>
+            <input value={modal.data.pattern} onChange={e => updateField('pattern', e.target.value)} placeholder={t('filters.drawer.patternPlaceholder')} required />
+            <div className="form-hint">{t('filters.drawer.patternHint')}</div>
           </div>
           <div className="field-grid">
             <div className="form-group">
-              <label>优先级</label>
+              <label>{t('filters.drawer.priority')}</label>
               <input type="number" value={modal.data.priority} onChange={e => updateField('priority', parseInt(e.target.value, 10) || 0)} min={0} />
-              <div className="form-hint">数字越小越先匹配。</div>
+              <div className="form-hint">{t('filters.drawer.priorityHint')}</div>
             </div>
             <div className="form-group">
-              <label>启用状态</label>
+              <label>{t('filters.drawer.enabled')}</label>
               <label className="switch-row">
                 <span className="toggle">
                   <input type="checkbox" checked={modal.data.enabled} onChange={e => updateField('enabled', e.target.checked)} />
                   <span className="toggle-slider" />
                 </span>
-                {modal.data.enabled ? '启用' : '停用'}
+                {modal.data.enabled ? t('common:states.enabled') : t('common:states.disabled')}
               </label>
             </div>
           </div>
 
           <div className="drawer-footer">
-            <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+            <button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button>
             <button className="btn btn-primary" type="submit" disabled={saving}>
-              {saving && <span className="spinner" />} 保存
+              {saving && <span className="spinner" />} {t('common:actions.save')}
             </button>
           </div>
         </form>
@@ -150,6 +153,7 @@ function FilterDrawer({ modal, saving, onChange, onSave, onClose }) {
 }
 
 export default function FiltersPage() {
+  const { t } = useTranslation('pages')
   const [rules, setRules] = useState([])
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState(null)
@@ -162,9 +166,9 @@ export default function FiltersPage() {
     if (!silent) setLoading(true)
     filterAPI.list()
       .then(data => setRules(Array.isArray(data) ? data : []))
-      .catch(e => setToast({ type: 'error', message: '加载失败: ' + e.message }))
+      .catch(e => setToast({ type: 'error', message: t('common:errors.loadFailed', { message: e.message }) }))
       .finally(() => setLoading(false))
-  }, [])
+  }, [t])
 
   useEffect(() => { load() }, [load])
 
@@ -202,7 +206,7 @@ export default function FiltersPage() {
       if (modal.mode === 'add') await filterAPI.create(modal.data)
       else await filterAPI.update(modal.data.id, modal.data)
       setModal(null)
-      setToast({ type: 'success', message: '保存成功' })
+      setToast({ type: 'success', message: t('filters.messages.saved') })
       load(true)
     } catch (err) {
       setToast({ type: 'error', message: err.message })
@@ -213,13 +217,13 @@ export default function FiltersPage() {
 
   const askDelete = (rule) => {
     setConfirm({
-      title: '删除过滤规则',
-      message: `确定删除「${rule.name}」吗？节点下一次拉取配置后将不再应用这条规则。`,
-      confirmLabel: '删除',
+      title: t('filters.dialogs.deleteTitle'),
+      message: t('filters.dialogs.deleteMessage', { name: rule.name }),
+      confirmLabel: t('common:actions.delete'),
       onConfirm: async () => {
         try {
           await filterAPI.remove(rule.id)
-          setToast({ type: 'success', message: '已删除' })
+          setToast({ type: 'success', message: t('filters.messages.deleted') })
           load(true)
         } catch (err) {
           setToast({ type: 'error', message: err.message })
@@ -233,7 +237,7 @@ export default function FiltersPage() {
   const toggleEnabled = async (rule) => {
     try {
       await filterAPI.update(rule.id, { ...rule, enabled: !rule.enabled })
-      setToast({ type: 'success', message: rule.enabled ? '规则已停用' : '规则已启用' })
+      setToast({ type: 'success', message: rule.enabled ? t('filters.messages.disabled') : t('filters.messages.enabled') })
       load(true)
     } catch (err) {
       setToast({ type: 'error', message: err.message })
@@ -243,7 +247,7 @@ export default function FiltersPage() {
   if (loading) {
     return (
       <div className="dashboard-panel loading-panel">
-        <span className="spinner" /> 加载过滤规则...
+        <span className="spinner" /> {t('filters.loading')}
       </div>
     )
   }
@@ -252,31 +256,31 @@ export default function FiltersPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>过滤规则</h1>
-          <p className="page-subtitle">按 pass、flag、block 管理过滤策略；优先级数字越小越先匹配。</p>
+          <h1>{t('filters.title')}</h1>
+          <p className="page-subtitle">{t('filters.subtitle')}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={() => load(true)}>
-            <RefreshCw size={16} /> 刷新
+            <RefreshCw size={16} /> {t('common:actions.refresh')}
           </button>
           <button className="btn btn-primary" type="button" onClick={openAdd}>
-            <Plus size={16} /> 新增规则
+            <Plus size={16} /> {t('filters.add')}
           </button>
         </div>
       </div>
 
       <div className="summary-grid">
-        <SummaryTile icon={Filter} label="规则总数" value={summary.total} tone="brand" />
-        <SummaryTile icon={CheckCircle2} label="已启用" value={summary.enabled} tone="success" />
-        <SummaryTile icon={Flag} label="标记疑似" value={summary.flag} tone="warning" />
-        <SummaryTile icon={ShieldOff} label="直接丢弃" value={summary.block} tone="danger" />
+        <SummaryTile icon={Filter} label={t('filters.summary.total')} value={summary.total} tone="brand" />
+        <SummaryTile icon={CheckCircle2} label={t('filters.summary.enabled')} value={summary.enabled} tone="success" />
+        <SummaryTile icon={Flag} label={t('filters.summary.flagged')} value={summary.flag} tone="warning" />
+        <SummaryTile icon={ShieldOff} label={t('filters.summary.blocked')} value={summary.block} tone="danger" />
       </div>
 
       <div className="phase-tabs policy-tabs">
-        <button className={actionFilter === 'all' ? 'active' : ''} type="button" onClick={() => setActionFilter('all')}>全部</button>
+        <button className={actionFilter === 'all' ? 'active' : ''} type="button" onClick={() => setActionFilter('all')}>{t('filters.all')}</button>
         {ACTIONS.map(action => (
           <button className={actionFilter === action.value ? 'active' : ''} type="button" key={action.value} onClick={() => setActionFilter(action.value)}>
-            {action.label}
+            {t(`filters.actions.${action.value}`)}
           </button>
         ))}
       </div>
@@ -284,8 +288,8 @@ export default function FiltersPage() {
       <section className="section data-section">
         <div className="panel-header">
           <div>
-            <h3>策略列表</h3>
-            <div className="panel-caption">修改后 mail-node 会按配置拉取周期自动生效。</div>
+            <h3>{t('filters.list.title')}</h3>
+            <div className="panel-caption">{t('filters.list.caption')}</div>
           </div>
         </div>
 
@@ -293,13 +297,13 @@ export default function FiltersPage() {
           <table className="data-table filters-table">
             <thead>
               <tr>
-                <th>优先级</th>
-                <th>规则</th>
-                <th>类型</th>
-                <th>匹配模式</th>
-                <th>动作</th>
-                <th>启用</th>
-                <th>操作</th>
+                <th>{t('filters.list.priority')}</th>
+                <th>{t('filters.list.rule')}</th>
+                <th>{t('filters.list.type')}</th>
+                <th>{t('filters.list.pattern')}</th>
+                <th>{t('filters.list.action')}</th>
+                <th>{t('filters.list.enabled')}</th>
+                <th>{t('filters.list.operations')}</th>
               </tr>
             </thead>
             <tbody>
@@ -315,7 +319,7 @@ export default function FiltersPage() {
                       </div>
                     </div>
                   </td>
-                  <td><span className={`tag ${TYPE_TAG[rule.rule_type] || 'tag-info'}`}>{RULE_TYPES.find(t => t.value === rule.rule_type)?.label || rule.rule_type}</span></td>
+                  <td><span className={`tag ${TYPE_TAG[rule.rule_type] || 'tag-info'}`}>{t(`filters.ruleTypes.${rule.rule_type}`, { defaultValue: rule.rule_type })}</span></td>
                   <td><code>{rule.pattern}</code></td>
                   <td><span className={`tag ${ACTION_TAG[rule.action] || 'tag-info'}`}>{rule.action}</span></td>
                   <td>
@@ -328,10 +332,10 @@ export default function FiltersPage() {
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button className="icon-button compact" type="button" title="编辑" onClick={() => openEdit(rule)}>
+                      <button className="icon-button compact" type="button" title={t('common:actions.edit')} onClick={() => openEdit(rule)}>
                         <Pencil size={15} />
                       </button>
-                      <button className="icon-button compact danger" type="button" title="删除" onClick={() => askDelete(rule)}>
+                      <button className="icon-button compact danger" type="button" title={t('common:actions.delete')} onClick={() => askDelete(rule)}>
                         <Trash2 size={15} />
                       </button>
                     </div>
@@ -343,9 +347,9 @@ export default function FiltersPage() {
                   <td colSpan={7}>
                     <div className="empty-state">
                       <AlertTriangle size={28} />
-                      <strong>暂无匹配规则</strong>
-                      <span>新增规则后即可按策略过滤和转发邮件。</span>
-                      <button className="btn btn-primary" type="button" onClick={openAdd}><Plus size={16} /> 新增规则</button>
+                      <strong>{t('filters.list.empty')}</strong>
+                      <span>{t('filters.list.emptyDesc')}</span>
+                      <button className="btn btn-primary" type="button" onClick={openAdd}><Plus size={16} /> {t('filters.add')}</button>
                     </div>
                   </td>
                 </tr>

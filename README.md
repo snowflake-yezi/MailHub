@@ -1,8 +1,10 @@
 # MailHub
 
+[简体中文](README.md) | [English](README.en.md) | [日本語](README.ja.md)
+
 MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统。它把管理编排放在 `mgmt-system` 控制面，把真实收信、Maildir 存储、过滤转发和域名落地放在 `mail-node` 数据面，适合批量开通业务邮箱、统一汇总邮件，并通过 API 向业务系统或大模型系统提供结构化邮件读取能力。
 
-当前代码已经完成多服务器邮局池、域名/DKIM 自动化、React 管理后台、过滤转发、集成邮箱热切换、动态配置、回收站生命周期、结构化邮件查询、附件下载和 inline 图片兼容处理。
+当前代码已经完成多服务器邮局池、域名/DKIM 自动化、支持中英日切换的 React 管理后台、过滤转发、集成邮箱热切换、动态配置、回收站生命周期、结构化邮件查询、附件下载和 inline 图片兼容处理。
 
 ---
 
@@ -234,7 +236,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 |------|------|
 | 邮箱账号管理、批量创建、CSV 上传 | 已完成 |
 | 多服务器、域名池、DKIM、DNS 清单 | 已完成 |
-| React 管理后台 | 已完成 |
+| React 管理后台（简体中文 / English / 日本語） | 已完成 |
 | 三层鉴权 | 已完成 |
 | 健康检查、心跳、节点发现 | 已完成 |
 | 过滤规则、主动重载、Maildir 转发 | 已完成 |

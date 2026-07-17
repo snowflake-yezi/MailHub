@@ -1,3 +1,5 @@
+import i18n from './i18n'
+
 const API_BASE = '/api/v1/admin';
 
 async function request(path, options = {}) {
@@ -18,7 +20,7 @@ async function request(path, options = {}) {
 
   const data = await resp.json();
   if (data.code !== 0) {
-    throw new Error(data.message || '请求失败');
+    throw new Error(data.message || i18n.t('errors.requestFailed'));
   }
   return data.data;
 }

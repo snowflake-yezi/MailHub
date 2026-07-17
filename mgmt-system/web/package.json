@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:i18n": "node scripts/check-i18n.mjs"
   },
   "dependencies": {
+    "i18next": "^26.3.6",
     "lucide-react": "^1.23.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.10",
     "react-router-dom": "^6.26.0"
   },
   "devDependencies": {

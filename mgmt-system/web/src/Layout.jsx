@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Check,
   ChevronLeft,
   ChevronRight,
   Filter,
+  Globe2,
   Inbox,
   KeyRound,
   LayoutDashboard,
@@ -20,6 +22,7 @@ import {
   Sun,
   X,
 } from 'lucide-react'
+import { normalizeLanguage, SUPPORTED_LANGUAGES } from './i18n/config'
 
 const SIDEBAR_KEY = 'mailhub.sidebar.collapsed'
 const THEME_KEY = 'mailhub.theme'
@@ -28,20 +31,20 @@ const DEFAULT_BRAND_COLOR = '#2388ff'
 const LOGO_SRC = `${import.meta.env.BASE_URL}mailhub.png`
 
 const BRAND_PRESETS = [
-  { label: 'MailHub Blue', value: DEFAULT_BRAND_COLOR },
-  { label: 'Mint', value: '#10b981' },
-  { label: 'Cyan', value: '#06b6d4' },
-  { label: 'Coral', value: '#f97362' },
+  { labelKey: 'theme.presets.blue', value: DEFAULT_BRAND_COLOR },
+  { labelKey: 'theme.presets.mint', value: '#10b981' },
+  { labelKey: 'theme.presets.cyan', value: '#06b6d4' },
+  { labelKey: 'theme.presets.coral', value: '#f97362' },
 ]
 
 const NAV_ITEMS = [
-  { path: '/', label: '仪表盘', icon: LayoutDashboard, group: '总览' },
-  { path: '/servers', label: '服务器池', icon: Server, group: '资源' },
-  { path: '/mailboxes', label: '邮箱账户', icon: Inbox, group: '资源' },
-  { path: '/emails', label: '邮件查询', icon: Mail, group: '资源' },
-  { path: '/filters', label: '过滤规则', icon: Filter, group: '策略' },
-  { path: '/config', label: '系统配置', icon: Settings, group: '系统' },
-  { path: '/external-access', label: '外部访问', icon: KeyRound, group: '系统' },
+  { path: '/', labelKey: 'nav.dashboard', icon: LayoutDashboard, groupKey: 'groups.overview' },
+  { path: '/servers', labelKey: 'nav.servers', icon: Server, groupKey: 'groups.resources' },
+  { path: '/mailboxes', labelKey: 'nav.mailboxes', icon: Inbox, groupKey: 'groups.resources' },
+  { path: '/emails', labelKey: 'nav.emails', icon: Mail, groupKey: 'groups.resources' },
+  { path: '/filters', labelKey: 'nav.filters', icon: Filter, groupKey: 'groups.strategy' },
+  { path: '/config', labelKey: 'nav.config', icon: Settings, groupKey: 'groups.system' },
+  { path: '/external-access', labelKey: 'nav.externalAccess', icon: KeyRound, groupKey: 'groups.system' },
 ]
 
 function getInitialCollapsed() {
@@ -111,7 +114,7 @@ function normalizeGlobalSearch(value) {
 function isLikelyServerQuery(value) {
   const text = value.toLowerCase()
   return (
-    /^(server|node|mail-node|节点|服务器)\s*[:：]/i.test(value) ||
+    /^(server|node|mail-node|节点|服务器|ノード|サーバー)\s*[:：]/i.test(value) ||
     /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(value) ||
     text.includes('mail-node') ||
     text.includes('server-')
@@ -119,10 +122,11 @@ function isLikelyServerQuery(value) {
 }
 
 function stripSearchPrefix(value) {
-  return value.replace(/^(server|node|mail-node|节点|服务器)\s*[:：]\s*/i, '').trim()
+  return value.replace(/^(server|node|mail-node|节点|服务器|ノード|サーバー)\s*[:：]\s*/i, '').trim()
 }
 
 export default function Layout({ children }) {
+  const { t, i18n } = useTranslation('layout')
   const { pathname } = useLocation()
   const navigate = useNavigate()
   const [collapsed, setCollapsed] = useState(getInitialCollapsed)
@@ -158,10 +162,16 @@ export default function Layout({ children }) {
     setThemePanelOpen(false)
   }, [mobileOpen])
 
+  const navItems = useMemo(() => NAV_ITEMS.map(item => ({
+    ...item,
+    label: t(item.labelKey),
+    group: t(item.groupKey),
+  })), [t])
+
   const activeItem = useMemo(() => {
-    if (pathname === '/search') return { label: '搜索结果' }
-    return NAV_ITEMS.find(item => item.path === pathname) || NAV_ITEMS[0]
-  }, [pathname])
+    if (pathname === '/search') return { label: t('nav.search') }
+    return navItems.find(item => item.path === pathname) || navItems[0]
+  }, [navItems, pathname, t])
 
   const submitGlobalSearch = (e) => {
     e.preventDefault()
@@ -194,7 +204,7 @@ export default function Layout({ children }) {
       <button
         className="mobile-menu-button"
         type="button"
-        aria-label="打开导航"
+        aria-label={t('navigation.open')}
         onClick={() => setMobileOpen(true)}
       >
         <Menu size={20} />
@@ -204,35 +214,35 @@ export default function Layout({ children }) {
         <button
           className="sidebar-backdrop"
           type="button"
-          aria-label="关闭导航"
+          aria-label={t('navigation.close')}
           onClick={() => setMobileOpen(false)}
         />
       )}
 
       <aside className={`sidebar ${mobileOpen ? 'is-mobile-open' : ''}`}>
         <div className="sidebar-brand">
-          <Link className="brand-mark" to="/" aria-label="MailHub 仪表盘">
+          <Link className="brand-mark" to="/" aria-label={`MailHub ${t('nav.dashboard')}`}>
             <img src={LOGO_SRC} alt="" />
           </Link>
           <div className="brand-copy">
             <div className="brand-name">MailHub</div>
-            <div className="brand-subtitle">邮件运维控制台</div>
+            <div className="brand-subtitle">{t('brandSubtitle')}</div>
           </div>
           <button
             className="icon-button sidebar-mobile-close"
             type="button"
-            aria-label="关闭导航"
+            aria-label={t('navigation.close')}
             onClick={() => setMobileOpen(false)}
           >
             <X size={18} />
           </button>
         </div>
 
-        <nav className="sidebar-nav" aria-label="主导航">
-          {NAV_ITEMS.map((item, index) => {
+        <nav className="sidebar-nav" aria-label={t('navigation.ariaLabel')}>
+          {navItems.map((item, index) => {
             const Icon = item.icon
-            const previous = NAV_ITEMS[index - 1]
-            const showGroup = !previous || previous.group !== item.group
+            const previous = navItems[index - 1]
+            const showGroup = !previous || previous.groupKey !== item.groupKey
             return (
               <div key={item.path}>
                 {showGroup && <div className="nav-group-label">{item.group}</div>}
@@ -251,11 +261,11 @@ export default function Layout({ children }) {
             <button
               className={`nav-item theme-nav-item ${themePanelOpen ? 'active' : ''}`}
               type="button"
-              title={collapsed ? '主题' : undefined}
+              title={collapsed ? t('nav.theme') : undefined}
               onClick={() => { setMobileOpen(false); setThemePanelOpen(true) }}
             >
               <Palette className="nav-icon" size={19} />
-              <span className="nav-label">主题</span>
+              <span className="nav-label">{t('nav.theme')}</span>
             </button>
           </div>
         </nav>
@@ -263,11 +273,11 @@ export default function Layout({ children }) {
         <button
           className="sidebar-collapse"
           type="button"
-          aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={collapsed ? t('navigation.expand') : t('navigation.collapse')}
           onClick={() => setCollapsed(v => !v)}
         >
           {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-          <span>{collapsed ? '展开' : '收起侧栏'}</span>
+          <span>{collapsed ? t('navigation.expand') : t('navigation.collapse')}</span>
         </button>
       </aside>
 
@@ -278,16 +288,28 @@ export default function Layout({ children }) {
             <strong>{activeItem.label}</strong>
           </div>
           <div className="topbar-actions">
+            <label className="language-select">
+              <Globe2 size={16} aria-hidden="true" />
+              <select
+                value={normalizeLanguage(i18n.resolvedLanguage)}
+                onChange={event => i18n.changeLanguage(event.target.value)}
+                aria-label={t('language.ariaLabel')}
+              >
+                {SUPPORTED_LANGUAGES.map(language => (
+                  <option key={language.code} value={language.code}>{language.label}</option>
+                ))}
+              </select>
+            </label>
             <form className="global-search" onSubmit={submitGlobalSearch}>
               <Search size={16} />
               <input
                 value={globalSearch}
                 onChange={e => setGlobalSearch(e.target.value)}
-                placeholder="搜索邮箱、节点或 Message-ID"
-                aria-label="全局搜索"
+                placeholder={t('search.placeholder')}
+                aria-label={t('search.ariaLabel')}
               />
             </form>
-            <button className="icon-button" type="button" title="刷新">
+            <button className="icon-button" type="button" title={t('common:actions.refresh')}>
               <RefreshCw size={18} />
             </button>
           </div>
@@ -299,35 +321,35 @@ export default function Layout({ children }) {
 
       {themePanelOpen && (
         <div className="drawer-overlay" onClick={() => setThemePanelOpen(false)}>
-          <aside className="drawer theme-drawer" onClick={e => e.stopPropagation()} aria-label="主题">
+          <aside className="drawer theme-drawer" onClick={e => e.stopPropagation()} aria-label={t('theme.title')}>
             <div className="drawer-header">
               <div>
-                <div className="drawer-kicker">Theme</div>
-                <h2>主题</h2>
+                <div className="drawer-kicker">{t('theme.drawerKicker')}</div>
+                <h2>{t('theme.title')}</h2>
               </div>
-              <button className="icon-button" type="button" title="关闭" onClick={() => setThemePanelOpen(false)}>
+              <button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => setThemePanelOpen(false)}>
                 <X size={18} />
               </button>
             </div>
             <div className="drawer-body theme-drawer-body">
               <section className="theme-section">
-                <h3>模式</h3>
+                <h3>{t('theme.mode')}</h3>
                 <div className="theme-mode-grid">
                   <button className={`theme-option ${theme === 'light' ? 'active' : ''}`} type="button" onClick={() => setTheme('light')}>
                     <Sun size={17} />
-                    <span>浅色</span>
+                    <span>{t('theme.light')}</span>
                     {theme === 'light' && <Check size={15} />}
                   </button>
                   <button className={`theme-option ${theme === 'dark' ? 'active' : ''}`} type="button" onClick={() => setTheme('dark')}>
                     <Moon size={17} />
-                    <span>深色</span>
+                    <span>{t('theme.dark')}</span>
                     {theme === 'dark' && <Check size={15} />}
                   </button>
                 </div>
               </section>
 
               <section className="theme-section">
-                <h3>品牌色</h3>
+                <h3>{t('theme.brandColor')}</h3>
                 <div className="brand-preset-grid">
                   {BRAND_PRESETS.map(preset => (
                     <button
@@ -337,7 +359,7 @@ export default function Layout({ children }) {
                       onClick={() => selectBrandColor(preset.value)}
                     >
                       <span className="brand-swatch" style={{ backgroundColor: preset.value }} />
-                      <span>{preset.label}</span>
+                      <span>{t(preset.labelKey)}</span>
                       {brandColor === preset.value && <Check size={15} />}
                     </button>
                   ))}
@@ -345,30 +367,30 @@ export default function Layout({ children }) {
               </section>
 
               <section className="theme-section">
-                <h3>自定义颜色</h3>
+                <h3>{t('theme.customColor')}</h3>
                 <div className="custom-color-row">
                   <input
                     className="color-picker"
                     type="color"
                     value={brandColor}
-                    aria-label="自定义颜色"
+                    aria-label={t('theme.customColorAria')}
                     onChange={e => updateCustomColor(e.target.value)}
                   />
                   <input
                     value={customColor}
                     onChange={e => updateCustomColor(e.target.value)}
                     placeholder="#2388ff"
-                    aria-label="HEX 颜色"
+                    aria-label={t('theme.hexColorAria')}
                   />
                 </div>
               </section>
             </div>
             <div className="drawer-footer">
               <button className="btn btn-outline" type="button" onClick={resetTheme}>
-                <RotateCcw size={15} /> 恢复默认
+                <RotateCcw size={15} /> {t('common:actions.resetDefault')}
               </button>
               <button className="btn btn-primary" type="button" onClick={() => setThemePanelOpen(false)}>
-                完成
+                {t('common:actions.done')}
               </button>
             </div>
           </aside>

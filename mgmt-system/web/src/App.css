@@ -337,6 +337,31 @@ a {
   gap: 10px;
 }
 
+.language-select {
+  display: inline-flex;
+  width: 132px;
+  height: 38px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  color: var(--color-muted);
+  background: var(--color-input);
+}
+
+.language-select select {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--color-text);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .global-search {
   display: flex;
   width: min(360px, 34vw);
@@ -2855,6 +2880,11 @@ textarea {
 
   .topbar-actions {
     flex: 0 0 auto;
+  }
+
+  .language-select {
+    width: 96px;
+    height: 36px;
   }
 
   .icon-button {

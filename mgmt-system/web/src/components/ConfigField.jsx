@@ -1,11 +1,30 @@
+import { useTranslation } from 'react-i18next'
+
+const UNIT_KEYS = {
+  '字节': 'bytes',
+  '天': 'days',
+  '小时': 'hours',
+  '邮箱': 'mailbox',
+  '毫秒': 'milliseconds',
+  '分钟': 'minutes',
+  '秒': 'seconds',
+  '开关': 'switch',
+  '版本': 'version',
+}
+
 export default function ConfigField({ item, value, onChange, children, action }) {
+  const { t } = useTranslation(['common', 'pages'])
   const inputValue = value ?? item.value ?? item.global_value ?? ''
   const inputID = `config-${item.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  const itemKey = `pages:config.fields.${item.key}`
+  const label = t(`${itemKey}.label`, { defaultValue: item.label })
+  const description = t(`${itemKey}.description`, { defaultValue: item.description || t('config.noDescription') })
+  const unit = item.unit ? t(`units.${UNIT_KEYS[item.unit]}`, { defaultValue: item.unit }) : ''
   const effectBadge = item.effect_type === 'new_resources'
-    ? <span className="tag tag-success">仅影响新建邮箱</span>
+    ? <span className="tag tag-success">{t('config.effects.newResources')}</span>
     : item.reloadable
-      ? <span className="tag tag-info">热加载</span>
-      : <span className="tag tag-warning">需重启</span>
+      ? <span className="tag tag-info">{t('config.effects.hotReload')}</span>
+      : <span className="tag tag-warning">{t('config.effects.restart')}</span>
 
   const input = item.value_type === 'bool' ? (
     <label className="toggle">
@@ -37,7 +56,7 @@ export default function ConfigField({ item, value, onChange, children, action })
     <section className="config-field">
       <div className="config-field-head">
         <div>
-          <label htmlFor={inputID}>{item.label}</label>
+          <label htmlFor={inputID}>{label}</label>
           <code>{item.key}</code>
         </div>
         <div className="config-field-actions">
@@ -47,8 +66,8 @@ export default function ConfigField({ item, value, onChange, children, action })
       </div>
       <div>{input}</div>
       <div className="form-hint">
-        <span>{item.description || '暂无说明'}</span>
-        <span>默认: {item.default_value ?? '-'}{item.unit ? ` ${item.unit}` : ''}</span>
+        <span>{description}</span>
+        <span>{t('config.defaultValue', { value: `${item.default_value ?? '-'}${unit ? ` ${unit}` : ''}` })}</span>
       </div>
       {children}
     </section>

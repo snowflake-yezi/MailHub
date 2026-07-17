@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Activity,
   AlertTriangle,
@@ -17,12 +18,13 @@ import {
 } from 'lucide-react'
 import { serverAPI } from '../api'
 import { configStatusMeta } from '../components/NodeConfigDrawer'
+import { formatDateTime } from '../i18n'
 
 const STATUS_META = {
-  healthy: { label: '健康', className: 'status-healthy', icon: CheckCircle2 },
-  degraded: { label: '降级', className: 'status-degraded', icon: AlertTriangle },
-  draining: { label: '缩容中', className: 'status-draining', icon: Activity },
-  down: { label: '离线', className: 'status-down', icon: CircleOff },
+  healthy: { className: 'status-healthy', icon: CheckCircle2 },
+  degraded: { className: 'status-degraded', icon: AlertTriangle },
+  draining: { className: 'status-draining', icon: Activity },
+  down: { className: 'status-down', icon: CircleOff },
 }
 
 const EMPTY_FORM = {
@@ -42,16 +44,17 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
-function ConfirmDialog({ title, message, confirmLabel = '确认', danger = true, onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel, danger = true, onConfirm, onCancel }) {
+  const { t } = useTranslation('common')
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
+          <button className="btn btn-outline" type="button" onClick={onCancel}>{t('actions.cancel')}</button>
           <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={onConfirm}>
-            {confirmLabel}
+            {confirmLabel || t('actions.confirm')}
           </button>
         </div>
       </div>
@@ -60,20 +63,15 @@ function ConfirmDialog({ title, message, confirmLabel = '确认', danger = true,
 }
 
 function StatusBadge({ status }) {
+  const { t } = useTranslation('pages')
   const meta = STATUS_META[status] || STATUS_META.down
   const Icon = meta.icon
   return (
     <span className={`status-badge ${meta.className}`}>
       <Icon size={13} />
-      {meta.label}
+      {t(`servers.status.${status}`, { defaultValue: t('servers.status.down') })}
     </span>
   )
-}
-
-function formatDate(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function clampLoad(current, capacity) {
@@ -102,6 +100,7 @@ function SummaryTile({ icon: Icon, label, value, tone }) {
 }
 
 function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete }) {
+  const { t } = useTranslation('pages')
   const isEdit = mode === 'edit'
 
   const updateField = (field, value) => {
@@ -110,40 +109,40 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
 
   return (
     <div className="drawer-overlay" onClick={onClose}>
-      <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={isEdit ? '编辑服务器' : '注册服务器'}>
+      <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={isEdit ? t('servers.drawer.editAria') : t('servers.drawer.registerAria')}>
         <div className="drawer-header">
           <div>
             <div className="drawer-kicker">Mail node</div>
-            <h2>{isEdit ? `编辑 ${form.name || `#${form.id}`}` : '注册服务器'}</h2>
+            <h2>{isEdit ? t('servers.drawer.editTitle', { name: form.name || `#${form.id}` }) : t('servers.drawer.registerTitle')}</h2>
           </div>
-          <button className="icon-button" type="button" title="关闭" onClick={onClose}>
+          <button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}>
             <X size={18} />
           </button>
         </div>
 
         <form className="drawer-body" onSubmit={onSave}>
           <div className="form-group">
-            <label>服务器名称</label>
+            <label>{t('servers.drawer.name')}</label>
             <input
               value={form.name}
               onChange={e => updateField('name', e.target.value)}
-              placeholder="例如: mail-node-01"
+              placeholder={t('servers.drawer.namePlaceholder')}
               required
             />
           </div>
           <div className="form-group">
-            <label>API 地址</label>
+            <label>{t('servers.drawer.apiHost')}</label>
             <input
               value={form.api_host}
               onChange={e => updateField('api_host', e.target.value)}
-              placeholder="例如: 10.0.0.2:8081"
+              placeholder={t('servers.drawer.apiPlaceholder')}
               required
             />
-            <div className="form-hint">SMTP / IMAP 地址由后端按 API 地址推导，注册后仍可调整节点状态。</div>
+            <div className="form-hint">{t('servers.drawer.apiHint')}</div>
           </div>
           <div className="field-grid">
             <div className="form-group">
-              <label>容量上限</label>
+              <label>{t('servers.drawer.capacity')}</label>
               <input
                 type="number"
                 min={1}
@@ -152,7 +151,7 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
               />
             </div>
             <div className="form-group">
-              <label>心跳间隔</label>
+              <label>{t('servers.drawer.heartbeat')}</label>
               <input
                 type="number"
                 min={5}
@@ -160,17 +159,14 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
                 value={form.heartbeat_interval}
                 onChange={e => updateField('heartbeat_interval', parseInt(e.target.value, 10) || 0)}
               />
-              <div className="form-hint">单位：秒，建议 5-600。</div>
+              <div className="form-hint">{t('servers.drawer.heartbeatHint')}</div>
             </div>
           </div>
           {isEdit && (
             <div className="form-group">
-              <label>运行状态</label>
+              <label>{t('servers.drawer.status')}</label>
               <select value={form.status} onChange={e => updateField('status', e.target.value)}>
-                <option value="healthy">健康</option>
-                <option value="degraded">降级</option>
-                <option value="draining">缩容中</option>
-                <option value="down">离线</option>
+                {Object.keys(STATUS_META).map(status => <option key={status} value={status}>{t(`servers.status.${status}`)}</option>)}
               </select>
             </div>
           )}
@@ -178,13 +174,13 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
           <div className="drawer-footer">
             {isEdit && (
               <button className="btn btn-outline btn-danger-outline" type="button" onClick={onDelete}>
-                <Trash2 size={16} /> 删除
+                <Trash2 size={16} /> {t('common:actions.delete')}
               </button>
             )}
-            <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+            <button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button>
             <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving && <span className="spinner" />}
-              {isEdit ? '保存修改' : '注册服务器'}
+              {isEdit ? t('servers.drawer.saveChanges') : t('servers.register')}
             </button>
           </div>
         </form>
@@ -194,6 +190,7 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
 }
 
 export default function ServersPage() {
+  const { t } = useTranslation('pages')
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const searchQuery = (searchParams.get('search') || '').trim()
@@ -213,12 +210,12 @@ export default function ServersPage() {
       const data = await serverAPI.list()
       setServers(Array.isArray(data) ? data : [])
     } catch (e) {
-      setToast({ type: 'error', message: '加载失败: ' + e.message })
+      setToast({ type: 'error', message: t('servers.messages.loadFailed', { message: e.message }) })
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => { load() }, [load])
 
@@ -286,14 +283,14 @@ export default function ServersPage() {
     try {
       if (drawerMode === 'edit') {
         await serverAPI.update(form.id, payload)
-        setToast({ type: 'success', message: '服务器修改已保存' })
+        setToast({ type: 'success', message: t('servers.messages.saved') })
       } else {
         await serverAPI.create({
           name: payload.name,
           api_host: payload.api_host,
           capacity: payload.capacity,
         })
-        setToast({ type: 'success', message: '服务器注册成功' })
+        setToast({ type: 'success', message: t('servers.messages.registered') })
       }
       closeDrawer()
       load(true)
@@ -306,16 +303,16 @@ export default function ServersPage() {
 
   const toggleStatus = (server) => {
     const newStatus = server.status === 'draining' ? 'healthy' : 'draining'
-    const action = newStatus === 'draining' ? '缩容' : '恢复服务'
+    const action = newStatus === 'draining' ? t('servers.dialogs.drain') : t('servers.dialogs.resume')
     setConfirm({
-      title: `${action}服务器`,
-      message: `确定将「${server.name}」${action}吗？`,
+      title: t('servers.dialogs.statusTitle', { action }),
+      message: t('servers.dialogs.statusMessage', { name: server.name, action }),
       confirmLabel: action,
       danger: newStatus === 'draining',
       onConfirm: async () => {
         try {
           await serverAPI.update(server.id, { status: newStatus })
-          setToast({ type: 'success', message: '状态已更新' })
+          setToast({ type: 'success', message: t('servers.messages.statusUpdated') })
           load(true)
         } catch (err) {
           setToast({ type: 'error', message: err.message })
@@ -328,13 +325,13 @@ export default function ServersPage() {
 
   const askDelete = (server = form) => {
     setConfirm({
-      title: '删除服务器',
-      message: `确定要删除「${server.name}」吗？此操作不可撤销。`,
-      confirmLabel: '删除',
+      title: t('servers.dialogs.deleteTitle'),
+      message: t('servers.dialogs.deleteMessage', { name: server.name }),
+      confirmLabel: t('common:actions.delete'),
       onConfirm: async () => {
         try {
           await serverAPI.remove(server.id)
-          setToast({ type: 'success', message: '服务器已删除' })
+          setToast({ type: 'success', message: t('servers.messages.deleted') })
           closeDrawer()
           load(true)
         } catch (err) {
@@ -349,7 +346,7 @@ export default function ServersPage() {
   if (loading) {
     return (
       <div className="dashboard-panel loading-panel">
-        <span className="spinner" /> 加载服务器池...
+        <span className="spinner" /> {t('servers.loading')}
       </div>
     )
   }
@@ -358,39 +355,39 @@ export default function ServersPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>服务器池</h1>
-          <p className="page-subtitle">管理 mail-node 节点、域名归属、容量水位与主动探测状态。</p>
+          <h1>{t('servers.title')}</h1>
+          <p className="page-subtitle">{t('servers.subtitle')}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={() => load(true)} disabled={refreshing}>
             {refreshing ? <span className="spinner" /> : <RotateCcw size={16} />}
-            刷新
+            {t('common:actions.refresh')}
           </button>
           <button className="btn btn-primary" type="button" onClick={openCreate}>
-            <Plus size={16} /> 注册服务器
+            <Plus size={16} /> {t('servers.register')}
           </button>
         </div>
       </div>
 
       <div className="summary-grid">
-        <SummaryTile icon={Server} label="节点总数" value={summary.total} tone="brand" />
-        <SummaryTile icon={CheckCircle2} label="健康节点" value={summary.healthy} tone="success" />
-        <SummaryTile icon={AlertTriangle} label="降级节点" value={summary.degraded} tone="warning" />
-        <SummaryTile icon={Activity} label="缩容中" value={summary.draining} tone="info" />
-        <SummaryTile icon={CircleOff} label="离线节点" value={summary.down} tone="danger" />
+        <SummaryTile icon={Server} label={t('servers.summary.total')} value={summary.total} tone="brand" />
+        <SummaryTile icon={CheckCircle2} label={t('servers.summary.healthy')} value={summary.healthy} tone="success" />
+        <SummaryTile icon={AlertTriangle} label={t('servers.summary.degraded')} value={summary.degraded} tone="warning" />
+        <SummaryTile icon={Activity} label={t('servers.summary.draining')} value={summary.draining} tone="info" />
+        <SummaryTile icon={CircleOff} label={t('servers.summary.down')} value={summary.down} tone="danger" />
       </div>
 
       <section className="section data-section">
         <div className="panel-header">
           <div>
-            <h3>节点列表</h3>
+            <h3>{t('servers.list.title')}</h3>
             <div className="panel-caption">
-              {searchQuery ? `搜索「${searchQuery}」匹配 ${visibleServers.length} 个节点。` : '负载、心跳和探测结果在同一行内完成判断。'}
+              {searchQuery ? t('servers.list.searchCaption', { query: searchQuery, count: visibleServers.length }) : t('servers.list.caption')}
             </div>
           </div>
           {searchQuery && (
             <button className="btn btn-sm btn-outline" type="button" onClick={() => setSearchParams({})}>
-              清除搜索
+              {t('common:actions.clearSearch')}
             </button>
           )}
         </div>
@@ -398,16 +395,16 @@ export default function ServersPage() {
           <table className="data-table server-table">
             <thead>
               <tr>
-                <th>节点</th>
+                <th>{t('servers.list.node')}</th>
                 <th>API</th>
-                <th>关联域名</th>
-                <th>负载</th>
-                <th>状态</th>
-                <th>心跳</th>
-                <th>探测</th>
-                <th>失败</th>
-                <th>节点配置</th>
-                <th>操作</th>
+                <th>{t('servers.list.domains')}</th>
+                <th>{t('servers.list.load')}</th>
+                <th>{t('servers.list.status')}</th>
+                <th>{t('servers.list.heartbeat')}</th>
+                <th>{t('servers.list.probe')}</th>
+                <th>{t('servers.list.failures')}</th>
+                <th>{t('servers.list.config')}</th>
+                <th>{t('servers.list.operations')}</th>
               </tr>
             </thead>
             <tbody>
@@ -429,7 +426,7 @@ export default function ServersPage() {
                       <div className="tag-list">
                         {server.domains && server.domains.length > 0
                           ? server.domains.map(domain => <span key={domain.id || domain.name} className="tag tag-info">{domain.name}</span>)
-                          : <span className="muted-text">未绑定</span>}
+                          : <span className="muted-text">{t('servers.list.unbound')}</span>}
                       </div>
                     </td>
                     <td>
@@ -438,7 +435,7 @@ export default function ServersPage() {
                           <span>{server.current_load || 0} / {server.capacity || 0}</span>
                           <span>{percent}%</span>
                         </div>
-                        <div className="progress" aria-label={`${server.name} 负载 ${percent}%`}>
+                        <div className="progress" aria-label={t('servers.list.loadAria', { name: server.name, percent })}>
                           <div
                             className="progress-bar"
                             style={{
@@ -450,8 +447,8 @@ export default function ServersPage() {
                       </div>
                     </td>
                     <td><StatusBadge status={server.status} /></td>
-                    <td>{formatDate(server.last_heartbeat)}</td>
-                    <td>{formatDate(server.last_probe_at)}</td>
+                    <td>{formatDateTime(server.last_heartbeat)}</td>
+                    <td>{formatDateTime(server.last_probe_at)}</td>
                     <td>
                       <span className={(server.probe_fail_count || 0) > 0 ? 'tag tag-warning' : 'tag tag-success'}>
                         {server.probe_fail_count || 0}
@@ -459,19 +456,19 @@ export default function ServersPage() {
                     </td>
                     <td>
                       {server.config_summary
-						? <div className={`config-summary ${server.config_summary.status}`}><strong>{server.config_summary.effective_value ? `${server.config_summary.effective_value} 小时` : '未上报'}</strong><span>{configStatusMeta(server.config_summary.status).label}</span></div>
-                        : <span className="muted-text">未上报</span>}
+						? <div className={`config-summary ${server.config_summary.status}`}><strong>{server.config_summary.effective_value ? t('servers.list.configHours', { value: server.config_summary.effective_value }) : t('common:states.notReported')}</strong><span>{configStatusMeta(server.config_summary.status, t).label}</span></div>
+                        : <span className="muted-text">{t('common:states.notReported')}</span>}
                     </td>
                     <td>
                       <div className="row-actions">
-                        <button className="icon-button compact" type="button" title="节点配置" onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
-                        <button className="icon-button compact" type="button" title="编辑" onClick={() => openEdit(server)}>
+                        <button className="icon-button compact" type="button" title={t('servers.list.config')} onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
+                        <button className="icon-button compact" type="button" title={t('common:actions.edit')} onClick={() => openEdit(server)}>
                           <Pencil size={15} />
                         </button>
-                        <button className="icon-button compact" type="button" title={server.status === 'draining' ? '恢复服务' : '缩容'} onClick={() => toggleStatus(server)}>
+                        <button className="icon-button compact" type="button" title={server.status === 'draining' ? t('servers.dialogs.resume') : t('servers.dialogs.drain')} onClick={() => toggleStatus(server)}>
                           {server.status === 'draining' ? <Power size={15} /> : <Activity size={15} />}
                         </button>
-                        <button className="icon-button compact danger" type="button" title="删除" onClick={() => askDelete(server)}>
+                        <button className="icon-button compact danger" type="button" title={t('common:actions.delete')} onClick={() => askDelete(server)}>
                           <Trash2 size={15} />
                         </button>
                       </div>
@@ -484,13 +481,13 @@ export default function ServersPage() {
                   <td colSpan={10}>
                     <div className="empty-state">
                       <Database size={28} />
-                      <strong>{searchQuery ? '没有匹配的服务器节点' : '暂无服务器节点'}</strong>
-                      <span>{searchQuery ? '换个节点名称、API 地址或域名再试。' : '注册第一台 mail-node 后，MailHub 才能开始分配邮箱。'}</span>
+                      <strong>{searchQuery ? t('servers.list.emptySearch') : t('servers.list.empty')}</strong>
+                      <span>{searchQuery ? t('servers.list.emptySearchDesc') : t('servers.list.emptyDesc')}</span>
                       {searchQuery ? (
-                        <button className="btn btn-outline" type="button" onClick={() => setSearchParams({})}>清除搜索</button>
+                        <button className="btn btn-outline" type="button" onClick={() => setSearchParams({})}>{t('common:actions.clearSearch')}</button>
                       ) : (
                         <button className="btn btn-primary" type="button" onClick={openCreate}>
-                          <Plus size={16} /> 注册服务器
+                          <Plus size={16} /> {t('servers.register')}
                         </button>
                       )}
                     </div>

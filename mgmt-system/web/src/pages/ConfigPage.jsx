@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   Activity,
   BellRing,
@@ -23,17 +24,18 @@ import { accountAPI, configAPI, serverAPI } from '../api'
 import ConfigDrawer from '../components/ConfigDrawer'
 import ConfigField from '../components/ConfigField'
 import NodeConfigDrawer from '../components/NodeConfigDrawer'
+import { formatDateTime } from '../i18n'
 
 const CATEGORY_META = {
-  forward: { label: '邮件转发引擎', desc: '控制 union 转发目标、重试与链路行为。', icon: MailCheck },
-  filter: { label: '过滤引擎', desc: '控制规则匹配、默认动作和热加载策略。', icon: SlidersHorizontal },
-  lifecycle: { label: '生命周期管理', desc: '控制邮箱禁用、回收与清理节奏。', icon: TimerReset },
-  healthcheck: { label: '健康检查', desc: '控制主动探测、失败阈值和状态降级。', icon: HeartPulse },
-  heartbeat: { label: '心跳上报', desc: '控制 mail-node 心跳间隔和节点存活判定。', icon: Activity },
-  session: { label: '管理会话', desc: '控制后台登录会话和安全策略。', icon: ShieldCheck },
-  database: { label: '数据库连接池', desc: '控制连接池上限、空闲连接和超时。', icon: Database },
-  maildir: { label: '邮件存储', desc: '控制 Maildir 路径、保留和存储行为。', icon: HardDrive },
-  general: { label: '通用参数', desc: '系统级基础配置和默认行为。', icon: Settings },
+  forward: { icon: MailCheck },
+  filter: { icon: SlidersHorizontal },
+  lifecycle: { icon: TimerReset },
+  healthcheck: { icon: HeartPulse },
+  heartbeat: { icon: Activity },
+  session: { icon: ShieldCheck },
+  database: { icon: Database },
+  maildir: { icon: HardDrive },
+  general: { icon: Settings },
 }
 
 function Toast({ message, type, onClose }) {
@@ -45,36 +47,38 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
-function ConfirmDialog({ title, message, confirmLabel = '确认', onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel, onConfirm, onCancel }) {
+  const { t } = useTranslation('common')
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
-          <button className="btn btn-danger" type="button" onClick={onConfirm}>{confirmLabel}</button>
+          <button className="btn btn-outline" type="button" onClick={onCancel}>{t('actions.cancel')}</button>
+          <button className="btn btn-danger" type="button" onClick={onConfirm}>{confirmLabel || t('actions.confirm')}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function getCategoryMeta(group) {
+function getCategoryMeta(group, t) {
   const meta = CATEGORY_META[group.category] || {}
   return {
-    label: group.label || meta.label || group.category,
-    desc: meta.desc || '集中管理该模块的运行参数。',
+    label: t(`config.categories.${group.category}.label`, { defaultValue: group.label || group.category }),
+    desc: t(`config.categories.${group.category}.desc`, { defaultValue: t('config.module.genericDesc') }),
     icon: meta.icon || Settings,
   }
 }
 
-function getCategoryLabel(category) {
-  return CATEGORY_META[category]?.label || category
+function getCategoryLabel(category, t) {
+  return t(`config.categories.${category}.label`, { defaultValue: category })
 }
 
 function ModulePanel({ group, onConfigure }) {
-  const meta = getCategoryMeta(group)
+  const { t } = useTranslation('pages')
+  const meta = getCategoryMeta(group, t)
   const Icon = meta.icon
   const total = group.items.length
   const reloadable = group.items.filter(item => item.reloadable).length
@@ -88,7 +92,7 @@ function ModulePanel({ group, onConfigure }) {
           <div className="module-title-row">
             <h3>{meta.label}</h3>
             <span className="status-badge status-active">
-              <CheckCircle2 size={13} /> 启用中
+              <CheckCircle2 size={13} /> {t('config.module.enabled')}
             </span>
           </div>
           <p>{meta.desc}</p>
@@ -99,21 +103,21 @@ function ModulePanel({ group, onConfigure }) {
       <div className="module-stats">
         <div>
           <strong>{total}</strong>
-          <span>参数</span>
+          <span>{t('config.module.params')}</span>
         </div>
         <div>
           <strong>{reloadable}</strong>
-          <span>热加载</span>
+          <span>{t('config.module.hotReload')}</span>
         </div>
         <div data-warning={restartRequired > 0}>
           <strong>{restartRequired}</strong>
-          <span>需重启</span>
+          <span>{t('config.module.restart')}</span>
         </div>
       </div>
 
       <div className="module-actions">
         <button className="btn btn-outline" type="button" onClick={() => onConfigure(group)}>
-          <SlidersHorizontal size={16} /> 参数配置
+          <SlidersHorizontal size={16} /> {t('config.module.configure')}
         </button>
       </div>
     </article>
@@ -121,30 +125,32 @@ function ModulePanel({ group, onConfigure }) {
 }
 
 function AccountPanel({ account, onEdit }) {
+  const { t } = useTranslation('pages')
   return (
     <section className="account-panel">
       <div className="account-main">
         <span className="module-icon"><UserRound size={20} /></span>
         <div>
           <div className="module-title-row">
-            <h3>管理账号</h3>
-            {account.must_change_password && <span className="tag tag-warning">需要修改密码</span>}
+            <h3>{t('config.account.title')}</h3>
+            {account.must_change_password && <span className="tag tag-warning">{t('config.account.changeRequired')}</span>}
           </div>
-          <p>管理登录身份与恢复后的凭据状态。</p>
+          <p>{t('config.account.description')}</p>
         </div>
       </div>
       <div className="account-meta">
-        <div><span>当前用户名</span><strong>{account.username}</strong></div>
-        <div><span>最近改密</span><strong>{account.password_changed_at ? new Date(account.password_changed_at).toLocaleString() : '尚无记录'}</strong></div>
+        <div><span>{t('config.account.currentUsername')}</span><strong>{account.username}</strong></div>
+        <div><span>{t('config.account.lastChanged')}</span><strong>{account.password_changed_at ? formatDateTime(account.password_changed_at) : t('config.account.noRecord')}</strong></div>
       </div>
       <button className="btn btn-outline" type="button" onClick={onEdit}>
-        <KeyRound size={16} /> 账号设置
+        <KeyRound size={16} /> {t('config.account.settings')}
       </button>
     </section>
   )
 }
 
 function AccountDialog({ account, onClose }) {
+  const { t } = useTranslation('pages')
   const [username, setUsername] = useState(account.username)
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -156,7 +162,7 @@ function AccountDialog({ account, onClose }) {
     e.preventDefault()
     setError('')
     if (newPassword !== confirmPassword) {
-      setError('两次输入的新密码不一致')
+      setError(t('config.account.mismatch'))
       return
     }
     setSaving(true)
@@ -178,35 +184,35 @@ function AccountDialog({ account, onClose }) {
       <div className="modal account-modal" onClick={e => e.stopPropagation()}>
         <div className="account-modal-header">
           <div>
-            <span>账号安全</span>
-            <h3>管理账号设置</h3>
+            <span>{t('config.account.kicker')}</span>
+            <h3>{t('config.account.settings')}</h3>
           </div>
-          <button className="icon-button" type="button" title="关闭" onClick={onClose}><X size={18} /></button>
+          <button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button>
         </div>
         {error && <div className="inline-alert" role="alert">{error}</div>}
         <form onSubmit={submit}>
           <div className="form-group">
-            <label htmlFor="account-username">用户名</label>
+            <label htmlFor="account-username">{t('config.account.username')}</label>
             <input id="account-username" value={username} onChange={e => setUsername(e.target.value)} required />
           </div>
           <div className="form-group">
-            <label htmlFor="account-current-password">当前密码</label>
+            <label htmlFor="account-current-password">{t('config.account.currentPassword')}</label>
             <input id="account-current-password" type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} autoComplete="current-password" required />
           </div>
           <div className="form-group">
-            <label htmlFor="account-new-password">新密码</label>
-            <input id="account-new-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" placeholder="留空表示不修改密码" />
-            <div className="form-hint">生产环境至少 12 位，不能使用常见弱密码或与用户名相同。</div>
+            <label htmlFor="account-new-password">{t('config.account.newPassword')}</label>
+            <input id="account-new-password" type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} autoComplete="new-password" placeholder={t('config.account.passwordPlaceholder')} />
+            <div className="form-hint">{t('config.account.passwordHint')}</div>
           </div>
           <div className="form-group">
-            <label htmlFor="account-confirm-password">确认新密码</label>
+            <label htmlFor="account-confirm-password">{t('config.account.confirmPassword')}</label>
             <input id="account-confirm-password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} autoComplete="new-password" disabled={!newPassword} />
           </div>
           <div className="modal-footer">
-            <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+            <button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button>
             <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving ? <span className="spinner" /> : <Save size={16} />}
-              保存并重新登录
+              {t('config.account.saveAndLogin')}
             </button>
           </div>
         </form>
@@ -216,9 +222,10 @@ function AccountDialog({ account, onClose }) {
 }
 
 function GlobalConfigDrawer({ group, onSave, onReset, onClose }) {
+  const { t } = useTranslation('pages')
   const [values, setValues] = useState({})
   const [saving, setSaving] = useState(false)
-  const meta = getCategoryMeta(group)
+  const meta = getCategoryMeta(group, t)
   const Icon = meta.icon
 
   useEffect(() => {
@@ -259,14 +266,14 @@ function GlobalConfigDrawer({ group, onSave, onReset, onClose }) {
   }
 
   return (
-    <ConfigDrawer title={meta.label} kicker={group.category} icon={Icon} ariaLabel={`${meta.label} 参数配置`} onClose={onClose}>
+    <ConfigDrawer title={meta.label} kicker={group.category} icon={Icon} ariaLabel={t('config.drawer.ariaLabel', { name: meta.label })} onClose={onClose}>
         <form className="drawer-body" onSubmit={handleSave}>
           <div className="config-drawer-summary">
             <span className="status-badge status-active">
-              <CheckCircle2 size={13} /> 启用中
+              <CheckCircle2 size={13} /> {t('config.module.enabled')}
             </span>
             <span className={dirtyCount > 0 ? 'tag tag-warning' : 'tag tag-success'}>
-              {dirtyCount > 0 ? `${dirtyCount} 项未保存` : '无未保存修改'}
+              {dirtyCount > 0 ? t('config.drawer.dirty', { count: dirtyCount }) : t('config.drawer.noChanges')}
             </span>
           </div>
 
@@ -278,12 +285,12 @@ function GlobalConfigDrawer({ group, onSave, onReset, onClose }) {
 
           <div className="drawer-footer">
             <button className="btn btn-outline" type="button" onClick={() => onReset(group.category)}>
-              <Undo2 size={16} /> 恢复默认
+              <Undo2 size={16} /> {t('common:actions.resetDefault')}
             </button>
-            <button className="btn btn-outline" type="button" onClick={onClose}>取消</button>
+            <button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button>
             <button className="btn btn-primary" type="submit" disabled={saving}>
               {saving ? <span className="spinner" /> : <Save size={16} />}
-              保存参数
+              {t('config.drawer.saveParams')}
             </button>
           </div>
         </form>
@@ -292,6 +299,7 @@ function GlobalConfigDrawer({ group, onSave, onReset, onClose }) {
 }
 
 export default function ConfigPage() {
+  const { t } = useTranslation('pages')
   const [searchParams, setSearchParams] = useSearchParams()
   const selectedServerID = searchParams.get('server_id') || ''
   const [globalGroups, setGlobalGroups] = useState([])
@@ -311,11 +319,11 @@ export default function ConfigPage() {
       setGlobalGroups(configData.groups || [])
       setServers(Array.isArray(serverData) ? serverData : [])
     } catch (e) {
-      setToast({ type: 'error', message: '加载配置失败: ' + e.message })
+      setToast({ type: 'error', message: t('config.messages.configLoadFailed', { message: e.message }) })
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
 
@@ -327,10 +335,10 @@ export default function ConfigPage() {
     try {
       setNodeData(await serverAPI.configs(selectedServerID))
     } catch (e) {
-      setToast({ type: 'error', message: '加载节点配置失败: ' + e.message })
+      setToast({ type: 'error', message: t('config.messages.nodeLoadFailed', { message: e.message }) })
       setNodeData(null)
     }
-  }, [selectedServerID])
+  }, [selectedServerID, t])
 
   useEffect(() => { loadNodeConfigs() }, [loadNodeConfigs])
 
@@ -343,18 +351,18 @@ export default function ConfigPage() {
     if (!selectedServerID) return globalGroups
     const grouped = new Map()
     for (const item of nodeData?.items || []) {
-      if (!grouped.has(item.category)) grouped.set(item.category, { category: item.category, label: getCategoryLabel(item.category), items: [] })
+      if (!grouped.has(item.category)) grouped.set(item.category, { category: item.category, label: getCategoryLabel(item.category, t), items: [] })
       grouped.get(item.category).items.push({ ...item, value: item.override_value ?? item.global_value })
     }
     return Array.from(grouped.values())
-  }, [globalGroups, nodeData, selectedServerID])
+  }, [globalGroups, nodeData, selectedServerID, t])
 
   useEffect(() => {
     accountAPI.get().then(data => {
       setAccount(data)
       if (data.must_change_password || searchParams.get('account') === 'required') setAccountOpen(true)
-    }).catch(e => setToast({ type: 'error', message: '加载管理账号失败: ' + e.message }))
-  }, [searchParams])
+    }).catch(e => setToast({ type: 'error', message: t('config.messages.accountLoadFailed', { message: e.message }) }))
+  }, [searchParams, t])
 
   const closeAccount = () => {
     setAccountOpen(false)
@@ -380,30 +388,30 @@ export default function ConfigPage() {
   const handleSaveGroup = async (updates) => {
     try {
       await configAPI.batchUpdate(updates)
-      setToast({ type: 'success', message: `已保存 ${Object.keys(updates).length} 项配置` })
+      setToast({ type: 'success', message: t('config.messages.saved', { count: Object.keys(updates).length }) })
       await loadConfigs()
     } catch (e) {
-      setToast({ type: 'error', message: '保存失败: ' + e.message })
+      setToast({ type: 'error', message: t('common:errors.saveFailed', { message: e.message }) })
       throw e
     }
   }
 
   const handleResetGroup = (category) => {
     setConfirm({
-      title: '恢复默认配置',
-      message: `确定要将「${getCategoryLabel(category)}」的所有参数恢复为默认值吗？此操作不可撤销。`,
-      confirmLabel: '恢复默认',
+      title: t('config.dialogs.resetTitle'),
+      message: t('config.dialogs.resetMessage', { name: getCategoryLabel(category, t) }),
+      confirmLabel: t('common:actions.resetDefault'),
       onConfirm: async () => {
         try {
           const group = globalGroups.find(item => item.category === category)
           if (group) {
             await Promise.all(group.items.map(item => configAPI.reset(item.key)))
           }
-          setToast({ type: 'success', message: '已恢复默认值' })
+          setToast({ type: 'success', message: t('config.messages.resetDone') })
           setActiveGroup(null)
           await loadConfigs()
         } catch (e) {
-          setToast({ type: 'error', message: '恢复失败: ' + e.message })
+          setToast({ type: 'error', message: t('config.messages.resetFailed', { message: e.message }) })
         }
         setConfirm(null)
       },
@@ -415,9 +423,9 @@ export default function ConfigPage() {
     setReloading(true)
     try {
       await configAPI.reload()
-      setToast({ type: 'success', message: '已通知所有节点重载配置' })
+      setToast({ type: 'success', message: t('config.messages.reloadSent') })
     } catch (e) {
-      setToast({ type: 'error', message: '操作失败: ' + e.message })
+      setToast({ type: 'error', message: t('config.messages.operationFailed', { message: e.message }) })
     } finally {
       setReloading(false)
     }
@@ -439,7 +447,7 @@ export default function ConfigPage() {
   if (loading) {
     return (
       <div className="dashboard-panel loading-panel">
-        <span className="spinner" /> 加载系统配置...
+        <span className="spinner" /> {t('config.loading')}
       </div>
     )
   }
@@ -448,28 +456,28 @@ export default function ConfigPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>系统配置</h1>
-          <p className="page-subtitle">统一管理全局默认与节点覆盖，并对照节点实际上报的生效状态。</p>
+          <h1>{t('config.title')}</h1>
+          <p className="page-subtitle">{t('config.subtitle')}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={refreshScope}>
-            <RotateCcw size={16} /> 刷新
+            <RotateCcw size={16} /> {t('common:actions.refresh')}
           </button>
           {!selectedServerID && <button className="btn btn-primary" type="button" onClick={handleReload} disabled={reloading}>
             {reloading ? <span className="spinner" /> : <BellRing size={16} />}
-            通知节点重载
+            {t('config.reloadNodes')}
           </button>}
         </div>
       </div>
 
-      <section className="scope-toolbar" aria-label="配置作用域">
+      <section className="scope-toolbar" aria-label={t('config.scope.ariaLabel')}>
         <div className="scope-copy">
-          <span>作用域</span>
-          <strong>{selectedServer ? selectedServer.name : '全局默认'}</strong>
-          <small>{selectedServer ? '仅覆盖该节点，保存后自动通知热加载' : '作为所有节点的默认配置'}</small>
+          <span>{t('config.scope.label')}</span>
+          <strong>{selectedServer ? selectedServer.name : t('config.scope.global')}</strong>
+          <small>{selectedServer ? t('config.scope.nodeHint') : t('config.scope.globalHint')}</small>
         </div>
-        <select value={selectedServerID} onChange={changeScope} aria-label="选择配置作用域">
-          <option value="">全局默认</option>
+        <select value={selectedServerID} onChange={changeScope} aria-label={t('config.scope.selectAria')}>
+          <option value="">{t('config.scope.global')}</option>
           {servers.map(server => <option key={server.id} value={server.id}>{server.name || `server-${server.id}`}</option>)}
         </select>
       </section>
@@ -479,28 +487,28 @@ export default function ConfigPage() {
           <span className="summary-icon"><Settings size={18} /></span>
           <div>
             <div className="summary-value">{stats.modules}</div>
-            <div className="summary-label">配置模块</div>
+            <div className="summary-label">{t('config.summary.modules')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="info">
           <span className="summary-icon"><SlidersHorizontal size={18} /></span>
           <div>
             <div className="summary-value">{stats.totalParams}</div>
-            <div className="summary-label">可调参数</div>
+            <div className="summary-label">{t('config.summary.params')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="success">
           <span className="summary-icon"><CheckCircle2 size={18} /></span>
           <div>
             <div className="summary-value">{stats.reloadable}</div>
-            <div className="summary-label">支持热加载</div>
+            <div className="summary-label">{t('config.summary.hotReload')}</div>
           </div>
         </div>
         <div className="summary-tile" data-tone="warning">
           <span className="summary-icon"><AlertTriangleIcon /></span>
           <div>
             <div className="summary-value">{stats.restartRequired}</div>
-            <div className="summary-label">需重启生效</div>
+            <div className="summary-label">{t('config.summary.restart')}</div>
           </div>
         </div>
       </div>
@@ -516,8 +524,8 @@ export default function ConfigPage() {
       ) : (
         <section className="section empty-state">
           <Database size={30} />
-          <strong>暂无配置数据</strong>
-          <span>请检查数据库连接或配置初始化状态。</span>
+          <strong>{t('config.empty.title')}</strong>
+          <span>{t('config.empty.description')}</span>
         </section>
       )}
 

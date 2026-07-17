@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import {
   ArchiveRestore,
   CheckCircle2,
@@ -17,19 +18,20 @@ import {
   X,
 } from 'lucide-react'
 import { mailboxAPI, serverAPI, domainAPI, integratedMailboxAPI } from '../api'
+import { formatDateTime } from '../i18n'
 
 const STATUS_META = {
-  active: { label: '正常', className: 'tag-success' },
-  synced: { label: '已同步', className: 'tag-success' },
-  pending: { label: '等待中', className: 'tag-warning' },
-  deleting: { label: '删除中', className: 'tag-warning' },
-  disabled: { label: '停用', className: 'tag-danger' },
-  recycled: { label: '回收站', className: 'tag-warning' },
-  sync_failed: { label: '同步失败', className: 'tag-danger' },
-  soft_deleted: { label: '可恢复', className: 'tag-warning' },
-  purged: { label: '已清理', className: 'tag-info' },
-  ok: { label: '正常', className: 'tag-success' },
-  fail: { label: '失败', className: 'tag-danger' },
+  active: { className: 'tag-success' },
+  synced: { className: 'tag-success' },
+  pending: { className: 'tag-warning' },
+  deleting: { className: 'tag-warning' },
+  disabled: { className: 'tag-danger' },
+  recycled: { className: 'tag-warning' },
+  sync_failed: { className: 'tag-danger' },
+  soft_deleted: { className: 'tag-warning' },
+  purged: { className: 'tag-info' },
+  ok: { className: 'tag-success' },
+  fail: { className: 'tag-danger' },
 }
 
 function Toast({ message, type, onClose }) {
@@ -41,16 +43,17 @@ function Toast({ message, type, onClose }) {
   return <div className={`toast toast-${type}`}>{message}</div>
 }
 
-function ConfirmDialog({ title, message, confirmLabel = '确认', danger = true, onConfirm, onCancel }) {
+function ConfirmDialog({ title, message, confirmLabel, danger = true, onConfirm, onCancel }) {
+  const { t } = useTranslation('common')
   return (
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal confirm-modal" onClick={e => e.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-footer">
-          <button className="btn btn-outline" type="button" onClick={onCancel}>取消</button>
+          <button className="btn btn-outline" type="button" onClick={onCancel}>{t('actions.cancel')}</button>
           <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={onConfirm}>
-            {confirmLabel}
+            {confirmLabel || t('actions.confirm')}
           </button>
         </div>
       </div>
@@ -59,8 +62,9 @@ function ConfirmDialog({ title, message, confirmLabel = '确认', danger = true,
 }
 
 function StatusTag({ status }) {
-  const meta = STATUS_META[status] || { label: status || '-', className: 'tag-info' }
-  return <span className={`tag ${meta.className}`}>{meta.label}</span>
+  const { t } = useTranslation('pages')
+  const meta = STATUS_META[status] || { className: 'tag-info' }
+  return <span className={`tag ${meta.className}`}>{t(`mailboxes.status.${status}`, { defaultValue: status || '-' })}</span>
 }
 
 function SummaryTile({ icon: Icon, label, value, tone }) {
@@ -73,12 +77,6 @@ function SummaryTile({ icon: Icon, label, value, tone }) {
       </div>
     </div>
   )
-}
-
-function formatDate(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
 }
 
 function csvEscape(value) {
@@ -106,6 +104,7 @@ function parseMailboxView(value) {
 }
 
 export default function MailboxesPage() {
+  const { t } = useTranslation('pages')
   const location = useLocation()
   const initialParams = new URLSearchParams(location.search)
   const initialView = parseMailboxView(initialParams.get('view'))
@@ -156,12 +155,12 @@ export default function MailboxesPage() {
       setItems(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [])
       setTotal(data?.total_count ?? data?.total ?? 0)
     } catch (e) {
-      setToast({ type: 'error', message: '加载失败: ' + e.message })
+      setToast({ type: 'error', message: t('mailboxes.messages.loadFailed', { message: e.message }) })
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }, [view, search, domainId, serverId, statusFilter, page, size])
+  }, [view, search, domainId, serverId, statusFilter, page, size, t])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -186,8 +185,8 @@ export default function MailboxesPage() {
   const loadIntegrated = useCallback(() => {
     integratedMailboxAPI.list()
       .then(d => setIntegrated(Array.isArray(d) ? d : []))
-      .catch(e => setToast({ type: 'error', message: '加载集成邮箱失败: ' + e.message }))
-  }, [])
+      .catch(e => setToast({ type: 'error', message: t('mailboxes.messages.integratedLoadFailed', { message: e.message }) }))
+  }, [t])
 
   useEffect(() => {
     if (view === 'integrated') loadIntegrated()
@@ -236,7 +235,7 @@ export default function MailboxesPage() {
     const server = servers.find(s => s.id === parseInt(value, 10))
     if (value !== '0' && createDomainId !== '0' && !domainIsServedByServer(server, createDomainId)) {
       setCreateDomainId('0')
-      setToast({ type: 'error', message: '已清空域名筛选：该服务器未绑定当前域名' })
+      setToast({ type: 'error', message: t('mailboxes.messages.domainFilterCleared') })
     }
   }
 
@@ -244,7 +243,7 @@ export default function MailboxesPage() {
     setCreateDomainId(value)
     if (value !== '0' && createServerId !== '0' && !domainIsServedByServer(selectedCreateServer, value)) {
       setCreateServerId('0')
-      setToast({ type: 'error', message: '已清空服务器筛选：当前域名未绑定该服务器' })
+      setToast({ type: 'error', message: t('mailboxes.messages.serverFilterCleared') })
     }
   }
 
@@ -263,10 +262,10 @@ export default function MailboxesPage() {
     try {
       const result = await mailboxAPI.batchCreate(validItems)
       setBatchResult(result)
-      setToast({ type: 'success', message: `创建完成：成功 ${result.success || 0}，失败 ${result.failed || 0}` })
+      setToast({ type: 'success', message: t('mailboxes.messages.createDone', { success: result.success || 0, failed: result.failed || 0 }) })
       load(true)
     } catch (e) {
-      setToast({ type: 'error', message: '创建失败: ' + e.message })
+      setToast({ type: 'error', message: t('mailboxes.messages.createFailed', { message: e.message }) })
     } finally {
       setCreating(false)
     }
@@ -293,7 +292,7 @@ export default function MailboxesPage() {
     event.target.value = ''
     if (!file) return
     if (!/\.(csv|txt)$/i.test(file.name)) {
-      setToast({ type: 'error', message: '仅支持 CSV 或 TXT 文件' })
+      setToast({ type: 'error', message: t('mailboxes.messages.fileType') })
       return
     }
     setCreateTab('upload')
@@ -306,10 +305,10 @@ export default function MailboxesPage() {
         parseInt(createDomainId, 10) || 0,
       )
       setBatchResult(result)
-      setToast({ type: 'success', message: `文件导入完成：成功 ${result.success || 0}，失败 ${result.failed || 0}` })
+      setToast({ type: 'success', message: t('mailboxes.messages.importDone', { success: result.success || 0, failed: result.failed || 0 }) })
       load(true)
     } catch (e) {
-      setToast({ type: 'error', message: '文件导入失败: ' + e.message })
+      setToast({ type: 'error', message: t('mailboxes.messages.importFailed', { message: e.message }) })
     } finally {
       setUploading(false)
     }
@@ -326,22 +325,22 @@ export default function MailboxesPage() {
 
   const copyText = (text) => {
     navigator.clipboard.writeText(text).then(() => {
-      setToast({ type: 'success', message: '已复制' })
+      setToast({ type: 'success', message: t('mailboxes.messages.copied') })
     })
   }
 
   const askDelete = (item) => {
     setConfirm({
-      title: '删除邮箱',
-      message: `确定删除 ${item.email_address} 吗？系统会摘除收信并把 Maildir 移入回收站。`,
-      confirmLabel: '删除',
+      title: t('mailboxes.dialogs.deleteTitle'),
+      message: t('mailboxes.dialogs.deleteMessage', { email: item.email_address }),
+      confirmLabel: t('common:actions.delete'),
       onConfirm: async () => {
         try {
           await mailboxAPI.remove(item.id)
-          setToast({ type: 'success', message: '已提交删除: ' + item.email_address })
+          setToast({ type: 'success', message: t('mailboxes.messages.deleteSubmitted', { email: item.email_address }) })
           load(true)
         } catch (e) {
-          setToast({ type: 'error', message: '删除失败: ' + e.message })
+          setToast({ type: 'error', message: t('mailboxes.messages.deleteFailed', { message: e.message }) })
         }
         setConfirm(null)
       },
@@ -351,17 +350,17 @@ export default function MailboxesPage() {
 
   const askRestore = (item) => {
     setConfirm({
-      title: '恢复邮箱',
-      message: `确定恢复 ${item.email_address} 吗？仅删除后 24 小时内可从远端回收站恢复。`,
-      confirmLabel: '恢复',
+      title: t('mailboxes.dialogs.restoreTitle'),
+      message: t('mailboxes.dialogs.restoreMessage', { email: item.email_address }),
+      confirmLabel: t('mailboxes.dialogs.restore'),
       danger: false,
       onConfirm: async () => {
         try {
           const data = await mailboxAPI.restore(item.id)
-          setToast({ type: 'success', message: data?.password ? `已恢复，临时密码：${data.password}` : '已恢复: ' + item.email_address })
+          setToast({ type: 'success', message: data?.password ? t('mailboxes.messages.restoredPassword', { password: data.password }) : t('mailboxes.messages.restored', { email: item.email_address }) })
           load(true)
         } catch (e) {
-          setToast({ type: 'error', message: '恢复失败: ' + e.message })
+          setToast({ type: 'error', message: t('mailboxes.messages.restoreFailed', { message: e.message }) })
         }
         setConfirm(null)
       },
@@ -371,16 +370,16 @@ export default function MailboxesPage() {
 
   const askPurge = (item) => {
     setConfirm({
-      title: '彻底清理邮箱',
-      message: `确定永久清理 ${item.email_address} 吗？此操作不可恢复。`,
-      confirmLabel: '彻底清理',
+      title: t('mailboxes.dialogs.purgeTitle'),
+      message: t('mailboxes.dialogs.purgeMessage', { email: item.email_address }),
+      confirmLabel: t('mailboxes.dialogs.purge'),
       onConfirm: async () => {
         try {
           await mailboxAPI.purge(item.id)
-          setToast({ type: 'success', message: '已彻底清理: ' + item.email_address })
+          setToast({ type: 'success', message: t('mailboxes.messages.purged', { email: item.email_address }) })
           load(true)
         } catch (e) {
-          setToast({ type: 'error', message: '清理失败: ' + e.message })
+          setToast({ type: 'error', message: t('mailboxes.messages.purgeFailed', { message: e.message }) })
         }
         setConfirm(null)
       },
@@ -390,17 +389,17 @@ export default function MailboxesPage() {
 
   const handlePwdSave = async () => {
     if (!pwdModal.password || pwdModal.password.length < 6) {
-      setToast({ type: 'error', message: '密码至少 6 个字符' })
+      setToast({ type: 'error', message: t('mailboxes.messages.passwordLength') })
       return
     }
     setPwdSaving(true)
     try {
       await mailboxAPI.updatePassword(pwdModal.id, pwdModal.password)
       setPwdModal(null)
-      setToast({ type: 'success', message: '密码修改成功' })
+      setToast({ type: 'success', message: t('mailboxes.messages.passwordSaved') })
       load(true)
     } catch (e) {
-      setToast({ type: 'error', message: '修改失败: ' + e.message })
+      setToast({ type: 'error', message: t('mailboxes.messages.passwordFailed', { message: e.message }) })
     } finally {
       setPwdSaving(false)
     }
@@ -413,41 +412,41 @@ export default function MailboxesPage() {
     <div>
       <div className="page-header">
         <div>
-          <h1>邮箱账户</h1>
-          <p className="page-subtitle">按服务器、域名和生命周期管理邮箱，兼顾批量创建、回收站恢复与转发目标池。</p>
+          <h1>{t('mailboxes.title')}</h1>
+          <p className="page-subtitle">{t('mailboxes.subtitle')}</p>
         </div>
         <div className="page-actions">
           <button className="btn btn-outline" type="button" onClick={() => load(true)} disabled={refreshing}>
             {refreshing ? <span className="spinner" /> : <RefreshCw size={16} />}
-            刷新
+            {t('common:actions.refresh')}
           </button>
           <button className="btn btn-primary" type="button" onClick={() => switchView('create')}>
-            <MailPlus size={16} /> 创建邮箱
+            <MailPlus size={16} /> {t('mailboxes.create')}
           </button>
         </div>
       </div>
 
       <div className="summary-grid">
-        <SummaryTile icon={Inbox} label="筛选结果" value={summary.total} tone="brand" />
-        <SummaryTile icon={CheckCircle2} label="可用域名" value={summary.domains} tone="success" />
-        <SummaryTile icon={Send} label="可用节点" value={summary.servers} tone="info" />
-        <SummaryTile icon={ArchiveRestore} label="转发目标" value={summary.integrated} tone="warning" />
+        <SummaryTile icon={Inbox} label={t('mailboxes.summary.results')} value={summary.total} tone="brand" />
+        <SummaryTile icon={CheckCircle2} label={t('mailboxes.summary.domains')} value={summary.domains} tone="success" />
+        <SummaryTile icon={Send} label={t('mailboxes.summary.servers')} value={summary.servers} tone="info" />
+        <SummaryTile icon={ArchiveRestore} label={t('mailboxes.summary.integrated')} value={summary.integrated} tone="warning" />
       </div>
 
       <div className="phase-tabs">
         {[
-          ['normal', '账户集合'],
-          ['trash', '回收站'],
-          ['integrated', '集成邮箱'],
-          ['create', '创建邮箱'],
-        ].map(([value, label]) => (
+          'normal',
+          'trash',
+          'integrated',
+          'create',
+        ].map(value => (
           <button
             key={value}
             className={view === value ? 'active' : ''}
             type="button"
             onClick={() => switchView(value)}
           >
-            {label}
+            {t(`mailboxes.tabs.${value}`)}
           </button>
         ))}
       </div>
@@ -456,33 +455,33 @@ export default function MailboxesPage() {
         <section className="section data-section">
           <div className="panel-header mailbox-toolbar-header">
             <div>
-              <h3>{view === 'trash' ? '回收站账户' : '账户列表'}</h3>
+              <h3>{view === 'trash' ? t('mailboxes.list.trashTitle') : t('mailboxes.list.normalTitle')}</h3>
               <div className="panel-caption">
-                {view === 'trash' ? '远端可恢复窗口为删除后 24 小时，彻底清理不可撤销。' : '筛选条件会同步作用于分页查询。'}
+                {view === 'trash' ? t('mailboxes.list.trashCaption') : t('mailboxes.list.normalCaption')}
               </div>
             </div>
           </div>
 
           <form className="mailbox-toolbar" onSubmit={handleSearch}>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索邮箱地址或前缀" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t('mailboxes.list.searchPlaceholder')} />
             <select value={domainId} onChange={e => setDomainId(e.target.value)}>
-              <option value="">全部域名</option>
+              <option value="">{t('mailboxes.list.allDomains')}</option>
               {domains.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <select value={serverId} onChange={e => setServerId(e.target.value)}>
-              <option value="">全部服务器</option>
+              <option value="">{t('mailboxes.list.allServers')}</option>
               {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             {view === 'normal' && (
               <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                <option value="">全部状态</option>
-                <option value="active">正常</option>
-                <option value="deleting">删除中</option>
+                <option value="">{t('mailboxes.list.allStatuses')}</option>
+                <option value="active">{t('mailboxes.status.active')}</option>
+                <option value="deleting">{t('mailboxes.status.deleting')}</option>
               </select>
             )}
-            <button className="btn btn-primary" type="submit">筛选</button>
+            <button className="btn btn-primary" type="submit">{t('mailboxes.list.filter')}</button>
             <button className="btn btn-outline" type="button" onClick={() => { setSearch(''); setDomainId(''); setServerId(''); setStatusFilter(''); setPage(1) }}>
-              <RotateCcw size={15} /> 重置
+              <RotateCcw size={15} /> {t('mailboxes.list.reset')}
             </button>
           </form>
 
@@ -490,14 +489,14 @@ export default function MailboxesPage() {
             <table className="data-table mailbox-table">
               <thead>
                 <tr>
-                  <th>邮箱</th>
-                  {view === 'normal' && <th>密码</th>}
-                  <th>域名</th>
-                  <th>服务器</th>
-                  <th>状态</th>
-                  {view === 'normal' && <th>同步</th>}
-                  <th>{view === 'trash' ? '删除时间' : '创建时间'}</th>
-                  <th>操作</th>
+                  <th>{t('mailboxes.list.mailbox')}</th>
+                  {view === 'normal' && <th>{t('mailboxes.list.password')}</th>}
+                  <th>{t('mailboxes.list.domain')}</th>
+                  <th>{t('mailboxes.list.server')}</th>
+                  <th>{t('mailboxes.list.status')}</th>
+                  {view === 'normal' && <th>{t('mailboxes.list.sync')}</th>}
+                  <th>{view === 'trash' ? t('mailboxes.list.deletedAt') : t('mailboxes.list.createdAt')}</th>
+                  <th>{t('mailboxes.list.operations')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -510,7 +509,7 @@ export default function MailboxesPage() {
                           <strong>{item.email_address}</strong>
                           <span>#{item.id}</span>
                         </div>
-                        <button className="icon-button compact" type="button" title="复制邮箱" onClick={() => copyText(item.email_address)}>
+                        <button className="icon-button compact" type="button" title={t('mailboxes.list.copyMailbox')} onClick={() => copyText(item.email_address)}>
                           <Copy size={14} />
                         </button>
                       </div>
@@ -520,32 +519,32 @@ export default function MailboxesPage() {
                         {item.password ? (
                           <div className="secret-cell">
                             <code>{item.password}</code>
-                            <button className="icon-button compact" type="button" title="复制密码" onClick={() => copyText(item.password)}>
+                            <button className="icon-button compact" type="button" title={t('mailboxes.list.copyPassword')} onClick={() => copyText(item.password)}>
                               <Copy size={14} />
                             </button>
                           </div>
-                        ) : <span className="muted-text">未记录</span>}
+                        ) : <span className="muted-text">{t('mailboxes.list.notRecorded')}</span>}
                       </td>
                     )}
                     <td>{item.domain?.name || `#${item.domain_id}`}</td>
                     <td>{item.server?.name || `#${item.server_id}`}</td>
                     <td><StatusTag status={item.status} /></td>
                     {view === 'normal' && <td>{item.sync_status ? <StatusTag status={item.sync_status} /> : <span className="muted-text">-</span>}</td>}
-                    <td>{formatDate(view === 'trash' ? item.recycled_at : item.created_at)}</td>
+                    <td>{formatDateTime(view === 'trash' ? item.recycled_at : item.created_at)}</td>
                     <td>
                       <div className="row-actions">
                         {view === 'normal' && (
                           <>
-                            <button className="icon-button compact" type="button" title="修改密码" onClick={() => setPwdModal({ id: item.id, email: item.email_address, password: '' })}>
+                            <button className="icon-button compact" type="button" title={t('mailboxes.list.changePassword')} onClick={() => setPwdModal({ id: item.id, email: item.email_address, password: '' })}>
                               <KeyRound size={15} />
                             </button>
                             {(item.status === 'active' || item.status === 'deleting') && (
-                              <button className="icon-button compact danger" type="button" title="删除" onClick={() => askDelete(item)}>
+                              <button className="icon-button compact danger" type="button" title={t('mailboxes.list.delete')} onClick={() => askDelete(item)}>
                                 <Trash2 size={15} />
                               </button>
                             )}
                             {item.status === 'soft_deleted' && (
-                              <button className="icon-button compact" type="button" title="恢复" onClick={() => askRestore(item)}>
+                              <button className="icon-button compact" type="button" title={t('mailboxes.list.restore')} onClick={() => askRestore(item)}>
                                 <ArchiveRestore size={15} />
                               </button>
                             )}
@@ -553,15 +552,15 @@ export default function MailboxesPage() {
                         )}
                         {view === 'trash' && item.status === 'soft_deleted' && (
                           <>
-                            <button className="icon-button compact" type="button" title="恢复" onClick={() => askRestore(item)}>
+                            <button className="icon-button compact" type="button" title={t('mailboxes.list.restore')} onClick={() => askRestore(item)}>
                               <ArchiveRestore size={15} />
                             </button>
-                            <button className="icon-button compact danger" type="button" title="彻底清理" onClick={() => askPurge(item)}>
+                            <button className="icon-button compact danger" type="button" title={t('mailboxes.list.purge')} onClick={() => askPurge(item)}>
                               <Trash2 size={15} />
                             </button>
                           </>
                         )}
-                        {view === 'trash' && item.status === 'purged' && <span className="muted-text">已清理</span>}
+                        {view === 'trash' && item.status === 'purged' && <span className="muted-text">{t('mailboxes.status.purged')}</span>}
                       </div>
                     </td>
                   </tr>
@@ -571,8 +570,8 @@ export default function MailboxesPage() {
                     <td colSpan={view === 'normal' ? 8 : 6}>
                       <div className="empty-state">
                         {loading ? <span className="spinner" /> : <Inbox size={28} />}
-                        <strong>{loading ? '加载中...' : view === 'trash' ? '回收站为空' : '暂无邮箱账户'}</strong>
-                        {!loading && <span>{view === 'trash' ? '删除后的邮箱会在这里显示，可在恢复窗口内处理。' : '创建第一个邮箱后即可开始收信和查询。'}</span>}
+                        <strong>{loading ? t('mailboxes.list.loading') : view === 'trash' ? t('mailboxes.list.trashEmpty') : t('mailboxes.list.empty')}</strong>
+                        {!loading && <span>{view === 'trash' ? t('mailboxes.list.trashEmptyDesc') : t('mailboxes.list.emptyDesc')}</span>}
                       </div>
                     </td>
                   </tr>
@@ -583,12 +582,12 @@ export default function MailboxesPage() {
 
           {total > 0 && (
             <div className="pagination-bar">
-              <button className="btn btn-sm btn-outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>上一页</button>
-              <span>第 <strong>{safePage}</strong> / {totalPages} 页，共 {total} 条</span>
-              <button className="btn btn-sm btn-outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>下一页</button>
+              <button className="btn btn-sm btn-outline" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)}>{t('mailboxes.list.previous')}</button>
+              <span>{t('mailboxes.list.page', { page: safePage, pages: totalPages, total })}</span>
+              <button className="btn btn-sm btn-outline" disabled={safePage >= totalPages} onClick={() => setPage(safePage + 1)}>{t('mailboxes.list.next')}</button>
               <span className="pagination-spacer" />
               <label>
-                每页
+                {t('mailboxes.list.pageSize')}
                 <select value={size} onChange={e => { setSize(parseInt(e.target.value, 10)); setPage(1) }}>
                   <option value={20}>20</option>
                   <option value={50}>50</option>
@@ -604,47 +603,47 @@ export default function MailboxesPage() {
         <section className="section data-section">
           <div className="panel-header">
             <div>
-              <h3>集成邮箱</h3>
-              <div className="panel-caption">所有非垃圾邮件会汇总转发到当前生效目标，切换后 mail-node 自动拉取生效。</div>
+              <h3>{t('mailboxes.integrated.title')}</h3>
+              <div className="panel-caption">{t('mailboxes.integrated.caption')}</div>
             </div>
             <button className="btn btn-primary" type="button" onClick={() => setIntegratedModal({ mode: 'add', data: { email_address: '', display_name: '' } })}>
-              <Plus size={16} /> 新增目标
+              <Plus size={16} /> {t('mailboxes.integrated.addTarget')}
             </button>
           </div>
           <div className="table-wrap">
             <table className="data-table">
               <thead>
-                <tr><th>邮箱地址</th><th>备注</th><th>状态</th><th>操作</th></tr>
+                <tr><th>{t('mailboxes.integrated.address')}</th><th>{t('mailboxes.integrated.note')}</th><th>{t('mailboxes.integrated.status')}</th><th>{t('mailboxes.integrated.operations')}</th></tr>
               </thead>
               <tbody>
                 {integrated.map(m => (
                   <tr key={m.id}>
                     <td><code>{m.email_address}</code></td>
                     <td>{m.display_name || '-'}</td>
-                    <td>{m.is_active ? <span className="tag tag-success">当前生效</span> : <span className="muted-text">备用</span>}</td>
+                    <td>{m.is_active ? <span className="tag tag-success">{t('mailboxes.integrated.active')}</span> : <span className="muted-text">{t('mailboxes.integrated.standby')}</span>}</td>
                     <td>
                       <div className="row-actions">
                         {!m.is_active && (
                           <button className="btn btn-sm btn-success" type="button" onClick={async () => {
                             try {
                               await integratedMailboxAPI.activate(m.id)
-                              setToast({ type: 'success', message: '已设为当前转发目标' })
+                              setToast({ type: 'success', message: t('mailboxes.integrated.activated') })
                               loadIntegrated()
                             } catch (e) {
                               setToast({ type: 'error', message: e.message })
                             }
-                          }}>设为当前</button>
+                          }}>{t('mailboxes.integrated.activate')}</button>
                         )}
-                        <button className="btn btn-sm btn-outline" type="button" onClick={() => setIntegratedModal({ mode: 'edit', data: { ...m } })}>编辑</button>
+                        <button className="btn btn-sm btn-outline" type="button" onClick={() => setIntegratedModal({ mode: 'edit', data: { ...m } })}>{t('mailboxes.integrated.edit')}</button>
                         <button className="btn btn-sm btn-danger" type="button" disabled={m.is_active} onClick={async () => {
                           setConfirm({
-                            title: '删除集成邮箱',
-                            message: `确定删除 ${m.email_address} 吗？当前生效目标不能删除。`,
-                            confirmLabel: '删除',
+                            title: t('mailboxes.integrated.deleteTitle'),
+                            message: t('mailboxes.integrated.deleteMessage', { email: m.email_address }),
+                            confirmLabel: t('common:actions.delete'),
                             onConfirm: async () => {
                               try {
                                 await integratedMailboxAPI.remove(m.id)
-                                setToast({ type: 'success', message: '已删除' })
+                                setToast({ type: 'success', message: t('mailboxes.messages.deleted') })
                                 loadIntegrated()
                               } catch (e) {
                                 setToast({ type: 'error', message: e.message })
@@ -653,13 +652,13 @@ export default function MailboxesPage() {
                             },
                             onCancel: () => setConfirm(null),
                           })
-                        }}>删除</button>
+                        }}>{t('common:actions.delete')}</button>
                       </div>
                     </td>
                   </tr>
                 ))}
                 {integrated.length === 0 && (
-                  <tr><td colSpan={4}><div className="empty-state"><Send size={28} /><strong>暂无集成邮箱</strong><span>添加一个目标后即可接收转发汇总。</span></div></td></tr>
+                  <tr><td colSpan={4}><div className="empty-state"><Send size={28} /><strong>{t('mailboxes.integrated.empty')}</strong><span>{t('mailboxes.integrated.emptyDesc')}</span></div></td></tr>
                 )}
               </tbody>
             </table>
@@ -671,63 +670,63 @@ export default function MailboxesPage() {
         <section id="mailbox-create-panel" className="section mailbox-create">
           <div className="panel-header">
             <div>
-              <h3>创建邮箱</h3>
-              <div className="panel-caption">服务器和域名均可指定，不指定时由系统按健康节点和域名池自动分配。</div>
+              <h3>{t('mailboxes.createForm.title')}</h3>
+              <div className="panel-caption">{t('mailboxes.createForm.caption')}</div>
             </div>
-            {createServerId === '0' && createDomainId === '0' && <span className="tag tag-info">自动分配</span>}
+            {createServerId === '0' && createDomainId === '0' && <span className="tag tag-info">{t('mailboxes.createForm.automatic')}</span>}
           </div>
 
           <div className="field-grid">
             <div className="form-group">
-              <label>邮箱服务器</label>
+              <label>{t('mailboxes.createForm.server')}</label>
               <select value={createServerId} onChange={e => handleCreateServerChange(e.target.value)}>
-                <option value="0">自动选择服务器</option>
-                {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({s.status}, {s.current_load}/{s.capacity})</option>)}
+                <option value="0">{t('mailboxes.createForm.autoServer')}</option>
+                {createServerOptions.map(s => <option key={s.id} value={s.id}>{s.name} ({t(`servers.status.${s.status}`, { defaultValue: s.status })}, {s.current_load}/{s.capacity})</option>)}
               </select>
-              {createDomainId !== '0' && <div className="form-hint">已按域名 {selectedCreateDomain?.name || `#${createDomainId}`} 限制服务器范围。</div>}
+              {createDomainId !== '0' && <div className="form-hint">{t('mailboxes.createForm.serverLimited', { name: selectedCreateDomain?.name || `#${createDomainId}` })}</div>}
             </div>
             <div className="form-group">
-              <label>域名</label>
+              <label>{t('mailboxes.createForm.domain')}</label>
               <select value={createDomainId} onChange={e => handleCreateDomainChange(e.target.value)}>
-                <option value="0">自动选择域名</option>
+                <option value="0">{t('mailboxes.createForm.autoDomain')}</option>
                 {createDomainOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
-              {createServerId !== '0' && <div className="form-hint">已按服务器 {selectedCreateServer?.name || `#${createServerId}`} 限制域名范围。</div>}
+              {createServerId !== '0' && <div className="form-hint">{t('mailboxes.createForm.domainLimited', { name: selectedCreateServer?.name || `#${createServerId}` })}</div>}
             </div>
           </div>
 
           <div className="create-grid">
             <form className="create-card" onSubmit={handleSingleCreate}>
-              <h4>单个创建</h4>
+              <h4>{t('mailboxes.createForm.single')}</h4>
               <div className="form-group">
-                <label>邮箱前缀</label>
+                <label>{t('mailboxes.createForm.prefix')}</label>
                 <input value={createPrefix} onChange={e => setCreatePrefix(e.target.value)} placeholder="airline-cz-001" required />
               </div>
               <div className="form-group">
-                <label>密码</label>
-                <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder="留空自动生成" />
+                <label>{t('mailboxes.createForm.password')}</label>
+                <input value={createPassword} onChange={e => setCreatePassword(e.target.value)} placeholder={t('mailboxes.createForm.passwordPlaceholder')} />
               </div>
               <button className="btn btn-primary" type="submit" disabled={creating || !createPrefix.trim()}>
-                {creating && createTab === 'single' && <span className="spinner" />} 创建邮箱
+                {creating && createTab === 'single' && <span className="spinner" />} {t('mailboxes.create')}
               </button>
             </form>
 
             <form className="create-card" onSubmit={handleBatchCreate}>
-              <h4>批量创建</h4>
+              <h4>{t('mailboxes.createForm.batch')}</h4>
               <div className="form-group">
-                <label>邮箱列表</label>
+                <label>{t('mailboxes.createForm.list')}</label>
                 <textarea value={batchText} onChange={e => setBatchText(e.target.value)} rows={7} placeholder={'airline-cz-001\nairline-cz-002\nairline-cz-003,mypassword123'} />
-                <div className="form-hint">每行一个前缀；文件格式为 prefix,password,domain_id,server_id，后 3 列可省略。</div>
+                <div className="form-hint">{t('mailboxes.createForm.listHint')}</div>
               </div>
               <div className="create-actions">
                 <button className="btn btn-primary" type="submit" disabled={creating || uploading || !batchText.trim()}>
-                  {creating && createTab === 'batch' && <span className="spinner" />} 批量创建
+                  {creating && createTab === 'batch' && <span className="spinner" />} {t('mailboxes.createForm.batch')}
                 </button>
                 <input ref={csvInputRef} className="visually-hidden" type="file" accept=".csv,.txt,text/csv,text/plain" onChange={handleCsvUpload} />
-                <button className="btn btn-outline" type="button" title="支持 CSV 或 TXT 文件" disabled={creating || uploading} onClick={() => csvInputRef.current?.click()}>
-                  {uploading ? <span className="spinner" /> : <Upload size={16} />} 上传文件
+                <button className="btn btn-outline" type="button" title={t('mailboxes.createForm.uploadTitle')} disabled={creating || uploading} onClick={() => csvInputRef.current?.click()}>
+                  {uploading ? <span className="spinner" /> : <Upload size={16} />} {t('mailboxes.createForm.upload')}
                 </button>
-                <span className="upload-format-hint">支持 .csv / .txt</span>
+                <span className="upload-format-hint">{t('mailboxes.createForm.uploadHint')}</span>
               </div>
             </form>
           </div>
@@ -736,15 +735,15 @@ export default function MailboxesPage() {
             <div className="batch-result">
               <div className="panel-header">
                 <div>
-                  <h3>创建结果</h3>
-                  <div className="panel-caption">成功 {batchResult.success || 0}，失败 {batchResult.failed || 0}</div>
+                  <h3>{t('mailboxes.createForm.result')}</h3>
+                  <div className="panel-caption">{t('mailboxes.createForm.resultSummary', { success: batchResult.success || 0, failed: batchResult.failed || 0 })}</div>
                 </div>
                 <div className="row-actions">
                   <button className="btn btn-outline" type="button" onClick={() => switchView('normal')}>
-                    查看账号集合
+                    {t('mailboxes.createForm.viewAccounts')}
                   </button>
                   <button className="btn btn-outline" type="button" onClick={downloadCredentialCsv}>
-                    <Download size={16} /> 下载账密 CSV
+                    <Download size={16} /> {t('mailboxes.createForm.downloadCsv')}
                   </button>
                 </div>
               </div>
@@ -757,7 +756,7 @@ export default function MailboxesPage() {
                     </div>
                     {r.password && <code>{r.password}</code>}
                     <StatusTag status={r.status} />
-                    {r.password && <button className="icon-button compact" type="button" title="复制账密" onClick={() => copyText(`${r.email_address},${r.password}`)}><Copy size={14} /></button>}
+                    {r.password && <button className="icon-button compact" type="button" title={t('mailboxes.createForm.copyCredential')} onClick={() => copyText(`${r.email_address},${r.password}`)}><Copy size={14} /></button>}
                     {r.error && <span className="result-error">{r.error}</span>}
                   </div>
                 ))}
@@ -769,13 +768,13 @@ export default function MailboxesPage() {
 
       {integratedModal && (
         <div className="drawer-overlay" onClick={() => setIntegratedModal(null)}>
-          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label="集成邮箱编辑">
+          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={t('mailboxes.integrated.drawerAria')}>
             <div className="drawer-header">
               <div>
                 <div className="drawer-kicker">Forward target</div>
-                <h2>{integratedModal.mode === 'add' ? '新增集成邮箱' : `编辑 #${integratedModal.data.id}`}</h2>
+                <h2>{integratedModal.mode === 'add' ? t('mailboxes.integrated.addTitle') : t('mailboxes.integrated.editTitle', { id: integratedModal.data.id })}</h2>
               </div>
-              <button className="icon-button" type="button" title="关闭" onClick={() => setIntegratedModal(null)}><X size={18} /></button>
+              <button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => setIntegratedModal(null)}><X size={18} /></button>
             </div>
             <form className="drawer-body" onSubmit={async (e) => {
               e.preventDefault()
@@ -784,7 +783,7 @@ export default function MailboxesPage() {
                 if (integratedModal.mode === 'add') await integratedMailboxAPI.create(integratedModal.data)
                 else await integratedMailboxAPI.update(integratedModal.data.id, integratedModal.data)
                 setIntegratedModal(null)
-                setToast({ type: 'success', message: '保存成功' })
+                setToast({ type: 'success', message: t('mailboxes.messages.saved') })
                 loadIntegrated()
               } catch (err) {
                 setToast({ type: 'error', message: err.message })
@@ -793,16 +792,16 @@ export default function MailboxesPage() {
               }
             }}>
               <div className="form-group">
-                <label>邮箱地址</label>
+                <label>{t('mailboxes.integrated.address')}</label>
                 <input value={integratedModal.data.email_address} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, email_address: e.target.value } })} placeholder="union@example.com" required />
               </div>
               <div className="form-group">
-                <label>备注</label>
-                <input value={integratedModal.data.display_name || ''} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, display_name: e.target.value } })} placeholder="例如：主汇总 / 备用" />
+                <label>{t('mailboxes.integrated.note')}</label>
+                <input value={integratedModal.data.display_name || ''} onChange={e => setIntegratedModal({ ...integratedModal, data: { ...integratedModal.data, display_name: e.target.value } })} placeholder={t('mailboxes.integrated.notePlaceholder')} />
               </div>
               <div className="drawer-footer">
-                <button className="btn btn-outline" type="button" onClick={() => setIntegratedModal(null)}>取消</button>
-                <button className="btn btn-primary" type="submit" disabled={integratedSaving}>{integratedSaving && <span className="spinner" />} 保存</button>
+                <button className="btn btn-outline" type="button" onClick={() => setIntegratedModal(null)}>{t('common:actions.cancel')}</button>
+                <button className="btn btn-primary" type="submit" disabled={integratedSaving}>{integratedSaving && <span className="spinner" />} {t('common:actions.save')}</button>
               </div>
             </form>
           </aside>
@@ -811,27 +810,27 @@ export default function MailboxesPage() {
 
       {pwdModal && (
         <div className="drawer-overlay" onClick={() => setPwdModal(null)}>
-          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label="修改邮箱密码">
+          <aside className="drawer" onClick={e => e.stopPropagation()} aria-label={t('mailboxes.passwordDrawer.aria')}>
             <div className="drawer-header">
               <div>
                 <div className="drawer-kicker">Credential</div>
-                <h2>修改邮箱密码</h2>
+                <h2>{t('mailboxes.passwordDrawer.title')}</h2>
               </div>
-              <button className="icon-button" type="button" title="关闭" onClick={() => setPwdModal(null)}><X size={18} /></button>
+              <button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => setPwdModal(null)}><X size={18} /></button>
             </div>
             <div className="drawer-body">
               <div className="form-group">
-                <label>邮箱地址</label>
+                <label>{t('mailboxes.passwordDrawer.email')}</label>
                 <input value={pwdModal.email} readOnly />
               </div>
               <div className="form-group">
-                <label>新密码</label>
-                <input value={pwdModal.password} onChange={e => setPwdModal({ ...pwdModal, password: e.target.value })} placeholder="至少 6 个字符" autoFocus />
+                <label>{t('mailboxes.passwordDrawer.newPassword')}</label>
+                <input value={pwdModal.password} onChange={e => setPwdModal({ ...pwdModal, password: e.target.value })} placeholder={t('mailboxes.passwordDrawer.placeholder')} autoFocus />
               </div>
               <div className="drawer-footer">
-                <button className="btn btn-outline" type="button" onClick={() => setPwdModal(null)}>取消</button>
+                <button className="btn btn-outline" type="button" onClick={() => setPwdModal(null)}>{t('common:actions.cancel')}</button>
                 <button className="btn btn-primary" type="button" onClick={handlePwdSave} disabled={pwdSaving}>
-                  {pwdSaving && <span className="spinner" />} 保存
+                  {pwdSaving && <span className="spinner" />} {t('common:actions.save')}
                 </button>
               </div>
             </div>
