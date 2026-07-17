@@ -203,7 +203,7 @@ func (e *Engine) SyncFromManager(managerURL, sharedSecret string) error {
 // StartAutoSync 启动定时同步
 func (e *Engine) StartAutoSync(managerURL string, intervalSec int, sharedSecret string) {
 	go func() {
-		ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
+		ticker := time.NewTicker(filterSyncInterval(intervalSec))
 		defer ticker.Stop()
 
 		// 启动时立即同步一次
@@ -219,6 +219,13 @@ func (e *Engine) StartAutoSync(managerURL string, intervalSec int, sharedSecret 
 			}
 		}
 	}()
+}
+
+func filterSyncInterval(intervalSec int) time.Duration {
+	if intervalSec <= 0 {
+		return time.Hour
+	}
+	return time.Duration(intervalSec) * time.Second
 }
 
 // ===== 匹配函数 =====

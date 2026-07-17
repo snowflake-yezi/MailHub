@@ -1,8 +1,12 @@
 package filter
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestInvalidStartupActionFallsBackToPass(t *testing.T) {
@@ -73,4 +77,45 @@ func TestConfigUpdateIsConcurrentWithFiltering(t *testing.T) {
 		}
 	}()
 	workers.Wait()
+}
+
+func TestFilterSyncInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		seconds  int
+		expected time.Duration
+	}{
+		{name: "zero", seconds: 0, expected: time.Hour},
+		{name: "negative", seconds: -1, expected: time.Hour},
+		{name: "configured", seconds: 30, expected: 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := filterSyncInterval(tt.seconds); got != tt.expected {
+				t.Fatalf("filter sync interval = %s, want %s", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestStartAutoSyncHandlesNonPositiveInterval(t *testing.T) {
+	synced := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"code":0,"data":[]}`)
+		synced <- struct{}{}
+	}))
+	defer server.Close()
+
+	New(ActionPass, "").StartAutoSync(server.URL, 0, "")
+	New(ActionPass, "").StartAutoSync(server.URL, -1, "")
+
+	for range 2 {
+		select {
+		case <-synced:
+		case <-time.After(time.Second):
+			t.Fatal("initial filter sync did not complete")
+		}
+	}
 }
