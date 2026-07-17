@@ -2,7 +2,7 @@
 
 > 日期：2026-07-16（最后更新：2026-07-17）
 > 范围：`mgmt-system`、`mail-node`、管理端调用契约、控制面与数据面通信
-> 状态：SEC-1 至 SEC-4、REL-1 已完成并发布；CFG-1 本地验收通过、待发布；其余风险项暂停
+> 状态：SEC-1 至 SEC-4、REL-1、CFG-1 已完成并发布；其余风险项暂停
 
 ## 1. 修复目标
 
@@ -26,7 +26,7 @@
 | REL-1 | P0 | SMTP 成功后 move 失败导致重复转发 | `moveToCur` 返回错误；成功投递但提交失败时改名为隔离文件并跳过后续扫描 | move 失败不会把邮件留作下一轮正常投递；错误可观察 | 已完成并发布 |
 | REL-2 | P0 | postmap/postfix/doveadm 失败被吞掉 | 命令包装为可注入执行器并传播 stderr/exit error | 任一命令失败时节点返回失败，删除不会继续移动 Maildir | 已完成（SEC-2 配套） |
 | REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成（SEC-2 配套） |
-| CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 本地验收通过（待发布） |
+| CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 已完成并发布 |
 | CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 待验收（已暂停） |
 | OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 待验收（已暂停） |
 
@@ -68,7 +68,7 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 2. SEC-2 发布后确认两个节点健康、配置 revision 一致，并验证非法邮箱、密码和域名被控制面与节点同时拒绝。
 3. SEC-3、SEC-4 已单独验收发布；后续项目继续逐项验收、独立提交和发布。
 4. REL-1 已在两台 mail-node 独立备份并原子发布；后续发现 `.forwarded-error` 时必须结合 `delivered but commit failed` 日志人工核对，不得直接重新投递或删除。
-5. CFG-1 仅替换两台 mail-node；生产验收先在无活跃域和邮箱的节点 2 使用临时 override 与合成邮件确认默认动作无重启生效，再删除 override 并确认 revision 恢复一致。
+5. CFG-1 仅替换两台 mail-node；节点 2 的生产验收使用仅监听本机的临时配置代理隔离测试值，确认默认动作无重启生效后恢复真实管理端并清除代理与合成邮件。filter key 当前不属于节点可覆盖 schema，不能用数据库 override 代替该隔离方案。
 
 ## 6. 本地验证记录
 
@@ -92,6 +92,9 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - 第二节点发布前已有 7 封历史测试邮件因 SMTP 主机名无法解析而每轮发送失败；后续确认来自已解绑旧域残留，并于 2026-07-17 在完整备份后通过正式接口软删除 3 个历史测试账号、移除旧域。节点 1 的正式绑定、14 个账号和 Maildir 未改动。
 - CFG-1：最小复现确认非法默认动作会直接进入旧 Engine；修复后覆盖启动安全回退、默认动作与标题前缀热更新、空前缀、非法 revision 拒绝、revision 到运行中 Engine 的集成链路，以及并发过滤/更新竞态。
 - CFG-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功，SHA256 为 `4a519db09f8d8907a32bf87dfbc28b5d9748e688feb5f3b029259b8e2e5dc144`。
+- CFG-1 生产发布：提交 `9e7df68` 已进入远端 `main`，两台 mail-node 均原子替换为上述 SHA256；节点 1 回滚点为 `/opt/mgmt-system/backups/cfg1-9e7df68-20260717-065308`，节点 2 回滚点为 `/root/mailhub-backups/cfg1-9e7df68-20260717-141253`，两处 binary/config 校验均通过。
+- CFG-1 生产行为验收：节点 2 临时隔离配置下，`block` reload 前后 PID 均为 `6987`；合成邮件由 `new/` 移入 `cur/:2,S`，日志记录 `rule=0 reason=default action`，且无 SMTP 转发。随后同 PID 恢复真实 `pass` 配置，最终还原 YAML、清除代理和探针目录并重启到真实管理端。
+- CFG-1 发布后验收：管理端 health/ready 均为 200；节点 1/2 均为 healthy，revision 分别为 `2/2`、`1/1`，无 apply/reload error，未鉴权内部健康请求均为 401。两台最近 100 行日志的 panic/fatal、配置错误和 `delivered but commit failed` 均为 0；节点 1 的 14 个 Postfix/Dovecot 账号及配置哈希未变，`postconf` 仍报告 2 个虚拟域，节点 2 仍无活跃 vmailbox/Maildir。
 - 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
 - 两个模块的 `go test -race -count=1 ./...` 已通过。
 - CFG-2 和 OPS-1 仍保持暂停，未进入本次实现范围。
