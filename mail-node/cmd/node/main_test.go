@@ -25,6 +25,35 @@ func TestTLSVerificationIsEnabledByDefault(t *testing.T) {
 	}
 }
 
+func TestNodeHTTPServerSetsConnectionTimeouts(t *testing.T) {
+	handler := http.NewServeMux()
+	server := newNodeHTTPServer(":18081", handler)
+	if server.Addr != ":18081" {
+		t.Fatalf("server address = %q, want :18081", server.Addr)
+	}
+	if server.Handler != handler {
+		t.Fatal("server handler was not preserved")
+	}
+
+	tests := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{name: "read header", got: server.ReadHeaderTimeout, want: 5 * time.Second},
+		{name: "read", got: server.ReadTimeout, want: 30 * time.Second},
+		{name: "write", got: server.WriteTimeout, want: 2 * time.Minute},
+		{name: "idle", got: server.IdleTimeout, want: 2 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("timeout = %s, want %s", tt.got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFilterConfigRevisionUpdatesRunningEngine(t *testing.T) {
 	values := map[string]string{
 		"filter.default_action":      "pass",

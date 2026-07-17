@@ -27,7 +27,13 @@ import (
 	"github.com/ticket/email-mail-node/internal/middleware"
 )
 
-const maxNodeRequestBodyBytes int64 = 16 << 20
+const (
+	maxNodeRequestBodyBytes int64 = 16 << 20
+	nodeReadHeaderTimeout         = 5 * time.Second
+	nodeReadTimeout               = 30 * time.Second
+	nodeWriteTimeout              = 2 * time.Minute
+	nodeIdleTimeout               = 2 * time.Minute
+)
 
 func main() {
 	// 加载配置
@@ -195,8 +201,20 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	log.Printf("Starting mail node '%s' on %s", cfg.Node.Name, addr)
-	if err := r.Run(addr); err != nil {
+	server := newNodeHTTPServer(addr, r)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Failed to start: %v", err)
+	}
+}
+
+func newNodeHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: nodeReadHeaderTimeout,
+		ReadTimeout:       nodeReadTimeout,
+		WriteTimeout:      nodeWriteTimeout,
+		IdleTimeout:       nodeIdleTimeout,
 	}
 }
 
