@@ -195,7 +195,7 @@ GET  /sync/deleting?server_id={id}
 | 恢复 | 从 `.trash/<domain>__<localpart>-<unix_ts>` 取最近一次删除目录恢复，并重建配置 |
 | 域名管理 | 添加/移除虚拟域，生成 DKIM，写入 OpenDKIM 表 |
 | 邮件存储 | Maildir：`<base>/<domain>/<localpart>/{new,cur,tmp}` |
-| 邮件查询 | 扫描 `new/` 和 `cur/`，结构化解析 MIME，支持附件下载 |
+| 邮件查询 | 扫描 `new/` 和 `cur/`；使用有界进程内 Message-ID 路径索引，冷态只扫描邮件头，正文/附件仅完整解析目标 EML |
 | 过滤转发 | 后台扫描 Maildir，应用规则后转发到 active 集成邮箱 |
 | inline 图片兼容 | 对 MIME part 推断真实 content-type、filename 和扩展名 |
 | 运行协同 | 节点发现失败后后台退避重试；恢复身份后自动拉取节点配置、上报心跳/snapshot，并对账 deleting 任务 |
@@ -337,3 +337,4 @@ stateDiagram-v2
 | Phase 3 T9 生命周期、回收站、恢复 | 完成 |
 | Phase 3 T10 规则主动重载、message_id 兼容、TLS 部署文档 | 完成 |
 | 动态配置、集成邮箱、附件下载、inline 图片兼容 | 完成 |
+| Maildir 路径索引与正文/附件目标单次完整解析 | 完成 |

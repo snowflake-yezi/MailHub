@@ -8,6 +8,8 @@
 > 旧版本升级可执行一次 `mgmt-server admin bootstrap-from-config --config <path>` 迁移原配置密码；迁移账号会被标记为首次登录必须改密。
 > 控制面会自动创建当前数据库表；新部署不配置 `auth.tokens`。旧版明文 Token 的导入、删表和回滚限制见[控制面部署指南](../control-plane-deployment.md)。
 >
+> 部署前先阅读[部署容量与附件存储边界](../deployment-capacity.md)。2C2G 是低并发最低档；大附件并发、Maildir 磁盘公式和后续 MinIO 配置以该文档为准。
+>
 > 实在不行直接让ai来帮忙部署
 
 ---

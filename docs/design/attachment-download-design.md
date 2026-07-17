@@ -1,8 +1,8 @@
 # 邮件附件下载设计
 
-> 版本: v1.1 | 日期: 2026-07-11 | 状态: 已实现并验收
+> 版本: v1.2 | 日期: 2026-07-17 | 状态: 下载/预览与本地索引优化已实现
 
-> **实现结果：** mail-node 二进制流端点、mgmt 代理、管理端下载入口、safe HTML 预览与 inline 资源映射均已完成；OSS 化仍是延期演进。
+> **实现结果：** mail-node 二进制流端点、mgmt 代理、管理端下载入口、safe HTML 预览与 inline 资源映射均已完成；本地索引见[Maildir 邮件路径索引设计](maildir-message-index-design.md)，对象存储与服务器边界见[部署容量与附件存储边界](../deployment-capacity.md)。
 
 > 衔接：邮件查询主线见 `docs/design/t8-mime-preprocessing-design.md`；管理后台邮件页见 `mgmt-system/template/admin/emails.html`。本设计补齐 t8 之后遗留的「附件只见元数据、拿不到内容」缺口。
 
@@ -34,7 +34,7 @@
 
 ### 1.4 与原需求的差异
 
-`REQUIREMENTS_ANALYSIS.md §1.3` 原设想大模型系统拉取「text/plain + 附件 OSS URL」。当前裸机部署（2C2G，无对象存储），引入 OSS 成本高。本方案**直接从 mail-node 流式返回字节**，零额外存储依赖，契合部署约束；附件 OSS URL 作为后续可选演进保留。
+`REQUIREMENTS_ANALYSIS.md §1.3` 原设想大模型系统拉取「text/plain + 附件 OSS URL」。当前裸机部署（2C2G，无对象存储），引入 MinIO 会与 Postfix、Dovecot、MIME 解析争抢内存、磁盘和故障域，无法获得生产对象存储的主要收益。本方案直接从 mail-node 返回附件字节，并通过有界本地路径索引降低重复查找成本；MinIO 作为需要独立服务器容量的后续阶段保留。
 
 ---
 
@@ -97,12 +97,12 @@ mail-node  GET /internal/messages/:message_id/attachments/:index?mailbox=
 
 ---
 
-## 5. 已知限制（本次不解决）
+## 5. 已知限制与性能边界
 
 - **大附件内存**：enmime 全量解析 + `part.Content` 常驻内存，mgmt 侧虽 `io.Copy` 流式但仍经 mail-node 全量读。单附件超大（>几十 MB）时双倍内存压力；订单邮件附件通常不大，可接受。后续可优化为按 MIME part 偏移流式读取。
 - **错误透传体验**：下载失败时浏览器可能保存一个含错误 JSON 的小文件（HTTP 语义如此），调用方需据状态码判断。
-- **不含查询性能项**：`GetMessageBody` 全量遍历解析、列表全扫——作为独立后续任务（见查询完善度评估）。
-- **不含整封 `.eml` 下载 / 附件 OSS 化**：后续可选演进。
+- **邮件定位优化**：本地索引完成后，命中请求直接定位路径，冷请求扫描邮件头；目标 EML 仍由 enmime 全量解析。实现边界见[Maildir 邮件路径索引设计](maildir-message-index-design.md)。
+- **不含整封 `.eml` 下载 / MinIO 化**：MinIO 需要独立容量和迁移阶段，配置基线见[部署容量与附件存储边界](../deployment-capacity.md)。
 
 ---
 

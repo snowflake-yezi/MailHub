@@ -25,7 +25,7 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 - 邮箱管理：创建邮箱、修改密码、安全删除、从 `.trash` 恢复。
 - 域名管理：Postfix 虚拟域落地、DKIM key / SigningTable / KeyTable 写入。
 - 邮件处理：扫描 Maildir `new/` 和 `cur/`，按规则 `pass / flag / block` 处理，SMTP 转发到当前 active 集成邮箱。
-- 邮件读取：结构化解析 MIME，返回正文、头部、附件元数据，并支持附件二进制下载。
+- 邮件读取：结构化解析 MIME，返回正文、头部、附件元数据，并通过有界本地路径索引支持正文、预览和附件二进制下载。
 - 兼容处理：对缺 filename、缺后缀、错误 `application/octet-stream` 的 inline 图片按魔数推断类型和扩展名；API 读取、HTML 预览、SMTP 转发链路保持一致。
 
 ---
@@ -127,6 +127,7 @@ flowchart TB
 - 控制面机器：MySQL 8.0 / MariaDB 10.5+。
 - 至少一台数据面机器：开放 SMTP 25 端口，并安装 Postfix、Dovecot、OpenDKIM。
 - 一个可管理 DNS 的邮件域名。
+- 服务器最低/推荐配置、Maildir 附件性能边界和磁盘公式见[部署容量与附件存储边界](docs/deployment-capacity.md)。2C2G 仅作为低并发基线，不代表大附件并发容量。
 
 ### 2. 配置
 
@@ -201,6 +202,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [外部 API 对接文档](docs/api/external-api.md) | 外部调用方接口、鉴权、响应结构、附件下载 |
 | [控制面部署指南](docs/control-plane-deployment.md) | Docker Compose、systemd、管理员 bootstrap、升级和恢复 |
 | [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |
+| [部署容量与附件存储边界](docs/deployment-capacity.md) | 当前无对象存储版本的服务器配置、性能边界、磁盘规划及后续 MinIO 基线 |
 
 ### 当前专题设计
 
@@ -209,6 +211,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [动态配置化设计](docs/design/dynamic-config-design.md) | `system_configs`、后台配置页、热加载 |
 | [集成邮箱设计](docs/design/integrated-mailbox-design.md) | 转发目标池和 active 集成邮箱 |
 | [附件下载设计](docs/design/attachment-download-design.md) | 附件代理、二进制响应、safe HTML 预览 |
+| [Maildir 邮件路径索引设计](docs/design/maildir-message-index-design.md) | 轻量本地索引、冷查找、失效规则和单次完整解析 |
 | [inline 图片兼容设计](docs/design/inline-image-filename-inference-design.md) | inline 图片类型/后缀推断和 Roundcube 兼容 |
 | [生命周期恢复设计](docs/design/t9-restore-design.md) | `.trash` 恢复路径和冲突处理 |
 | [服务器域名池设计](docs/design/t4-t5-server-domain-pool-design.md) | 服务器-域名绑定、DKIM、DNS 清单 |
@@ -242,6 +245,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | 过滤规则、主动重载、Maildir 转发 | 已完成 |
 | 集成邮箱管理和 SMTP 凭据热加载 | 已完成 |
 | MIME 结构化解析、正文查询、附件下载 | 已完成 |
+| Maildir Message-ID 路径索引与目标单次完整解析 | 已完成 |
 | 回收站、恢复、purge、重启删除任务恢复 | 已完成 |
 | inline 图片 MIME / filename / 后缀兼容 | 已完成 |
 | 管理账号 Bootstrap、数据库登录、后台改密与 CLI 恢复 | 已完成 |
@@ -252,3 +256,4 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 |--------|------|------|
 | P1 | 节点配置可观测与通用覆盖 | 设计草案；先完成 NC-P0 的保留期语义、所有权和真实键名核对 |
 | 候选 | 外部创建邮箱 API 支持指定 `server_id` | 尚未排期，需先确认调用方权限与节点分配策略 |
+| 候选 | MinIO 附件对象存储与预签名 URL | 达到容量触发条件后开发；服务器基线见部署容量文档 |

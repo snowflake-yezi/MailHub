@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,15 +27,17 @@ import (
 const maxAttachmentPreviewBytes = 10 * 1024 * 1024
 
 type NodeHandler struct {
-	mailboxMgr   *mailbox.Manager
-	domainMgr    *domain.Manager
-	engine       *filter.Engine
-	lifecycle    *forward.Lifecycle
-	nodeID       uint64
-	nodeName     string
-	managerURL   string
-	sharedSecret string
-	remoteCfg    *config.RemoteConfig
+	mailboxMgr       *mailbox.Manager
+	domainMgr        *domain.Manager
+	engine           *filter.Engine
+	lifecycle        *forward.Lifecycle
+	nodeID           uint64
+	nodeName         string
+	managerURL       string
+	sharedSecret     string
+	remoteCfg        *config.RemoteConfig
+	messageIndexOnce sync.Once
+	messageIndex     *messagePathIndex
 }
 
 func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName, managerURL, sharedSecret string, remoteCfg *config.RemoteConfig) *NodeHandler {
@@ -48,6 +51,7 @@ func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter
 		managerURL:   managerURL,
 		sharedSecret: sharedSecret,
 		remoteCfg:    remoteCfg,
+		messageIndex: newMessagePathIndex(defaultMessagePathIndexEntries),
 	}
 }
 
@@ -247,18 +251,33 @@ func (h *NodeHandler) scanMailboxFiles(email string) []string {
 }
 
 func sortMailFilesByModTimeDesc(files []string) []string {
-	sorted := append([]string(nil), files...)
-	sort.Slice(sorted, func(i, j int) bool {
-		iStat, iErr := os.Stat(sorted[i])
-		jStat, jErr := os.Stat(sorted[j])
-		if iErr != nil || jErr != nil {
-			return sorted[i] > sorted[j]
+	type sortableMailFile struct {
+		path    string
+		modTime time.Time
+		statOK  bool
+	}
+	entries := make([]sortableMailFile, 0, len(files))
+	for _, path := range files {
+		entry := sortableMailFile{path: path}
+		if info, err := os.Stat(path); err == nil {
+			entry.modTime = info.ModTime()
+			entry.statOK = true
 		}
-		if !iStat.ModTime().Equal(jStat.ModTime()) {
-			return iStat.ModTime().After(jStat.ModTime())
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if !entries[i].statOK || !entries[j].statOK {
+			return entries[i].path > entries[j].path
 		}
-		return sorted[i] > sorted[j]
+		if !entries[i].modTime.Equal(entries[j].modTime) {
+			return entries[i].modTime.After(entries[j].modTime)
+		}
+		return entries[i].path > entries[j].path
 	})
+	sorted := make([]string, len(entries))
+	for i, entry := range entries {
+		sorted[i] = entry.path
+	}
 	return sorted
 }
 
@@ -305,6 +324,7 @@ func (h *NodeHandler) GetMessages(c *gin.Context) {
 	for _, filePath := range pageFiles {
 		if msg, err := parseMaildirMessage(filePath, email, h.mailboxMgr.MaildirBase()); err == nil {
 			messages = append(messages, msg)
+			h.messagePaths().putFile(email, msg.MessageID, filePath)
 		}
 	}
 
@@ -431,6 +451,8 @@ func (h *NodeHandler) DeleteMessage(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 5000, "message": "failed to delete message"})
 		return
 	}
+	h.messagePaths().remove(email, msg.MessageID)
+	h.messagePaths().remove(email, messageID)
 	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "message deleted", "data": gin.H{
 		"mailbox": email, "message_id": msg.MessageID,
 	}})
@@ -444,21 +466,21 @@ func normalizeMessageID(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// findMessage 在邮箱 Maildir 的 new/+cur/ 中按 message_id 定位邮件。
-// 返回解析结果 msg（GetMessageBody 直接使用）与文件路径 filePath（GetMessageAttachment 重新打开取附件字节）。
-// 匹配语义与原内联实现一致：精确 / 规范化（去 <> 与引号）/ fallback-id 忽略大小写。
+// findMessage 通过本地路径索引定位邮件，并仅完整解析目标 EML。
+// 返回解析结果 msg（GetMessageBody 直接使用）与文件路径 filePath（删除流程使用）。
+// 匹配语义保持为精确 / 规范化（去 <> 与引号）/ fallback-id 忽略大小写。
 func (h *NodeHandler) findMessage(email, messageID string) (msg *parsedMessage, filePath string, ok bool) {
-	normalized := normalizeMessageID(messageID)
-	for _, fp := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
-		m, err := parseFullMessage(fp, email, h.mailboxMgr.MaildirBase())
-		if err != nil {
-			continue
-		}
-		if matchMessageID(m.MessageID, messageID, normalized) {
-			return m, fp, true
-		}
+	filePath, ok = h.findMessagePath(email, messageID)
+	if !ok {
+		return nil, "", false
 	}
-	return nil, "", false
+	msg, err := parseFullMessage(filePath, email, h.mailboxMgr.MaildirBase())
+	if err != nil || !matchMessageID(msg.MessageID, messageID, normalizeMessageID(messageID)) {
+		h.messagePaths().remove(email, messageID)
+		return nil, "", false
+	}
+	h.messagePaths().putFile(email, msg.MessageID, filePath)
+	return msg, filePath, true
 }
 
 // matchMessageID 三级兼容匹配：精确 → 规范化（去 <> 与引号）→ fallback-id 忽略大小写。
@@ -537,7 +559,7 @@ func (h *NodeHandler) messageAttachmentPart(c *gin.Context) (*enmime.Part, infer
 		return nil, inferredPartInfo{}, false, fmt.Errorf("invalid attachment index")
 	}
 
-	_, filePath, ok := h.findMessage(email, messageID)
+	filePath, ok := h.findMessagePath(email, messageID)
 	if !ok {
 		c.JSON(404, gin.H{"code": 2003, "message": "message not found"})
 		return nil, inferredPartInfo{}, false, fmt.Errorf("message not found")

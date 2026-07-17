@@ -247,6 +247,17 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 
 客户端应按 HTTP 状态码和响应头处理下载，不要按 JSON 解析成功响应体。上游 4xx/5xx 错误可能透传 JSON 错误体。
 
+### 3.5 调用顺序与性能语义
+
+管理后台和外部 API 共用 mail-node 的 Message-ID 路径索引，接口契约不因索引而变化。建议调用方保持“列表 -> 正文/附件”的顺序：
+
+1. 邮件列表解析当前页时会预热该页 Message-ID 到 Maildir 路径的本地索引。
+2. 后续正文、预览和附件请求命中索引后直接定位目标 EML，只完整解析目标邮件一次。
+3. mail-node 重启后的第一次冷请求会扫描该邮箱的邮件头，但不会完整解析每一封正常邮件。
+4. 索引只缓存路径和文件指纹，不缓存正文或附件字节；重复下载仍会解析目标 EML，并继续经过 mgmt-system 二进制代理。
+
+因此，本地索引会同时改善管理端和所有外部调用方的正文/附件首字节延迟，但不会替代高并发重复下载所需的 MinIO、Range、CDN 或预签名 URL。容量边界见[部署容量与附件存储边界](../deployment-capacity.md)。
+
 ---
 
 ## 4. 权限与调用方建议
