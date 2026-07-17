@@ -2,7 +2,7 @@
 
 > 日期：2026-07-16（最后更新：2026-07-17）
 > 范围：`mgmt-system`、`mail-node`、管理端调用契约、控制面与数据面通信
-> 状态：SEC-1 至 SEC-4、REL-1、CFG-1 已完成并发布；其余风险项暂停
+> 状态：SEC-1 至 SEC-4、REL-1、CFG-1、CFG-2 已完成并发布；OPS-1 暂停
 
 ## 1. 修复目标
 
@@ -27,7 +27,7 @@
 | REL-2 | P0 | postmap/postfix/doveadm 失败被吞掉 | 命令包装为可注入执行器并传播 stderr/exit error | 任一命令失败时节点返回失败，删除不会继续移动 Maildir | 已完成（SEC-2 配套） |
 | REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成（SEC-2 配套） |
 | CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 已完成并发布 |
-| CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 待验收（已暂停） |
+| CFG-2 | P1 | `filter_sync_interval=0` 触发 ticker panic | Load 设置默认值，StartAutoSync 再做下限保护 | 缺省/非正值不 panic | 已完成并发布 |
 | OPS-1 | P1 | HTTP 服务无超时边界 | 使用显式 `http.Server`，设置 header/read/write/idle timeout | 两个入口不再使用裸 `r.Run` | 待验收（已暂停） |
 
 ## 3. 兼容性决策
@@ -69,6 +69,7 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 3. SEC-3、SEC-4 已单独验收发布；后续项目继续逐项验收、独立提交和发布。
 4. REL-1 已在两台 mail-node 独立备份并原子发布；后续发现 `.forwarded-error` 时必须结合 `delivered but commit failed` 日志人工核对，不得直接重新投递或删除。
 5. CFG-1 仅替换两台 mail-node；节点 2 的生产验收使用仅监听本机的临时配置代理隔离测试值，确认默认动作无重启生效后恢复真实管理端并清除代理与合成邮件。filter key 当前不属于节点可覆盖 schema，不能用数据库 override 代替该隔离方案。
+6. CFG-2 仅替换两台 mail-node；节点 2 的生产验收临时把 YAML 同步间隔改为 `0` 并重启，确认首次规则同步完成且无 panic 后，从发布备份原子恢复原配置并再次重启。canary 失败路径同时恢复配置和旧二进制。
 
 ## 6. 本地验证记录
 
@@ -95,6 +96,11 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - CFG-1 生产发布：提交 `9e7df68` 已进入远端 `main`，两台 mail-node 均原子替换为上述 SHA256；节点 1 回滚点为 `/opt/mgmt-system/backups/cfg1-9e7df68-20260717-065308`，节点 2 回滚点为 `/root/mailhub-backups/cfg1-9e7df68-20260717-141253`，两处 binary/config 校验均通过。
 - CFG-1 生产行为验收：节点 2 临时隔离配置下，`block` reload 前后 PID 均为 `6987`；合成邮件由 `new/` 移入 `cur/:2,S`，日志记录 `rule=0 reason=default action`，且无 SMTP 转发。随后同 PID 恢复真实 `pass` 配置，最终还原 YAML、清除代理和探针目录并重启到真实管理端。
 - CFG-1 发布后验收：管理端 health/ready 均为 200；节点 1/2 均为 healthy，revision 分别为 `2/2`、`1/1`，无 apply/reload error，未鉴权内部健康请求均为 401。两台最近 100 行日志的 panic/fatal、配置错误和 `delivered but commit failed` 均为 0；节点 1 的 14 个 Postfix/Dovecot 账号及配置哈希未变，`postconf` 仍报告 2 个虚拟域，节点 2 仍无活跃 vmailbox/Maildir。
+- CFG-2 原始复现：直接以 `intervalSec=0` 调用 `StartAutoSync`，进程在 `time.NewTicker` 触发 `panic: non-positive interval for NewTicker`。修复后配置加载层和运行期入口均将缺省或非正值回退为 3600 秒，显式正值保持不变。
+- CFG-2 自动化门禁：定向测试覆盖缺省、零值、负值、30 秒正常值，并用本地 HTTP 测试服务器确认零值和负值路径均完成首次规则同步；两个 Go 模块的普通全量测试、`go vet ./...` 和清洁 Windows CGO 环境下的 `go test -race -count=1 ./...` 均通过。
+- CFG-2 生产发布：提交 `b4fe64a` 已进入远端 `main`；Linux/amd64 mail-node 大小 16,545,508 字节，SHA256 为 `b277ab805d0ddb36b62efab954ba574006b75a1308325726d3aa982307bbe573`，两台节点均完成原子替换。节点 1 回滚点为 `/opt/mgmt-system/backups/cfg2-b4fe64a-20260717-155551`，节点 2 回滚点为 `/root/mailhub-backups/cfg2-b4fe64a-20260717-155551`。
+- CFG-2 生产行为验收：节点 2 临时配置 `filter_sync_interval: 0` 后成功启动并完成首次 `filter synced`，无 panic/fatal；随后配置恢复为原 30 秒且 SHA256 与备份一致，新二进制继续运行。最终节点 1/2 PID 分别为 `23754`、`14870`，同步间隔分别为 3600/30 秒。
+- CFG-2 发布后验收：控制面 health/ready 均正常；两台节点 healthy，revision 分别为 `2/2`、`1/1`，apply/reload error 均为空，未鉴权内部健康请求均为 401，近 10 分钟目标错误日志计数均为 0。节点 1 的 Postfix/Dovecot 账号仍为 14/14、虚拟域仍为 2 个，节点 2 仍为 0/0；真实 `union@asadad.bond` 当前页 19 封邮件的列表、正文、附件均为 200，附件 125553 字节。
 - 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
 - 两个模块的 `go test -race -count=1 ./...` 已通过。
-- CFG-2 和 OPS-1 仍保持暂停，未进入本次实现范围。
+- OPS-1 仍保持暂停，未进入本次实现范围。
