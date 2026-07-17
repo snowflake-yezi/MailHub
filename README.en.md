@@ -8,6 +8,32 @@ The current codebase includes a multi-server mail pool, automated domain and DKI
 
 ---
 
+## Interface
+
+> The screenshots below use sanitized sample data. Menus and behavior reflect the current console.
+
+### Operations overview
+
+![MailHub dashboard showing node health, mailbox totals, and server load](docs/images/mailhub-dashboard-en.png)
+
+The dashboard brings node health, mailbox growth, capacity, and operational alerts together, with direct access to mailbox creation, email queries, and server management.
+
+### Mailbox management
+
+![MailHub mailbox page showing filters, status, and account actions](docs/images/mailhub-mailboxes-en.png)
+
+The mailbox page filters accounts by domain, server, and status and provides single or batch provisioning, credential export, password changes, trash recovery, and integrated-mailbox switching.
+
+## Basic workflow
+
+1. **Deploy and sign in**: follow the [control-plane deployment guide](docs/control-plane-deployment.md) to prepare the database, configuration, and administrator bootstrap, then open `https://<management-domain>/admin/login`. If bootstrap used `--must-change-password`, change the password on first sign-in.
+2. **Connect mail resources**: register each `mail-node` in **Server Pool**, bind its domains, and complete DNS, Postfix, Dovecot, and OpenDKIM setup using the [data-plane deployment guide](docs/design/deployment-guide.md). Healthy nodes become eligible for automatic allocation.
+3. **Create mailboxes**: open **Mailbox Accounts > Create Mailbox**. Let MailHub choose a healthy node and domain or select them explicitly; provision one account, paste a batch, or import CSV/TXT.
+4. **Receive and inspect email**: enter a full mailbox address under **Email Query** to inspect bodies, HTML previews, and attachments. To aggregate delivery, select the active forwarding target under **Mailbox Accounts > Integrated Mailbox**.
+5. **Expose the business API**: create a caller under **External Access**, grant only the required capabilities, and issue a token. The complete token is shown once; send it as `Authorization: Bearer <token>`. See the [external API guide](docs/api/external-api.md) for endpoints and permissions.
+
+---
+
 ## Features
 
 ### Control plane: `mgmt-system`

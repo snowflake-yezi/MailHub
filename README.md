@@ -8,6 +8,32 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 
 ---
 
+## 界面展示
+
+> 以下界面使用脱敏示例数据，实际菜单和功能以当前版本为准。
+
+### 运维总览
+
+![MailHub 仪表盘，展示节点健康、邮箱数量和服务器负载](docs/images/mailhub-dashboard.png)
+
+仪表盘集中展示节点健康、邮箱增长、容量水位和待处理异常，可直接进入邮箱创建、邮件查询和服务器管理。
+
+### 邮箱账户管理
+
+![MailHub 邮箱账户页，展示筛选、状态和账号操作](docs/images/mailhub-mailboxes.png)
+
+邮箱账户页支持按域名、服务器和状态筛选，统一处理单个/批量创建、账密导出、密码修改、回收站恢复和集成邮箱切换。
+
+## 使用流程
+
+1. **部署并登录**：按[控制面部署指南](docs/control-plane-deployment.md)完成数据库、配置和管理员 bootstrap，访问 `https://<管理域名>/admin/login`；若初始化时启用了 `--must-change-password`，首次登录需先修改密码。
+2. **接入邮件资源**：在“服务器池”注册 `mail-node`、绑定可用域名，并按[数据面部署指南](docs/design/deployment-guide.md)完成 DNS、Postfix、Dovecot 和 OpenDKIM 配置；节点健康后即可参与自动分配。
+3. **创建邮箱**：进入“邮箱账户 > 创建邮箱”，可让系统自动选择健康节点和域名，也可手动指定；支持单个创建、批量粘贴以及 CSV/TXT 导入。
+4. **收取与查询**：邮件到达后，在“邮件查询”输入完整邮箱地址查看正文、HTML 预览和附件；需要统一汇总时，在“邮箱账户 > 集成邮箱”设置当前转发目标。
+5. **开放业务 API**：在“外部访问”创建调用方、按需授权并签发 Token。完整 Token 只展示一次，调用时通过 `Authorization: Bearer <token>` 传入；接口和权限说明见[外部 API 对接文档](docs/api/external-api.md)。
+
+---
+
 ## 当前能力
 
 ### 控制面 `mgmt-system`
