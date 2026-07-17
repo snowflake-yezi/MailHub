@@ -4,11 +4,88 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	mailconfig "github.com/ticket/email-mail-node/internal/config"
+	"github.com/ticket/email-mail-node/internal/filter"
+	"github.com/ticket/email-mail-node/internal/mailbox"
 )
+
+func TestScannerSkipsDeliveredQuarantine(t *testing.T) {
+	base := t.TempDir()
+	newDir := filepath.Join(base, "example.com", "user", "new")
+	if err := os.MkdirAll(newDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	quarantined := filepath.Join(newDir, "message.forwarded-error")
+	if err := os.WriteFile(quarantined, []byte("invalid mail"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := mailbox.NewManagerWithFiles(base, 0, 0, filepath.Join(base, "users"), filepath.Join(base, "vmailbox"))
+	service := New(ForwardConfig{}, filter.New(filter.ActionPass, ""), mgr, nil)
+	processed, errors := service.ScanOnce()
+	if processed != 0 || errors != 0 {
+		t.Fatalf("quarantine scan = processed %d errors %d, want 0/0", processed, errors)
+	}
+	if _, err := os.Stat(quarantined); err != nil {
+		t.Fatalf("quarantined file changed during scan: %v", err)
+	}
+}
+
+func TestDeliveredCommitFailureIsQuarantined(t *testing.T) {
+	maildir := t.TempDir()
+	newDir := filepath.Join(maildir, "new")
+	if err := os.MkdirAll(newDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	messagePath := filepath.Join(newDir, "message")
+	if err := os.WriteFile(messagePath, []byte("mail"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(maildir, "cur"), []byte("not a directory"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := commitDeliveredFile(messagePath); err == nil {
+		t.Fatal("commitDeliveredFile() error = nil, want quarantined commit failure")
+	}
+	quarantined := messagePath + ".forwarded-error"
+	if shouldProcessMailFile(filepath.Base(quarantined)) {
+		t.Fatalf("quarantined file %q would be processed again", quarantined)
+	}
+	if _, err := os.Stat(quarantined); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(messagePath); !os.IsNotExist(err) {
+		t.Fatalf("original delivered file still exists: %v", err)
+	}
+}
+
+func TestCopyAndRemoveClosesSourceBeforeDelete(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source")
+	destination := filepath.Join(dir, "destination")
+	if err := os.WriteFile(source, []byte("mail"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyAndRemove(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after copy: %v", err)
+	}
+	data, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "mail" {
+		t.Fatalf("destination content = %q, want mail", data)
+	}
+}
 
 func TestForwardConfigReadsReloadedRuntimeValues(t *testing.T) {
 	values := map[string]string{
