@@ -2,7 +2,7 @@
 
 > 日期：2026-07-16
 > 范围：`mgmt-system`、`mail-node`、管理端调用契约、控制面与数据面通信
-> 状态：SEC-1 至 SEC-4 已完成并发布；REL-1 本地验收通过、待发布；其余风险项暂停
+> 状态：SEC-1 至 SEC-4、REL-1 已完成并发布；其余风险项暂停
 
 ## 1. 修复目标
 
@@ -23,7 +23,7 @@
 | SEC-2 | P0 | 邮箱、密码、域名可注入路径/配置行 | 控制面和节点双层校验；限制 local-part、DNS 域名和控制字符；所有 Maildir 入口复用同一解析器 | `..`、路径分隔符、CR/LF、冒号密码均被拒绝 | 已完成 |
 | SEC-3 | P1 | SMTP TLS 默认跳过证书校验 | 新安装默认 `false`，节点 fallback 同步调整 | 默认配置构造出的 TLS 配置启用证书校验 | 已完成并发布 |
 | SEC-4 | P1 | 废弃 `/smtp/filter` 公开且无限读取 | 从公开路由移除；全局请求体限制为 16 MiB | 节点启动路由不再暴露该路径 | 已完成并发布 |
-| REL-1 | P0 | SMTP 成功后 move 失败导致重复转发 | `moveToCur` 返回错误；成功投递但提交失败时改名为隔离文件并跳过后续扫描 | move 失败不会把邮件留作下一轮正常投递；错误可观察 | 本地验收通过（待发布） |
+| REL-1 | P0 | SMTP 成功后 move 失败导致重复转发 | `moveToCur` 返回错误；成功投递但提交失败时改名为隔离文件并跳过后续扫描 | move 失败不会把邮件留作下一轮正常投递；错误可观察 | 已完成并发布 |
 | REL-2 | P0 | postmap/postfix/doveadm 失败被吞掉 | 命令包装为可注入执行器并传播 stderr/exit error | 任一命令失败时节点返回失败，删除不会继续移动 Maildir | 已完成（SEC-2 配套） |
 | REL-3 | P1 | 配置文件并发读改写覆盖 | mailbox/domain Manager 对配置变更串行化；整文件写使用唯一临时文件和原子替换 | 20 路并发创建不丢配置行；精确删除不误删相似邮箱 | 已完成（SEC-2 配套） |
 | CFG-1 | P1 | filter 动态配置只在启动时生效 | Engine 在 revision 提交后于锁内更新默认动作和前缀 | reload 后下一封邮件使用新值 | 待验收（已暂停） |
@@ -63,7 +63,7 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 1. 首次升级启动后确认 `api_tokens` 已删除、外部调用正常，再从配置文件移除 `auth.tokens` 明文项。
 2. SEC-2 发布后确认两个节点健康、配置 revision 一致，并验证非法邮箱、密码和域名被控制面与节点同时拒绝。
 3. SEC-3、SEC-4 已单独验收发布；后续项目继续逐项验收、独立提交和发布。
-4. REL-1 发布时分别备份两台 mail-node 二进制并原子替换；重启后检查节点健康、revision、panic/fatal 日志，以及是否存在新的 `.forwarded-error` 隔离文件。
+4. REL-1 已在两台 mail-node 独立备份并原子发布；后续发现 `.forwarded-error` 时必须结合 `delivered but commit failed` 日志人工核对，不得直接重新投递或删除。
 
 ## 6. 本地验证记录
 
@@ -82,6 +82,9 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - SEC-3/SEC-4 回滚点：主机 `/opt/mgmt-system/backups/sec3-sec4-e1a6aa1-20260716-094254`，节点 2 `/root/mailhub-backups/sec3-sec4-e1a6aa1-20260716-094936`。
 - REL-1：定向测试复现隔离文件会被旧扫描器重新处理；修复后覆盖 move 失败传播、同目录 `.forwarded-error` 隔离、后续扫描跳过，以及跨盘复制关闭源文件后再删除。
 - REL-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功，SHA256 为 `4acca650ef2eb5b2bf97ab4d914a0b8fe726182f23efb9b1381c1def5bf525a1`。
+- REL-1 生产发布：提交 `9114cba` 已进入远端 `main`，两台 mail-node 均使用上述 SHA256；回滚点分别为 `/opt/mgmt-system/backups/rel1-9114cba-20260717-014749` 和 `/root/mailhub-backups/rel1-9114cba-20260717-013700`。
+- REL-1 生产验收：控制面 health/ready 均为 200；两台节点均为 healthy，revision 分别为 `2/2`、`1/1`，未鉴权内部健康请求均为 401；最近 100 行日志的 panic/fatal 和 `delivered but commit failed` 均为 0，发布后 `.forwarded-error` 数量均为 0。
+- 第二节点发布前已有 7 封历史测试邮件因 SMTP 主机名无法解析而每轮发送失败；发布后仍保持 `processed=0 errors=7`，错误发生在 SMTP 拨号阶段，早于 REL-1 提交路径，不属于本次回归。
 - 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
 - 两个模块的 `go test -race -count=1 ./...` 已通过。
 - CFG-1、CFG-2 和 OPS-1 仍保持暂停，未进入本次实现范围。
