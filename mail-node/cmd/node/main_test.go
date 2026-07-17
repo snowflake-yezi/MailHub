@@ -29,6 +29,7 @@ func TestFilterConfigRevisionUpdatesRunningEngine(t *testing.T) {
 	values := map[string]string{
 		"filter.default_action":      "pass",
 		"filter.flag_subject_prefix": "",
+		filter.SyncIntervalConfigKey: "30",
 	}
 	revision := uint64(1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -51,10 +52,17 @@ func TestFilterConfigRevisionUpdatesRunningEngine(t *testing.T) {
 	if got := engine.GetFlagPrefix(); got != "" {
 		t.Fatalf("startup flag prefix = %q, want empty", got)
 	}
+	if got := configuredFilterSyncInterval(remoteCfg, 3600); got != 30 {
+		t.Fatalf("startup sync interval = %d, want 30", got)
+	}
+	if got := engine.SyncIntervalSeconds(); got != 30 {
+		t.Fatalf("engine sync interval = %d, want 30", got)
+	}
 
 	values = map[string]string{
 		"filter.default_action":      "block",
 		"filter.flag_subject_prefix": "[new]",
+		filter.SyncIntervalConfigKey: "60",
 	}
 	revision = 2
 	if err := remoteCfg.PullAll(); err != nil {
@@ -65,6 +73,9 @@ func TestFilterConfigRevisionUpdatesRunningEngine(t *testing.T) {
 	}
 	if got := engine.GetFlagPrefix(); got != "[new]" {
 		t.Fatalf("flag prefix = %q, want [new]", got)
+	}
+	if got := engine.SyncIntervalSeconds(); got != 60 {
+		t.Fatalf("updated sync interval = %d, want 60", got)
 	}
 
 	values["filter.default_action"] = "drop"
@@ -143,10 +154,13 @@ func TestClampHeartbeat(t *testing.T) {
 }
 
 func TestRuntimeConfigSnapshotContract(t *testing.T) {
-	values := runtimeConfigSnapshotValues(config.NewRemoteConfig("", ""), forward.ForwardConfig{
+	engine := filter.New(filter.ActionPass, "")
+	engine.UpdateConfig(map[string]string{filter.SyncIntervalConfigKey: "30"})
+	values := runtimeConfigSnapshotValues(config.NewRemoteConfig("", ""), engine, forward.ForwardConfig{
 		ScanInterval: 5, MaxEmailSize: 10485760, BodyPreviewSize: 65536, TargetAddress: "union@example.com",
 	}, 24*time.Hour)
 	want := []string{
+		filter.SyncIntervalConfigKey,
 		"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size", "forward.target_address",
 		"forward.smtp_dial_timeout", "forward.tls_insecure_skip", "forward.tls_min_version",
 		"lifecycle.trash_retention_hours", "lifecycle.gc_interval_minutes", "lifecycle.drain_timeout_minutes", "lifecycle.drain_poll_interval_ms",

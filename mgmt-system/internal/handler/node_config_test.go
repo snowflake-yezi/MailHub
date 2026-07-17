@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/configschema"
+	"github.com/ticket/email-mgmt-system/internal/model"
 )
 
 func TestNotifyNodeReload(t *testing.T) {
@@ -106,5 +107,29 @@ func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
 	}
 	if err := validateNodeConfigValue(definition, "invalid"); err == nil {
 		t.Fatal("invalid address accepted")
+	}
+}
+
+func TestFilterSyncIntervalUIContract(t *testing.T) {
+	definition, ok := configschema.Get("filter.sync_interval")
+	if !ok || !definition.NodeOverridable || definition.ApplyStrategy != configschema.ReloadHook {
+		t.Fatalf("sync interval definition = %#v", definition)
+	}
+	for _, value := range []string{"1", "30", "86400"} {
+		if err := validateGlobalConfigValue(definition.Key, value); err != nil {
+			t.Fatalf("valid interval %q rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"0", "-1", "86401", "invalid"} {
+		if err := validateGlobalConfigValue(definition.Key, value); err == nil {
+			t.Fatalf("invalid interval %q accepted", value)
+		}
+	}
+
+	item := globalConfigItem(model.SystemConfig{
+		ConfigKey: "filter.sync_interval", ConfigValue: "30", ValueType: "int", Reloadable: true,
+	})
+	if item.Min == nil || *item.Min != 1 || item.Max == nil || *item.Max != 86400 || item.Unit != "秒" || item.EffectType != "hot_reload" {
+		t.Fatalf("global sync interval metadata = %#v", item)
 	}
 }

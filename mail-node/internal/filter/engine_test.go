@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,19 @@ func TestUpdateConfigAllowsEmptyFlagPrefix(t *testing.T) {
 func TestValidateConfigRejectsInvalidDefaultAction(t *testing.T) {
 	if err := ValidateConfig(nil, map[string]string{"filter.default_action": "drop"}); err == nil {
 		t.Fatal("invalid default action accepted")
+	}
+}
+
+func TestValidateConfigRejectsInvalidSyncInterval(t *testing.T) {
+	for _, value := range []string{"", "0", "-1", "86401", "invalid"} {
+		if err := ValidateConfig(nil, map[string]string{SyncIntervalConfigKey: value}); err == nil {
+			t.Fatalf("invalid sync interval %q accepted", value)
+		}
+	}
+	for _, value := range []string{"1", "30", "86400"} {
+		if err := ValidateConfig(nil, map[string]string{SyncIntervalConfigKey: value}); err != nil {
+			t.Fatalf("valid sync interval %q rejected: %v", value, err)
+		}
 	}
 }
 
@@ -100,6 +114,8 @@ func TestFilterSyncInterval(t *testing.T) {
 }
 
 func TestStartAutoSyncHandlesNonPositiveInterval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	synced := make(chan struct{}, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -108,8 +124,8 @@ func TestStartAutoSyncHandlesNonPositiveInterval(t *testing.T) {
 	}))
 	defer server.Close()
 
-	New(ActionPass, "").StartAutoSync(server.URL, 0, "")
-	New(ActionPass, "").StartAutoSync(server.URL, -1, "")
+	New(ActionPass, "").startAutoSync(ctx, server.URL, 0, "")
+	New(ActionPass, "").startAutoSync(ctx, server.URL, -1, "")
 
 	for range 2 {
 		select {
@@ -117,5 +133,35 @@ func TestStartAutoSyncHandlesNonPositiveInterval(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("initial filter sync did not complete")
 		}
+	}
+}
+
+func TestUpdateConfigResetsRunningSyncInterval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	synced := make(chan time.Time, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"code":0,"data":[]}`)
+		synced <- time.Now()
+	}))
+	defer server.Close()
+
+	engine := New(ActionPass, "")
+	engine.startAutoSync(ctx, server.URL, 3600, "")
+	select {
+	case <-synced:
+	case <-time.After(time.Second):
+		t.Fatal("initial filter sync did not complete")
+	}
+
+	engine.UpdateConfig(map[string]string{SyncIntervalConfigKey: "1"})
+	if got := engine.SyncIntervalSeconds(); got != 1 {
+		t.Fatalf("sync interval = %d, want 1", got)
+	}
+	select {
+	case <-synced:
+	case <-time.After(3 * time.Second):
+		t.Fatal("updated filter sync interval did not reset the running ticker")
 	}
 }

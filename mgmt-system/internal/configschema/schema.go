@@ -32,6 +32,7 @@ var definitionOrder = []string{
 	"forward.smtp_dial_timeout",
 	"forward.tls_insecure_skip",
 	"forward.tls_min_version",
+	"filter.sync_interval",
 	"lifecycle.trash_retention_hours",
 	"lifecycle.message_retention_days",
 	"lifecycle.gc_interval_minutes",
@@ -67,6 +68,10 @@ var definitions = map[string]Definition{
 	"forward.tls_min_version": {
 		Key: "forward.tls_min_version", Owner: "mail-node", Category: "forward", Label: "TLS 最低版本", Description: "SMTP STARTTLS 最低版本，12 表示 TLS 1.2，13 表示 TLS 1.3",
 		ValueType: "int", DefaultValue: "12", Unit: "版本", Min: 12, Max: 13, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"filter.sync_interval": {
+		Key: "filter.sync_interval", Owner: "mail-node", Category: "filter", Label: "规则同步间隔", Description: "节点启动时立即同步，配置重载后在线更新周期",
+		ValueType: "int", DefaultValue: "30", Unit: "秒", Min: 1, Max: 86400, NodeOverridable: true, ApplyStrategy: ReloadHook,
 	},
 	"lifecycle.trash_retention_hours": {
 		Key: "lifecycle.trash_retention_hours", Owner: "mail-node", Category: "lifecycle",

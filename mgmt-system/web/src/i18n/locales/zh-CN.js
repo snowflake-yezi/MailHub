@@ -206,7 +206,7 @@ const pages = {
       filter: {
         default_action: { label: '默认过滤动作', description: 'pass=放行 / flag=标记 / block=丢弃' },
         flag_subject_prefix: { label: '标记邮件标题前缀', description: 'filter action=flag 时添加的标题前缀' },
-        sync_interval: { label: '规则同步间隔（秒）', description: '从 mgmt-system 同步过滤规则的间隔' },
+        sync_interval: { label: '规则同步间隔（秒）', description: '节点启动时立即同步，配置重载后在线更新周期；允许 1-86400 秒' },
       },
       healthcheck: {
         probe_interval_seconds: { label: '探测间隔（秒）', description: '主动健康探测执行间隔' },

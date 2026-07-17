@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/configschema"
+	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -44,6 +45,32 @@ type configItem struct {
 	DefaultValue string `json:"default_value"`
 	Reloadable   bool   `json:"reloadable"`
 	EffectType   string `json:"effect_type"`
+	Unit         string `json:"unit,omitempty"`
+	Min          *int   `json:"min,omitempty"`
+	Max          *int   `json:"max,omitempty"`
+}
+
+func globalConfigItem(cfg model.SystemConfig) configItem {
+	item := configItem{
+		Key: cfg.ConfigKey, Value: cfg.ConfigValue, ValueType: cfg.ValueType, Label: cfg.Label,
+		Description: cfg.Description, DefaultValue: cfg.DefaultValue, Reloadable: cfg.Reloadable,
+		EffectType: configEffectType(cfg.ConfigKey, cfg.Reloadable),
+	}
+	if definition, ok := configschema.Get(cfg.ConfigKey); ok {
+		minValue, maxValue := definition.Min, definition.Max
+		item.Unit = definition.Unit
+		item.Min = &minValue
+		item.Max = &maxValue
+	}
+	return item
+}
+
+func validateGlobalConfigValue(key, value string) error {
+	definition, ok := configschema.Get(key)
+	if !ok {
+		return nil
+	}
+	return validateNodeConfigValue(definition, value)
 }
 
 func configEffectType(key string, reloadable bool) string {
@@ -96,16 +123,7 @@ func (h *ConfigHandler) ListConfigs(c *gin.Context) {
 			groupMap[cfg.Category] = g
 			groupOrder = append(groupOrder, cfg.Category)
 		}
-		g.Items = append(g.Items, configItem{
-			Key:          cfg.ConfigKey,
-			Value:        cfg.ConfigValue,
-			ValueType:    cfg.ValueType,
-			Label:        cfg.Label,
-			Description:  cfg.Description,
-			DefaultValue: cfg.DefaultValue,
-			Reloadable:   cfg.Reloadable,
-			EffectType:   configEffectType(cfg.ConfigKey, cfg.Reloadable),
-		})
+		g.Items = append(g.Items, globalConfigItem(cfg))
 	}
 
 	groups := make([]groupedConfig, 0, len(groupOrder))
@@ -139,16 +157,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
-		"data": configItem{
-			Key:          cfg.ConfigKey,
-			Value:        cfg.ConfigValue,
-			ValueType:    cfg.ValueType,
-			Label:        cfg.Label,
-			Description:  cfg.Description,
-			DefaultValue: cfg.DefaultValue,
-			Reloadable:   cfg.Reloadable,
-			EffectType:   configEffectType(cfg.ConfigKey, cfg.Reloadable),
-		},
+		"data": globalConfigItem(*cfg),
 	})
 }
 
@@ -164,6 +173,10 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code": 1001, "message": "value is required",
 		})
+		return
+	}
+	if err := validateGlobalConfigValue(key, req.Value); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": err.Error()})
 		return
 	}
 
@@ -191,6 +204,12 @@ func (h *ConfigHandler) BatchUpdate(c *gin.Context) {
 			"code": 1001, "message": "updates map is required",
 		})
 		return
+	}
+	for key, value := range req.Updates {
+		if err := validateGlobalConfigValue(key, value); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": err.Error()})
+			return
+		}
 	}
 
 	if err := h.store.BatchSetConfigs(req.Updates); err != nil {

@@ -24,6 +24,7 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 		"forward.smtp_dial_timeout":        ReadThrough,
 		"forward.tls_insecure_skip":        ReadThrough,
 		"forward.tls_min_version":          ReadThrough,
+		"filter.sync_interval":             ReloadHook,
 		"lifecycle.gc_interval_minutes":    ReloadHook,
 		"lifecycle.drain_timeout_minutes":  ReadThrough,
 		"lifecycle.drain_poll_interval_ms": ReadThrough,

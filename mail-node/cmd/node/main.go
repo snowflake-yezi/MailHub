@@ -72,7 +72,7 @@ func main() {
 	// 启动定时同步规则
 	engine.StartAutoSync(
 		cfg.Management.APIURL,
-		cfg.Management.FilterSyncInterval,
+		configuredFilterSyncInterval(remoteCfg, cfg.Management.FilterSyncInterval),
 		cfg.SharedSecret,
 	)
 
@@ -122,7 +122,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
-		if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
+		if err := reportRuntimeConfigSnapshot(remoteCfg, engine, forwardCfg, trashRetention); err != nil {
 			log.Printf("[config] post-apply snapshot failed: %v", err)
 		}
 	})
@@ -134,7 +134,7 @@ func main() {
 			log.Printf("[discovery] server_id recovered: %d", nodeID)
 			if err := remoteCfg.Reload(); err != nil {
 				log.Printf("[discovery] node config reload after recovery failed: %v", err)
-			} else if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
+			} else if err := reportRuntimeConfigSnapshot(remoteCfg, engine, forwardCfg, trashRetention); err != nil {
 				log.Printf("[discovery] config snapshot after recovery failed: %v", err)
 			}
 			go lifecycle.PullDeletingTasks(cfg.Management.APIURL, nodeID, cfg.SharedSecret)
@@ -147,11 +147,11 @@ func main() {
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
 	lifecycle.StartGC(ctx)
-	if err := reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention); err != nil {
+	if err := reportRuntimeConfigSnapshot(remoteCfg, engine, forwardCfg, trashRetention); err != nil {
 		log.Printf("[config] WARNING: failed to report config snapshot: %v", err)
 	}
 	go startPeriodicSnapshot(ctx, 5*time.Minute, func() error {
-		return reportRuntimeConfigSnapshot(remoteCfg, forwardCfg, trashRetention)
+		return reportRuntimeConfigSnapshot(remoteCfg, engine, forwardCfg, trashRetention)
 	})
 
 	// 重启自愈：向 mgmt 拉取属于本节点的 DELETING 状态任务并恢复执行
@@ -216,6 +216,10 @@ func registerFilterConfigAfterApply(remoteCfg *config.RemoteConfig, engine *filt
 	})
 }
 
+func configuredFilterSyncInterval(remoteCfg *config.RemoteConfig, localFallback int) int {
+	return remoteCfg.GetInt(filter.SyncIntervalConfigKey, localFallback)
+}
+
 func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
@@ -229,12 +233,13 @@ func registerNodeRoutes(r *gin.Engine, nodeH *handler.NodeHandler, sharedSecret 
 	nodeH.RegisterInternalRoutes(internalGroup)
 }
 
-func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) error {
-	return remoteCfg.ReportSnapshots(runtimeConfigSnapshotValues(remoteCfg, forwardCfg, trashRetention), time.Now())
+func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, engine *filter.Engine, forwardCfg forward.ForwardConfig, trashRetention time.Duration) error {
+	return remoteCfg.ReportSnapshots(runtimeConfigSnapshotValues(remoteCfg, engine, forwardCfg, trashRetention), time.Now())
 }
 
-func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, forwardCfg forward.ForwardConfig, trashRetention time.Duration) map[string]string {
+func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, engine *filter.Engine, forwardCfg forward.ForwardConfig, trashRetention time.Duration) map[string]string {
 	return map[string]string{
+		filter.SyncIntervalConfigKey:       strconv.Itoa(engine.SyncIntervalSeconds()),
 		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
 		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
 		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),
