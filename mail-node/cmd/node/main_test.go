@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mail-node/internal/config"
+	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/handler"
 )
@@ -20,6 +22,62 @@ import (
 func TestTLSVerificationIsEnabledByDefault(t *testing.T) {
 	if tlsInsecureSkip(config.NewRemoteConfig("", "")) {
 		t.Fatal("empty node config must verify SMTP TLS certificates")
+	}
+}
+
+func TestFilterConfigRevisionUpdatesRunningEngine(t *testing.T) {
+	values := map[string]string{
+		"filter.default_action":      "pass",
+		"filter.flag_subject_prefix": "",
+	}
+	revision := uint64(1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+			"configs": values, "sources": map[string]string{}, "desired_revision": revision,
+		}})
+	}))
+	defer server.Close()
+
+	remoteCfg := config.NewRemoteConfig(server.URL, "secret", 1)
+	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
+	if err := remoteCfg.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+	engine := newFilterEngine(remoteCfg, "block", "[local]")
+	registerFilterConfigAfterApply(remoteCfg, engine)
+	if got := engine.Filter(&filter.EmailMessage{}).Action; got != filter.ActionPass {
+		t.Fatalf("startup default action = %q, want pass", got)
+	}
+	if got := engine.GetFlagPrefix(); got != "" {
+		t.Fatalf("startup flag prefix = %q, want empty", got)
+	}
+
+	values = map[string]string{
+		"filter.default_action":      "block",
+		"filter.flag_subject_prefix": "[new]",
+	}
+	revision = 2
+	if err := remoteCfg.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+	if got := engine.Filter(&filter.EmailMessage{}).Action; got != filter.ActionBlock {
+		t.Fatalf("default action = %q, want block", got)
+	}
+	if got := engine.GetFlagPrefix(); got != "[new]" {
+		t.Fatalf("flag prefix = %q, want [new]", got)
+	}
+
+	values["filter.default_action"] = "drop"
+	revision = 3
+	if err := remoteCfg.PullAll(); err == nil {
+		t.Fatal("invalid filter revision was committed")
+	}
+	if got := engine.Filter(&filter.EmailMessage{}).Action; got != filter.ActionBlock {
+		t.Fatalf("rejected revision changed default action to %q", got)
+	}
+	desired, applied := remoteCfg.Revisions()
+	if desired != 3 || applied != 2 {
+		t.Fatalf("revisions = %d/%d, want 3/2", desired, applied)
 	}
 }
 

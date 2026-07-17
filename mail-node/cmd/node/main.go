@@ -58,6 +58,7 @@ func main() {
 	remoteCfg.SetBootIdentity(bootID, startedAt)
 	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
+	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -65,10 +66,8 @@ func main() {
 	}
 
 	// 初始化过滤引擎（default action 优先用远程配置，fallback YAML）
-	engine := filter.New(
-		filter.Action(remoteCfg.GetString("filter.default_action", cfg.Filter.DefaultAction)),
-		remoteCfg.GetString("filter.flag_subject_prefix", cfg.Filter.FlagSubjectPrefix),
-	)
+	engine := newFilterEngine(remoteCfg, cfg.Filter.DefaultAction, cfg.Filter.FlagSubjectPrefix)
+	registerFilterConfigAfterApply(remoteCfg, engine)
 
 	// 启动定时同步规则
 	engine.StartAutoSync(
@@ -203,6 +202,18 @@ func main() {
 
 func tlsInsecureSkip(remoteCfg *config.RemoteConfig) bool {
 	return remoteCfg.GetBool("forward.tls_insecure_skip", false)
+}
+
+func newFilterEngine(remoteCfg *config.RemoteConfig, defaultAction, flagPrefix string) *filter.Engine {
+	engine := filter.New(filter.Action(defaultAction), flagPrefix)
+	engine.UpdateConfig(remoteCfg.Configs())
+	return engine
+}
+
+func registerFilterConfigAfterApply(remoteCfg *config.RemoteConfig, engine *filter.Engine) {
+	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
+		engine.UpdateConfig(remoteCfg.Configs())
+	})
 }
 
 func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
