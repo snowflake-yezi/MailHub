@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
+  Ban,
   Check,
   Clipboard,
   Clock3,
@@ -76,7 +77,7 @@ function ConfirmDialog({ title, message, confirmLabel, saving = false, onConfirm
         <p>{message}</p>
         <div className="modal-footer">
           <button className="btn btn-outline" type="button" disabled={saving} onClick={onCancel}>{t('common:actions.cancel')}</button>
-          <button className="btn btn-danger" type="button" disabled={saving} onClick={onConfirm}>{saving ? t('externalAccess.confirm.deleting') : confirmLabel || t('common:actions.confirm')}</button>
+          <button className="btn btn-danger" type="button" disabled={saving} onClick={onConfirm}>{saving ? t('externalAccess.confirm.processing') : confirmLabel || t('common:actions.confirm')}</button>
         </div>
       </div>
     </div>
@@ -114,7 +115,7 @@ function PermissionSelector({ permissions, selected, onChange }) {
   )
 }
 
-function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave, onClose, onIssue, onDelete }) {
+function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave, onClose, onIssue, onRevoke, onDelete }) {
   const { t } = useTranslation('pages')
   const { mode, form, application } = state
   const update = (field, value) => onChange({ ...state, form: { ...form, [field]: value } })
@@ -167,7 +168,13 @@ function ApplicationDrawer({ state, permissions, saving, logs, onChange, onSave,
                     <div className="credential-row" key={credential.id}>
                       <span className={`credential-state ${credential.enabled ? 'active' : ''}`}><KeyRound size={15} /></span>
                       <div><strong>{credential.name}</strong><code>{credential.token_prefix}...</code><small>{t('externalAccess.drawer.lastUsed', { date: credential.last_used_at ? formatDateTime(credential.last_used_at) : t('externalAccess.defaults.never') })}</small></div>
-                      <button className="icon-button compact danger" type="button" title={t('externalAccess.drawer.deleteCredentialTitle')} onClick={() => onDelete(credential)}><Trash2 size={15} /></button>
+                      <div className="credential-actions">
+                        {!credential.enabled && <span className="status-badge status-down">{t('externalAccess.drawer.revoked')}</span>}
+                        {credential.enabled && (
+                          <button className="icon-button compact" type="button" title={t('externalAccess.drawer.revokeCredentialTitle')} onClick={() => onRevoke(credential)}><Ban size={15} /></button>
+                        )}
+                        <button className="icon-button compact danger" type="button" title={t('externalAccess.drawer.deleteCredentialTitle')} onClick={() => onDelete(credential)}><Trash2 size={15} /></button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -330,6 +337,25 @@ export default function ExternalAccessPage() {
     },
   })
 
+  const askRevoke = (credential) => setConfirm({
+    title: t('externalAccess.dialogs.revokeTitle'),
+    message: t('externalAccess.dialogs.revokeMessage', { name: credential.name }),
+    confirmLabel: t('externalAccess.dialogs.revokeConfirm'),
+    onConfirm: async () => {
+      setSaving(true)
+      try {
+        await externalAccessAPI.revokeCredential(drawer.application.id, credential.id)
+        await refreshOpenApplication(drawer.application.id)
+        setToast({ type: 'success', message: t('externalAccess.messages.revoked') })
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      } finally {
+        setSaving(false)
+        setConfirm(null)
+      }
+    },
+  })
+
   if (loading) return <div className="dashboard-panel loading-panel"><span className="spinner" /> {t('externalAccess.loading')}</div>
 
   return (
@@ -371,7 +397,7 @@ export default function ExternalAccessPage() {
         </div>
       </section>
 
-      {drawer && <ApplicationDrawer state={drawer} permissions={permissions} saving={saving} logs={logs} onChange={setDrawer} onSave={saveApplication} onClose={() => setDrawer(null)} onIssue={() => setCredentialDialog(true)} onDelete={askDelete} />}
+      {drawer && <ApplicationDrawer state={drawer} permissions={permissions} saving={saving} logs={logs} onChange={setDrawer} onSave={saveApplication} onClose={() => setDrawer(null)} onIssue={() => setCredentialDialog(true)} onRevoke={askRevoke} onDelete={askDelete} />}
       {credentialDialog && <CredentialDialog saving={saving} onSave={issueCredential} onClose={() => setCredentialDialog(false)} />}
       {token && <TokenDialog token={token} onClose={() => setToken('')} onCopied={() => setToast({ type: 'success', message: t('externalAccess.token.copied') })} onCopyError={() => setToast({ type: 'error', message: t('externalAccess.token.copyFailed') })} />}
       {confirm && <ConfirmDialog {...confirm} saving={saving} onCancel={() => setConfirm(null)} />}

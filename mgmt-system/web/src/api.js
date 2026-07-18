@@ -149,6 +149,7 @@ export const externalAccessAPI = {
   create(data) { return request('/external-applications', { method: 'POST', body: JSON.stringify(data) }); },
   update(id, data) { return request(`/external-applications/${id}`, { method: 'PUT', body: JSON.stringify(data) }); },
   createCredential(id, data) { return request(`/external-applications/${id}/credentials`, { method: 'POST', body: JSON.stringify(data) }); },
+  revokeCredential(id, credentialId) { return request(`/external-applications/${id}/credentials/${credentialId}/revoke`, { method: 'POST' }); },
   deleteCredential(id, credentialId) { return request(`/external-applications/${id}/credentials/${credentialId}`, { method: 'DELETE' }); },
   logs(id, page = 1, size = 20) { return get(`/external-applications/${id}/logs`, { page, size }); },
 };

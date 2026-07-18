@@ -31,6 +31,8 @@ const STATUS_META = {
 const EMPTY_FORM = {
   name: '',
   api_host: '',
+  smtp_host: '',
+  imap_host: '',
   capacity: 5000,
   heartbeat_interval: 30,
   status: 'healthy',
@@ -141,6 +143,27 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
             />
             <div className="form-hint">{t('servers.drawer.apiHint')}</div>
           </div>
+          {isEdit && (
+            <div className="field-grid">
+              <div className="form-group">
+                <label>{t('servers.drawer.smtpHost')}</label>
+                <input
+                  value={form.smtp_host}
+                  onChange={e => updateField('smtp_host', e.target.value)}
+                  placeholder={t('servers.drawer.smtpPlaceholder')}
+                />
+              </div>
+              <div className="form-group">
+                <label>{t('servers.drawer.imapHost')}</label>
+                <input
+                  value={form.imap_host}
+                  onChange={e => updateField('imap_host', e.target.value)}
+                  placeholder={t('servers.drawer.imapPlaceholder')}
+                />
+              </div>
+              <div className="form-hint field-grid-hint">{t('servers.drawer.mailHostHint')}</div>
+            </div>
+          )}
           <div className="field-grid">
             <div className="form-group">
               <label>{t('servers.drawer.capacity')}</label>
@@ -259,6 +282,8 @@ export default function ServersPage() {
       id: server.id,
       name: server.name || '',
       api_host: server.api_host || '',
+      smtp_host: server.smtp_host || '',
+      imap_host: server.imap_host || '',
       capacity: server.capacity || 5000,
       heartbeat_interval: server.heartbeat_interval || 30,
       status: server.status || 'healthy',
@@ -277,6 +302,8 @@ export default function ServersPage() {
     const payload = {
       name: form.name,
       api_host: form.api_host,
+      smtp_host: form.smtp_host,
+      imap_host: form.imap_host,
       capacity: Number(form.capacity) || 5000,
       heartbeat_interval: Number(form.heartbeat_interval) || 30,
       status: form.status,

@@ -598,6 +598,22 @@ export default function MailboxesPage() {
                   <option value={100}>100</option>
                 </select>
               </label>
+              <label>
+                {t('mailboxes.list.jumpTo')}
+                <input
+                  key={safePage}
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  defaultValue={safePage}
+                  aria-label={t('mailboxes.list.jumpAria')}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return
+                    const targetPage = parseInt(e.currentTarget.value, 10)
+                    if (targetPage >= 1 && targetPage <= totalPages) setPage(targetPage)
+                  }}
+                />
+              </label>
             </div>
           )}
         </section>

@@ -1702,6 +1702,11 @@ textarea {
   gap: 12px;
 }
 
+.field-grid-hint {
+  grid-column: 1 / -1;
+  margin-top: -8px;
+}
+
 @keyframes drawerIn {
   from { transform: translateX(24px); opacity: 0.72; }
   to { transform: translateX(0); opacity: 1; }
@@ -2245,6 +2250,13 @@ textarea {
   font-size: 11px;
 }
 
+.credential-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .access-log-row {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr) auto;
@@ -2420,6 +2432,12 @@ textarea {
 }
 
 .pagination-bar select {
+  min-height: 30px;
+  padding: 3px 8px;
+}
+
+.pagination-bar input[type='number'] {
+  width: 68px;
   min-height: 30px;
   padding: 3px 8px;
 }

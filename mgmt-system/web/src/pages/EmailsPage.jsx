@@ -518,6 +518,22 @@ export default function EmailsPage() {
               <button className="btn btn-sm btn-outline" disabled={page <= 1} onClick={() => fetchMessages(query, page - 1, size)}>{t('emails.list.previous')}</button>
               <span>{t('emails.list.page', { page })}</span>
               <button className="btn btn-sm btn-outline" disabled={messages.length < size} onClick={() => fetchMessages(query, page + 1, size)}>{t('emails.list.next')}</button>
+              <label>
+                {t('emails.list.jumpTo')}
+                <input
+                  key={page}
+                  type="number"
+                  min={1}
+                  defaultValue={page}
+                  disabled={!query}
+                  aria-label={t('emails.list.jumpAria')}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter') return
+                    const targetPage = parseInt(e.currentTarget.value, 10)
+                    if (targetPage >= 1) fetchMessages(query, targetPage, size)
+                  }}
+                />
+              </label>
             </div>
           )}
         </section>
