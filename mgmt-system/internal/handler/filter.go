@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
@@ -168,4 +169,24 @@ func (h *FilterHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/filters", h.ListRules)
 	r.PUT("/filters/:id", h.UpdateRule)
 	r.DELETE("/filters/:id", h.DeleteRule)
+}
+
+// RegisterExternalRoutes registers permission-protected filter rule APIs.
+func (h *FilterHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/filters", PermissionCode: "filter:read",
+		GroupName: "过滤规则", Name: "查询过滤规则", SortOrder: 210, Handler: h.ListRules,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodPost, Path: "/filters", PermissionCode: "filter:create",
+		GroupName: "过滤规则", Name: "创建过滤规则", SortOrder: 220, Handler: h.CreateRule,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodPut, Path: "/filters/:id", PermissionCode: "filter:update",
+		GroupName: "过滤规则", Name: "更新过滤规则", SortOrder: 230, Handler: h.UpdateRule,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodDelete, Path: "/filters/:id", PermissionCode: "filter:delete",
+		GroupName: "过滤规则", Name: "删除过滤规则", SortOrder: 240, Handler: h.DeleteRule,
+	})
 }

@@ -27,7 +27,8 @@ assert.match(api, /revokeCredential\(id, credentialId\).*\/revoke.*method: 'POST
 assert.match(api, /deleteCredential\(id, credentialId\).*method: 'DELETE'/, 'credential delete API mapping is missing')
 assert.match(externalAccess, /externalAccessAPI\.revokeCredential/, 'credential revoke action is missing')
 assert.match(externalAccess, /externalAccessAPI\.deleteCredential/, 'credential delete action is missing')
+assert.match(externalAccess, /group === '过滤规则' \? 'filter'/, 'filter permissions are not grouped in external access')
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
 assert.match(emails, /emails\.list\.jumpAria/, 'email direct page navigation is missing')
 
-console.log('UI contract check passed: server endpoints, credential lifecycle, and direct pagination')
+console.log('UI contract check passed: server endpoints, external permissions, credential lifecycle, and direct pagination')

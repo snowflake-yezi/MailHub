@@ -39,7 +39,7 @@ The mailbox page filters accounts by domain, server, and status and provides sin
 ### Control plane: `mgmt-system`
 
 - Administration console: React SPA under `/admin/*`, protected by session authentication.
-- External APIs: `/api/v1/mailboxes`, `/api/v1/orders/*/emails`, `/api/v1/mailboxes/*/messages`, and `/api/v1/emails/*`. Administrators create external applications, grant individual capabilities, and issue Bearer tokens from the console.
+- External APIs: `/api/v1/mailboxes`, `/api/v1/orders/*/emails`, `/api/v1/mailboxes/*/messages`, `/api/v1/emails/*`, and `/api/v1/filters`. Administrators create external applications, grant individual capabilities, and issue Bearer tokens from the console.
 - Internal APIs: `/api/v1/internal/*`, authenticated between mgmt-system and mail-node with a shared `X-Internal-Token` secret.
 - Resource management: mailbox accounts, server pool, domain pool, filter rules, system configuration, and integrated mailboxes.
 - Scheduling: health checks, heartbeat ingestion, lifecycle watchdogs, soft-deletion expiry, and configuration/rule reload notifications.
@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph mgmt["mgmt-system control plane"]
         web["React administration console<br/>Mailboxes / Servers / Domains / Filters / Configuration / Integrated mailboxes"]
-        api["External API<br/>Mailbox creation / Email queries / Attachment downloads"]
+        api["External API<br/>Mailbox creation / Email queries / Attachment downloads / Filter rules"]
         control["Control services<br/>Allocation / Health checks / Lifecycle / Reload notifications"]
         auth["Authentication<br/>Session / Bearer permission / Shared secret"]
         db[("MySQL / MariaDB<br/>Accounts / Servers / Domains / Rules / Token hashes / Configuration")]

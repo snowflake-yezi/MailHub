@@ -39,7 +39,7 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 ### 控制面 `mgmt-system`
 
 - 管理后台：React SPA，入口为 `/admin/*`，Session 鉴权。
-- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`，由管理端创建外部应用、勾选功能并签发 Bearer Token。
+- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`、`/api/v1/filters`，由管理端创建外部应用、勾选功能并签发 Bearer Token。
 - 内部 API：`/api/v1/internal/*`，与 mail-node 通过 `X-Internal-Token` Shared-Secret 互信。
 - 资源管理：邮箱账号、服务器池、域名池、过滤规则、系统配置、集成邮箱。
 - 调度能力：健康检查、心跳接收、生命周期 Watchdog、软删除过期标记、配置/规则热加载通知。
@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph mgmt["mgmt-system 控制面"]
         web["React 管理后台<br/>邮箱 / 服务器 / 域名 / 过滤 / 配置 / 集成邮箱"]
-        api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
+        api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载 / 过滤规则"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 热加载通知"]
         auth["鉴权<br/>Session / Bearer permission / Shared-Secret"]
         db[("MySQL / MariaDB<br/>账号 / 服务器 / 域名 / 规则 / Token 哈希 / 配置")]

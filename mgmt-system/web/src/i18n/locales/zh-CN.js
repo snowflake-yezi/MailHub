@@ -360,7 +360,7 @@ const pages = {
     summary: { applications: '外部应用', enabled: '已启用', credentials: '有效凭证', used: '已有调用' },
     token: { aria: '新 API Token', title: '新 API Token', alert: '完整 Token 仅本次显示，关闭后无法再次查看。', copy: '复制 Token', copied: 'Token 已复制', copyFailed: '复制失败，请手动选择 Token' },
     confirm: { processing: '处理中...' },
-    permissions: { other: '其他', groups: { mailbox: '邮箱账号', email: '邮件读取' }, mailbox_create: '创建或复用邮箱', mailbox_read: '查询邮箱', mailbox_disable: '禁用邮箱', email_list: '查询邮件列表', email_body: '查看邮件正文', email_attachment: '下载附件' },
+    permissions: { other: '其他', groups: { mailbox: '邮箱账号', email: '邮件读取', filter: '过滤规则' }, mailbox_create: '创建或复用邮箱', mailbox_read: '查询邮箱', mailbox_disable: '禁用邮箱', email_list: '查询邮件列表', email_body: '查看邮件正文', email_attachment: '下载附件', filter_read: '查询过滤规则', filter_create: '创建过滤规则', filter_update: '更新过滤规则', filter_delete: '删除过滤规则' },
     drawer: { createAria: '新增外部访问', editAria: '编辑外部访问', createTitle: '新增外部访问', name: '访问名称', namePlaceholder: '例如：出票中心', description: '说明', descriptionPlaceholder: '业务用途、负责人或环境', status: '状态', functions: '可调用功能', credentialName: '凭证名称', expiresAt: '到期时间', credentials: 'API 凭证', credentialCount: '{{count}} 个凭证', issueAndCopy: '签发并复制 Token', lastUsed: '最近使用：{{date}}', revoked: '已撤销', revokeCredentialTitle: '撤销凭证', deleteCredentialTitle: '永久删除凭证', recentCalls: '最近调用', logCount: '{{count}} 条记录', unknownIp: '未知 IP', noLogs: '暂无调用记录' },
     credentialDialog: { title: '签发新凭证', issue: '签发并复制' },
     list: { title: '调用方列表', caption: '权限变更、应用停用和凭证撤销即时生效。', application: '外部访问', status: '状态', functions: '可调用功能', credentials: '有效凭证', lastUsed: '最近调用', operations: '操作', enabled: '已启用', disabled: '已停用', edit: '编辑与查看详情', empty: '暂无外部访问', emptyDesc: '创建调用方并授予所需功能。' },

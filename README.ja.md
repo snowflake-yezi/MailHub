@@ -39,7 +39,7 @@ MailHub は Postfix、Dovecot、OpenDKIM を基盤とするセルフホスト型
 ### コントロールプレーン `mgmt-system`
 
 - 管理画面：`/admin/*` で提供される React SPA。Session 認証で保護されます。
-- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`。管理画面から外部アプリを作成し、機能を選択して Bearer Token を発行します。
+- 外部 API：`/api/v1/mailboxes`、`/api/v1/orders/*/emails`、`/api/v1/mailboxes/*/messages`、`/api/v1/emails/*`、`/api/v1/filters`。管理画面から外部アプリを作成し、機能を選択して Bearer Token を発行します。
 - 内部 API：`/api/v1/internal/*`。mgmt-system と mail-node は共有の `X-Internal-Token` シークレットで相互認証します。
 - リソース管理：メールボックス、サーバープール、ドメインプール、フィルタールール、システム設定、統合メールボックス。
 - スケジューリング：ヘルスチェック、ハートビート受信、ライフサイクル Watchdog、論理削除の期限処理、設定とルールの再読み込み通知。
@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph mgmt["mgmt-system コントロールプレーン"]
         web["React 管理画面<br/>メールボックス / サーバー / ドメイン / フィルター / 設定 / 統合メールボックス"]
-        api["外部 API<br/>メールボックス作成 / メール検索 / 添付ダウンロード"]
+        api["外部 API<br/>メールボックス作成 / メール検索 / 添付ダウンロード / フィルタールール"]
         control["制御サービス<br/>割り当て / ヘルスチェック / ライフサイクル / 再読み込み通知"]
         auth["認証<br/>Session / Bearer permission / Shared secret"]
         db[("MySQL / MariaDB<br/>アカウント / サーバー / ドメイン / ルール / Token hash / 設定")]

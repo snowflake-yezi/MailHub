@@ -17,7 +17,7 @@ flowchart TB
     subgraph mgmt["mgmt-system 控制面"]
         auth["鉴权层<br/>Session / Bearer permission / Shared-Secret"]
         web["React 管理后台<br/>邮箱 / 邮件 / 服务器 / 过滤 / 配置 / 外部访问"]
-        api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载"]
+        api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载 / 过滤规则"]
         control["控制层<br/>分配 / 健康检查 / 生命周期 / 规则配置热加载"]
         db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / domains<br/>system_configs / admin_users<br/>api applications / credentials<br/>permissions / resources / access logs")]
     end
@@ -119,6 +119,11 @@ GET  /api/v1/orders/{order_id}/emails
 GET  /api/v1/mailboxes/{email}/messages
 GET  /api/v1/emails/{message_id}/body?mailbox={email}
 GET  /api/v1/emails/{message_id}/attachments/{index}?mailbox={email}
+
+GET    /api/v1/filters
+POST   /api/v1/filters
+PUT    /api/v1/filters/{id}
+DELETE /api/v1/filters/{id}
 ```
 
 ### 2.4 管理后台 API
@@ -290,7 +295,7 @@ stateDiagram-v2
 |------|----------|----------|
 | `/admin/*` 页面 | `mgmt_session` Session Cookie | 重定向登录或返回 401 |
 | `/api/v1/admin/*` | Session Cookie | 返回 JSON 错误 |
-| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*` | 外部应用 Bearer Token + permission | Token 无效 401，权限不足 403 |
+| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*`、`/api/v1/filters*` | 外部应用 Bearer Token + permission | Token 无效 401，权限不足 403 |
 | `mgmt-system /api/v1/internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 | `mail-node /internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 

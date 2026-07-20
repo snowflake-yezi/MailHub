@@ -203,6 +203,9 @@ func main() {
 		Method: http.MethodGet, Path: "/emails/:message_id/attachments/:index", PermissionCode: "email:attachment",
 		GroupName: "邮件读取", Name: "下载附件", SortOrder: 130, Handler: emailH.GetEmailAttachment,
 	})
+
+	// Filter rule management
+	filterH.RegisterExternalRoutes(externalRegistry, api)
 	if err := externalRegistry.Sync(db); err != nil {
 		log.Fatalf("Failed to sync external API registry: %v", err)
 	}
