@@ -1089,7 +1089,7 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | S0 | P0 | completed | v1 schema、canonical JSON 规则、golden EML、标注准则草案 | 不改运行行为 | schema/fixture 评审记录，golden 测试可执行 |
 | S1 | P0 | completed | 退役 legacy 外部 filters API，保留管理端迁移入口 | legacy 邮件行为不变 | 旧外部路由不可用、权限元数据退役、无现有授权方 |
 | S2 | P1 | completed | `mailparse` 领域包和完整 `MailFeatures` | 查询和转发结果不变 | 新旧解析 golden 对比、编码/MIME/URL 测试通过 |
-| S3 | P2 | pending | 新策略、判定、节点状态和隔离表及约束 | 无 active revision | MariaDB 10.5 副本迁移、重复启动、备份恢复通过 |
+| S3 | P2 | completed | 新策略、判定、节点状态和隔离表及约束 | 无 active revision | MariaDB 10.5 副本迁移、重复启动、备份恢复通过 |
 | S4 | P2 | pending | draft/validate/publish/clone、active pointer、internal bundle | 只允许创建 shadow 草稿 | 事务并发、checksum、整批校验和权限测试通过 |
 | S5 | P2 | pending | manual/ad 编译器、symbol DAG、atomic snapshot、状态上报 | 节点保持 `legacy` | 单元测试、bundle 故障保留最后版本、双节点 checksum 一致 |
 | S6 | P2 | pending | `dual_shadow`、统一决策记录、本地两阶段 outbox、回放工具 | legacy 决定真实动作 | shadow 零副作用、断网恢复、同 revision 确定性回放通过 |
@@ -1125,6 +1125,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 - 保留显式正文、part、URL 和附件数量上限；部分解析失败返回已提取特征，不把 parser warning 当成广告 symbol。
 
 #### S3：新增控制面 schema 与 store
+
+> 完成记录（2026-07-20）：新增 14 张 P2/P3 基础表和独立 store 原语；判定 JSON 使用 LONGTEXT 并在写入前校验 schema/version，分数使用千分位定点整数。迁移测试先构造 legacy 结构，再在 `10.5.29-MariaDB` 上验证首次迁移、重复启动、恢复后再次迁移、唯一索引、空 active pointer、策略图读写和 decision 幂等；全程未创建 active revision。
 
 - 建议新增 `mgmt-system/internal/model/filter_policy.go` 和 `mgmt-system/internal/store/filter_policy_store.go`，避免继续扩张 legacy `FilterRule` CRUD。
 - 把第 7 节模型加入 `store.New` 的 AutoMigrate；唯一索引、发布状态约束、active pointer 和 MariaDB 10.5 无法由 AutoMigrate 安全表达的部分使用显式幂等 migration。

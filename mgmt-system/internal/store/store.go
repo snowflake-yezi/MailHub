@@ -50,28 +50,7 @@ func New(dsn string, mode string) (*Store, error) {
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
 	// 自动迁移
-	if err := db.AutoMigrate(
-		&model.Domain{},
-		&model.MailServer{},
-		&model.MailboxAccount{},
-		&model.OrderMailboxMapping{},
-		&model.OrderMailbox{},
-		&model.FilterRule{},
-		&model.APIApplication{},
-		&model.APICredential{},
-		&model.APIPermission{},
-		&model.APIResource{},
-		&model.APIApplicationPermission{},
-		&model.APIAccessLog{},
-		&model.ServerDomain{},
-		&model.SystemConfig{},
-		&model.IntegratedMailbox{},
-		&model.AdminUser{},
-		&model.SystemState{},
-		&model.ServerConfigOverride{},
-		&model.ServerConfigSnapshot{},
-		&model.ConfigChangeAudit{},
-	); err != nil {
+	if err := db.AutoMigrate(migrationModels()...); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
 
@@ -98,6 +77,54 @@ func New(dsn string, mode string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+func migrationModels() []any {
+	return append(legacyMigrationModels(), filterPolicyMigrationModels()...)
+}
+
+func legacyMigrationModels() []any {
+	return []any{
+		&model.Domain{},
+		&model.MailServer{},
+		&model.MailboxAccount{},
+		&model.OrderMailboxMapping{},
+		&model.OrderMailbox{},
+		&model.FilterRule{},
+		&model.APIApplication{},
+		&model.APICredential{},
+		&model.APIPermission{},
+		&model.APIResource{},
+		&model.APIApplicationPermission{},
+		&model.APIAccessLog{},
+		&model.ServerDomain{},
+		&model.SystemConfig{},
+		&model.IntegratedMailbox{},
+		&model.AdminUser{},
+		&model.SystemState{},
+		&model.ServerConfigOverride{},
+		&model.ServerConfigSnapshot{},
+		&model.ConfigChangeAudit{},
+	}
+}
+
+func filterPolicyMigrationModels() []any {
+	return []any{
+		&model.ManualFilterRevision{},
+		&model.ManualFilterRule{},
+		&model.ManualFilterCondition{},
+		&model.AdFilterRevision{},
+		&model.AdFilterDetector{},
+		&model.AdFilterCondition{},
+		&model.AdFilterComposite{},
+		&model.AdFilterCompositeTerm{},
+		&model.AdFilterSymbolWeight{},
+		&model.FilterDecision{},
+		&model.FilterQuarantine{},
+		&model.FilterActiveState{},
+		&model.FilterNodeState{},
+		&model.FilterAudit{},
+	}
 }
 
 func (s *Store) clearLegacyActiveMailboxExpirations() error {
