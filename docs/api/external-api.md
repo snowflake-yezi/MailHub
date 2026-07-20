@@ -152,6 +152,10 @@ GET /api/v1/orders/{order_id}/emails?page=1&size=20
 Authorization: Bearer <token with email:list permission>
 ```
 
+该接口是正式对外开放的订单维度入口。`mgmt-system` 先通过订单邮箱映射定位邮箱账号及所属 mail-node，再复用邮箱维度的邮件列表查询；订单未绑定邮箱时返回 404。外部调用方不得直接访问 mail-node 的内部接口。
+
+> **当前仍为雏形：** 订单入口目前只是基于现有单邮箱映射的兼容查询层，返回该邮箱的邮件列表，不应被视为严格的订单级邮件隔离边界。当前尚不支持一个订单关联多个邮箱后的聚合查询、邮件归属二次校验、业务字段筛选或游标分页；这些能力需要在后续版本继续完善。
+
 响应：
 
 ```json
@@ -203,6 +207,8 @@ Authorization: Bearer <token with email:list permission>
 ```
 
 该接口是邮箱维度主入口。`{email}` 是邮箱地址的 path 参数，应进行 URL path escape。响应结构与按订单查询邮件列表一致，但不一定包含 `order_id`。
+
+两个邮件列表入口都需要 `email:list` 权限，并共享相同的分页、排序和邮件解析语义。
 
 ### 3.3 获取邮件正文
 

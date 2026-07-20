@@ -187,22 +187,7 @@ func main() {
 	})
 
 	// Email query
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodGet, Path: "/orders/:order_id/emails", PermissionCode: "email:list",
-		GroupName: "邮件读取", Name: "查询邮件列表", SortOrder: 110, Handler: emailH.GetOrderEmails,
-	})
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref/messages", PermissionCode: "email:list",
-		GroupName: "邮件读取", Name: "查询邮件列表", SortOrder: 110, Handler: emailH.GetMailboxMessages,
-	})
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodGet, Path: "/emails/:message_id/body", PermissionCode: "email:body",
-		GroupName: "邮件读取", Name: "查看邮件正文", SortOrder: 120, Handler: emailH.GetEmailBody,
-	})
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodGet, Path: "/emails/:message_id/attachments/:index", PermissionCode: "email:attachment",
-		GroupName: "邮件读取", Name: "下载附件", SortOrder: 130, Handler: emailH.GetEmailAttachment,
-	})
+	emailH.RegisterExternalRoutes(externalRegistry, api)
 
 	// Filter rule management
 	filterH.RegisterExternalRoutes(externalRegistry, api)

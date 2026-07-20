@@ -6,16 +6,23 @@ import (
 	"net/url"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
-	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
+type emailStore interface {
+	GetMailboxByEmail(email string) (*model.MailboxAccount, error)
+	GetMailboxByOrderID(orderID string) (*model.MailboxAccount, error)
+	GetServer(id uint64) (*model.MailServer, error)
+	FindServerByEmailDomain(domain string) (*model.MailServer, error)
+}
+
 type EmailHandler struct {
-	store        *store.Store
+	store        emailStore
 	sharedSecret string
 }
 
-func NewEmailHandler(s *store.Store, sharedSecret string) *EmailHandler {
+func NewEmailHandler(s emailStore, sharedSecret string) *EmailHandler {
 	return &EmailHandler{store: s, sharedSecret: sharedSecret}
 }
 
@@ -69,20 +76,30 @@ func (h *EmailHandler) proxyMailboxMessages(c *gin.Context, mb *model.MailboxAcc
 		return
 	}
 
+	writeMailboxMessagesResponse(c, data, mb.EmailAddress, orderID)
+}
+
+func writeMailboxMessagesResponse(c *gin.Context, data []byte, emailAddr, orderID string) {
 	var rawResp map[string]interface{}
 	if err := json.Unmarshal(data, &rawResp); err != nil {
 		serverError(c, ErrCodeExternalFail, "failed to parse email response")
 		return
 	}
-	if dataMap, ok := rawResp["data"].(map[string]interface{}); ok {
-		if orderID != "" {
-			dataMap["order_id"] = orderID
-		}
-		dataMap["email_address"] = mb.EmailAddress
+	dataMap, ok := rawResp["data"].(map[string]interface{})
+	if !ok {
+		serverError(c, ErrCodeExternalFail, "invalid email response: data object is required")
+		return
+	}
+	if orderID != "" {
+		dataMap["order_id"] = orderID
+	}
+	dataMap["email_address"] = emailAddr
+	if message, ok := rawResp["message"].(string); !ok || message == "" {
+		rawResp["message"] = "success"
 	}
 	rawResp["request_id"] = uuidShort()
 
-	c.JSON(200, rawResp)
+	c.JSON(http.StatusOK, rawResp)
 }
 
 // GetEmailBody 获取单封邮件完整内容（大模型系统调用）
@@ -140,11 +157,25 @@ func mailboxParam(c *gin.Context) string {
 	return c.Query("mailbox")
 }
 
-func (h *EmailHandler) RegisterRoutes(r *gin.RouterGroup) {
-	r.GET("/orders/:order_id/emails", h.GetOrderEmails)
-	r.GET("/mailboxes/:order_id/messages", h.GetMailboxMessages)
-	r.GET("/emails/:message_id/body", h.GetEmailBody)
-	r.GET("/emails/:message_id/attachments/:index", h.GetEmailAttachment)
+func (h *EmailHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/orders/:order_id/emails", PermissionCode: "email:list",
+		GroupName: "邮件读取", Name: "查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
+		Handler: h.GetOrderEmails,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref/messages", PermissionCode: "email:list",
+		GroupName: "邮件读取", Name: "查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
+		Handler: h.GetMailboxMessages,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/emails/:message_id/body", PermissionCode: "email:body",
+		GroupName: "邮件读取", Name: "查看邮件正文", SortOrder: 120, Handler: h.GetEmailBody,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/emails/:message_id/attachments/:index", PermissionCode: "email:attachment",
+		GroupName: "邮件读取", Name: "下载附件", SortOrder: 130, Handler: h.GetEmailAttachment,
+	})
 }
 
 // AdminGetEmails 管理后台邮件查询（含域名级服务器降级查找）。
@@ -267,20 +298,7 @@ func (h *EmailHandler) proxyMailboxMessagesDirect(c *gin.Context, srv *model.Mai
 		return
 	}
 
-	var rawResp map[string]interface{}
-	if err := json.Unmarshal(data, &rawResp); err != nil {
-		serverError(c, ErrCodeExternalFail, "failed to parse email response")
-		return
-	}
-	if dataMap, ok := rawResp["data"].(map[string]interface{}); ok {
-		if orderID != "" {
-			dataMap["order_id"] = orderID
-		}
-		dataMap["email_address"] = emailAddr
-	}
-	rawResp["request_id"] = uuidShort()
-
-	c.JSON(200, rawResp)
+	writeMailboxMessagesResponse(c, data, emailAddr, orderID)
 }
 
 // proxyEmailBodyDirect 直接向指定服务器代理邮件正文请求（跳过 mailbox_accounts 查找）。
