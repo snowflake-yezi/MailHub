@@ -101,6 +101,11 @@ func (s *Store) SyncAPIRegistry(permissions []model.APIPermission, resources []m
 				return fmt.Errorf("sync API resource %s %s: %w", resource.Method, resource.Path, err)
 			}
 		}
+		inactivePermissions := tx.Model(&model.APIPermission{}).Select("code").Where("active = ?", false)
+		if err := tx.Where("permission_code IN (?)", inactivePermissions).
+			Delete(&model.APIApplicationPermission{}).Error; err != nil {
+			return fmt.Errorf("remove retired API permission grants: %w", err)
+		}
 		return nil
 	})
 }

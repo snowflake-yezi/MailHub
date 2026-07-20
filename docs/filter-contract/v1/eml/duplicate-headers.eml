@@ -1,0 +1,11 @@
+Message-ID: <duplicate-headers@fixtures.example>
+From: Sender <sender@updates.example>
+To: inbox@tenant.example
+Subject: First synthetic subject
+Subject: Second synthetic subject
+X-Campaign: alpha
+X-Campaign: beta
+Date: Mon, 20 Jul 2026 01:20:00 +0000
+Content-Type: text/plain; charset="utf-8"
+
+This fixture preserves repeated headers for deterministic normalization.

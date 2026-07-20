@@ -1,0 +1,9 @@
+Message-ID: <transactional-notice@fixtures.example>
+From: Account Service <notice@service.example>
+To: inbox@tenant.example
+Subject: Your verification code is 123456
+Date: Mon, 20 Jul 2026 01:05:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+Use code 123456 to finish signing in. The code expires in ten minutes.

@@ -1,0 +1,21 @@
+Message-ID: <ad-promotion@fixtures.example>
+From: Offers <offers@promo.example>
+To: inbox@tenant.example
+Reply-To: campaign@reply.example
+Subject: Summer sale - 40 percent off
+Date: Mon, 20 Jul 2026 01:00:00 +0000
+MIME-Version: 1.0
+List-ID: weekly.promo.example
+List-Unsubscribe: <https://promo.example/unsubscribe/id-redacted>
+Precedence: bulk
+Content-Type: multipart/alternative; boundary="ad-alt"
+
+--ad-alt
+Content-Type: text/plain; charset="utf-8"
+
+Save 40 percent today. Visit https://promo.example/sale.
+--ad-alt
+Content-Type: text/html; charset="utf-8"
+
+<html><body><h1>Summer sale</h1><a href="https://promo.example/sale">Shop</a><img src="https://track.example/open/redacted" width="1" height="1"></body></html>
+--ad-alt--

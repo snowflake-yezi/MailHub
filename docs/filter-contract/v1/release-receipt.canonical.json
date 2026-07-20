@@ -1,0 +1,1 @@
+{"schema_version":1,"operation_id":"release-operation-fixture-1","quarantine_key":"quarantine-fixture-1","decision_key":"decision-fixture-quarantine-1","status":"completed","smtp_delivered":true,"restored_to_cur":true,"forward_target":"integrated@tenant.example","error_code":"","error_summary":"","completed_at":"2026-07-20T02:00:00Z"}

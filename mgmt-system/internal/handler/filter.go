@@ -4,13 +4,33 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
-	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
+
+const (
+	legacyFilterNameMaxRunes    = 128
+	legacyFilterPatternMaxRunes = 512
+)
+
+var legacyFilterRuleTypes = map[string]struct{}{
+	"whitelist_sender": {},
+	"blacklist_sender": {},
+	"keyword":          {},
+	"regex":            {},
+}
+
+var legacyFilterActions = map[string]struct{}{
+	"pass":  {},
+	"block": {},
+	"flag":  {},
+}
 
 type FilterHandler struct {
 	store        *store.Store
@@ -76,6 +96,10 @@ func (h *FilterHandler) CreateRule(c *gin.Context) {
 	if rule.Action == "" {
 		rule.Action = "pass"
 	}
+	if err := validateLegacyFilterRule(&rule); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid rule: "+err.Error())
+		return
+	}
 
 	if err := h.store.CreateRule(&rule); err != nil {
 		serverError(c, ErrCodeInternal, "failed to create rule: "+err.Error())
@@ -117,6 +141,10 @@ func (h *FilterHandler) UpdateRule(c *gin.Context) {
 	}
 	existing.Priority = update.Priority
 	existing.Enabled = update.Enabled
+	if err := validateLegacyFilterRule(existing); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid rule: "+err.Error())
+		return
+	}
 
 	if err := h.store.UpdateRule(existing); err != nil {
 		serverError(c, ErrCodeInternal, "failed to update rule")
@@ -171,22 +199,35 @@ func (h *FilterHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.DELETE("/filters/:id", h.DeleteRule)
 }
 
-// RegisterExternalRoutes registers permission-protected filter rule APIs.
-func (h *FilterHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
-	registry.Register(r, apiregistry.Route{
-		Method: http.MethodGet, Path: "/filters", PermissionCode: "filter:read",
-		GroupName: "过滤规则", Name: "查询过滤规则", SortOrder: 210, Handler: h.ListRules,
-	})
-	registry.Register(r, apiregistry.Route{
-		Method: http.MethodPost, Path: "/filters", PermissionCode: "filter:create",
-		GroupName: "过滤规则", Name: "创建过滤规则", SortOrder: 220, Handler: h.CreateRule,
-	})
-	registry.Register(r, apiregistry.Route{
-		Method: http.MethodPut, Path: "/filters/:id", PermissionCode: "filter:update",
-		GroupName: "过滤规则", Name: "更新过滤规则", SortOrder: 230, Handler: h.UpdateRule,
-	})
-	registry.Register(r, apiregistry.Route{
-		Method: http.MethodDelete, Path: "/filters/:id", PermissionCode: "filter:delete",
-		GroupName: "过滤规则", Name: "删除过滤规则", SortOrder: 240, Handler: h.DeleteRule,
-	})
+// RegisterInternalRoutes keeps the legacy node pull endpoint during migration.
+func (h *FilterHandler) RegisterInternalRoutes(r *gin.RouterGroup) {
+	r.GET("/filters", h.GetActiveRules)
+}
+
+func validateLegacyFilterRule(rule *model.FilterRule) error {
+	rule.Name = strings.TrimSpace(rule.Name)
+	if rule.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if utf8.RuneCountInString(rule.Name) > legacyFilterNameMaxRunes {
+		return fmt.Errorf("name must not exceed %d characters", legacyFilterNameMaxRunes)
+	}
+	if strings.TrimSpace(rule.Pattern) == "" {
+		return fmt.Errorf("pattern is required")
+	}
+	if utf8.RuneCountInString(rule.Pattern) > legacyFilterPatternMaxRunes {
+		return fmt.Errorf("pattern must not exceed %d characters", legacyFilterPatternMaxRunes)
+	}
+	if _, ok := legacyFilterRuleTypes[rule.RuleType]; !ok {
+		return fmt.Errorf("rule_type must be whitelist_sender, blacklist_sender, keyword or regex")
+	}
+	if _, ok := legacyFilterActions[rule.Action]; !ok {
+		return fmt.Errorf("action must be pass, block or flag")
+	}
+	if rule.RuleType == "regex" {
+		if _, err := regexp.Compile(rule.Pattern); err != nil {
+			return fmt.Errorf("pattern must be a valid Go regular expression: %w", err)
+		}
+	}
+	return nil
 }

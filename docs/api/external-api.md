@@ -26,10 +26,6 @@ Token 由管理端“外部访问”页面签发。管理员创建并命名外�
 - `email:list`：查询邮件列表。
 - `email:body`：查询邮件正文。
 - `email:attachment`：下载邮件附件。
-- `filter:read`：查询过滤规则。
-- `filter:create`：创建过滤规则。
-- `filter:update`：更新过滤规则。
-- `filter:delete`：删除过滤规则。
 
 权限编码必须与接口要求完全相等，不做前缀或子串匹配。应用被停用、凭证被撤销或凭证到期后立即返回 401。
 
@@ -270,81 +266,11 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 
 ---
 
-## 4. 过滤规则接口
+## 4. 已退役的过滤规则接口
 
-过滤规则按 `priority ASC, id ASC` 执行，数值越小越先匹配。规则类型支持 `whitelist_sender`、`blacklist_sender`、`keyword`、`regex`，动作支持 `pass`、`block`、`flag`。
+旧 `/api/v1/filters` 及 `filter:read/create/update/delete` 权限已经退役，不再属于外部 API 契约。迁移期间，legacy 规则只能由 Session 鉴权的管理端维护；mail-node 继续通过内部 Shared-Secret 接口拉取，不影响现有邮件处理。
 
-### 4.1 查询过滤规则
-
-```http
-GET /api/v1/filters
-Authorization: Bearer <token with filter:read permission>
-```
-
-响应 `data` 是包含启用和停用规则的数组：
-
-```json
-{
-  "code": 0,
-  "message": "success",
-  "data": [
-    {
-      "id": 12,
-      "name": "拦截广告域名",
-      "rule_type": "blacklist_sender",
-      "pattern": "@ads.example",
-      "action": "block",
-      "priority": 20,
-      "enabled": true,
-      "created_at": "2026-07-20T10:00:00+08:00",
-      "updated_at": "2026-07-20T10:00:00+08:00"
-    }
-  ],
-  "request_id": "..."
-}
-```
-
-### 4.2 创建过滤规则
-
-```http
-POST /api/v1/filters
-Authorization: Bearer <token with filter:create permission>
-Content-Type: application/json
-```
-
-请求体：
-
-```json
-{
-  "name": "标记促销标题",
-  "rule_type": "keyword",
-  "pattern": "限时优惠",
-  "action": "flag",
-  "priority": 50,
-  "enabled": true
-}
-```
-
-`name` 和 `pattern` 必填；`rule_type` 默认为 `keyword`，`action` 默认为 `pass`。成功返回 HTTP 201，`data` 为创建后的完整规则。
-
-### 4.3 更新过滤规则
-
-```http
-PUT /api/v1/filters/{id}
-Authorization: Bearer <token with filter:update permission>
-Content-Type: application/json
-```
-
-请求体字段与创建接口相同。该接口采用完整更新语义，调用方应始终传入 `priority` 和 `enabled`；缺省时分别按 `0` 和 `false` 处理。成功响应的 `data` 为更新后的完整规则。
-
-### 4.4 删除过滤规则
-
-```http
-DELETE /api/v1/filters/{id}
-Authorization: Bearer <token with filter:delete permission>
-```
-
-创建、更新和删除在数据库提交后会异步通知健康的 mail-node 立即重载；单次通知失败不会回滚接口结果，节点仍会通过周期同步收敛到最新规则。
+后续版本化的人工规则与广告策略 API 将使用独立 revision、validate、publish 和权限语义。在该新契约正式发布前，外部系统不得依赖管理端或内部 legacy 接口。
 
 ---
 
@@ -354,7 +280,6 @@ Authorization: Bearer <token with filter:delete permission>
 |--------|------------|------|
 | 出票中心 | `mailbox:create,mailbox:read,mailbox:disable` | 创建、查询、禁用订单邮箱 |
 | 大模型系统 | `email:list,email:body,email:attachment` | 拉取邮件列表、正文和附件 |
-| 规则管理服务 | `filter:read,filter:create,filter:update,filter:delete` | 查询并维护过滤规则 |
 
 旧版本兼容配置示例（仅用于升级过渡）：
 
@@ -394,11 +319,4 @@ curl 'https://mail.example.com/api/v1/emails/%3Cmessage-id%40example.com%3E/body
 curl -L -o itinerary.pdf \
   'https://mail.example.com/api/v1/emails/%3Cmessage-id%40example.com%3E/attachments/0?mailbox=order-xxx%40example.com' \
   -H 'Authorization: Bearer sk-llm-xxx'
-```
-
-```bash
-curl -X POST 'https://mail.example.com/api/v1/filters' \
-  -H 'Authorization: Bearer sk-filter-xxx' \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"标记促销标题","rule_type":"keyword","pattern":"限时优惠","action":"flag","priority":50,"enabled":true}'
 ```

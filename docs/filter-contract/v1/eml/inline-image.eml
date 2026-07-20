@@ -1,0 +1,20 @@
+Message-ID: <inline-image@fixtures.example>
+From: Design System <design@assets.example>
+To: inbox@tenant.example
+Subject: Approved logo asset
+Date: Mon, 20 Jul 2026 01:30:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="inline-boundary"; type="text/html"
+
+--inline-boundary
+Content-Type: text/html; charset="utf-8"
+
+<html><body><p>The approved logo is inline.</p><img src="cid:logo@fixtures.example" width="64" height="64"></body></html>
+--inline-boundary
+Content-Type: image/png; name="logo.png"
+Content-ID: <logo@fixtures.example>
+Content-Disposition: inline; filename="logo.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB
+--inline-boundary--

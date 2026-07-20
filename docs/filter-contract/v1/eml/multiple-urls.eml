@@ -1,0 +1,9 @@
+Message-ID: <multiple-urls@fixtures.example>
+From: Digest <digest@newsletter.example>
+To: inbox@tenant.example
+Subject: Weekly links
+Date: Mon, 20 Jul 2026 01:25:00 +0000
+List-Unsubscribe: <mailto:unsubscribe@newsletter.example>
+Content-Type: text/html; charset="utf-8"
+
+<html><body><a href="https://one.example/a">One</a><a href="https://two.example/b">Two</a><a href="https://one.example/a">One again</a><a href="http://three.example/c?q=redacted">Three</a></body></html>

@@ -1,0 +1,9 @@
+Message-ID: <other-normal@fixtures.example>
+From: Project Team <team@collab.example>
+To: inbox@tenant.example
+Subject: Review notes for ticket 42
+Date: Mon, 20 Jul 2026 01:10:00 +0000
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+
+The synthetic review notes are ready. Please check the updated acceptance criteria.

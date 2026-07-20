@@ -1,0 +1,9 @@
+Message-ID: <parse-failure@fixtures.example>
+From: malformed-address
+To: inbox@tenant.example
+Subject: =?UTF-8?B?invalid-base64***?=
+Date: not-a-date
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="missing-boundary"
+
+This multipart body intentionally has no valid boundary delimiter.

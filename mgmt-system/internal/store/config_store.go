@@ -215,7 +215,7 @@ func defaultConfigs() []seedConfig {
 		{Key: "forward.target_address", Value: "union@asadad.bond", Type: "string", Category: "forward", Label: "转发目标邮箱", Desc: "非垃圾邮件汇总转发的集成邮箱地址（当前生效项，由集成邮箱管理页联动写入）", Default: "union@asadad.bond", Reloadable: true},
 
 		// ── filter（过滤引擎）── mail-node ──
-		{Key: "filter.default_action", Value: "pass", Type: "string", Category: "filter", Label: "默认过滤动作", Desc: "pass=放行 / flag=标记 / block=丢弃", Default: "pass", Reloadable: true},
+		{Key: "filter.default_action", Value: "pass", Type: "string", Category: "filter", Label: "默认过滤动作", Desc: "pass=放行转发 / flag=标记后转发 / block=停止转发并保留原件", Default: "pass", Reloadable: true},
 		{Key: "filter.flag_subject_prefix", Value: "[疑似]", Type: "string", Category: "filter", Label: "标记邮件标题前缀", Desc: "filter action=flag 时添加的标题前缀", Default: "[疑似]", Reloadable: true},
 		{Key: "filter.sync_interval", Value: "30", Type: "int", Category: "filter", Label: "规则同步间隔（秒）", Desc: "节点启动时立即同步，配置重载后在线更新周期；允许 1-86400 秒", Default: "30", Reloadable: true},
 

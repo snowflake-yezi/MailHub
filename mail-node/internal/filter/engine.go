@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -136,16 +137,23 @@ func (e *Engine) LoadRules(rules []Rule) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	loaded := append([]Rule(nil), rules...)
 	// 预编译 regex 类型的规则
-	for i := range rules {
-		if rules[i].RuleType == Regex {
-			compiled, err := regexp.Compile(rules[i].Pattern)
+	for i := range loaded {
+		if loaded[i].RuleType == Regex {
+			compiled, err := regexp.Compile(loaded[i].Pattern)
 			if err == nil {
-				rules[i].compiled = compiled
+				loaded[i].compiled = compiled
 			}
 		}
 	}
-	e.rules = rules
+	sort.SliceStable(loaded, func(i, j int) bool {
+		if loaded[i].Priority != loaded[j].Priority {
+			return loaded[i].Priority < loaded[j].Priority
+		}
+		return loaded[i].ID < loaded[j].ID
+	})
+	e.rules = loaded
 }
 
 // Filter 执行过滤

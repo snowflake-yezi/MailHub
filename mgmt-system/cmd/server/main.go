@@ -189,8 +189,6 @@ func main() {
 	// Email query
 	emailH.RegisterExternalRoutes(externalRegistry, api)
 
-	// Filter rule management
-	filterH.RegisterExternalRoutes(externalRegistry, api)
 	if err := externalRegistry.Sync(db); err != nil {
 		log.Fatalf("Failed to sync external API registry: %v", err)
 	}
@@ -203,7 +201,7 @@ func main() {
 	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.POST("/servers/discover", serverH.DiscoverServer)
-	internal.GET("/filters", filterH.GetActiveRules)
+	filterH.RegisterInternalRoutes(internal)
 	internal.GET("/sync/deleting", mailboxH.SyncDeleting)
 	// Dynamic config pull (mail-node)
 	internal.GET("/configs", configH.ListConfigsInternal)

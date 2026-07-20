@@ -165,3 +165,39 @@ func TestUpdateConfigResetsRunningSyncInterval(t *testing.T) {
 		t.Fatal("updated filter sync interval did not reset the running ticker")
 	}
 }
+
+func TestLoadRulesOrdersByPriorityThenID(t *testing.T) {
+	engine := New(ActionPass, "")
+	engine.LoadRules([]Rule{
+		{ID: 30, Name: "later", RuleType: Keyword, Pattern: "sale", Action: ActionBlock, Priority: 30, Enabled: true},
+		{ID: 20, Name: "same priority later ID", RuleType: Keyword, Pattern: "sale", Action: ActionFlag, Priority: 10, Enabled: true},
+		{ID: 10, Name: "first", RuleType: Keyword, Pattern: "sale", Action: ActionPass, Priority: 10, Enabled: true},
+	})
+
+	result := engine.Filter(&EmailMessage{Subject: "summer sale"})
+	if result.RuleID != 10 || result.Action != ActionPass {
+		t.Fatalf("result = %+v, want rule 10 pass", result)
+	}
+}
+
+func TestInvalidRegexNeverMatchesAndDoesNotHideLaterRules(t *testing.T) {
+	engine := New(ActionPass, "")
+	engine.LoadRules([]Rule{
+		{ID: 1, Name: "invalid", RuleType: Regex, Pattern: "(", Action: ActionBlock, Priority: 1, Enabled: true},
+		{ID: 2, Name: "valid fallback", RuleType: Keyword, Pattern: "sale", Action: ActionFlag, Priority: 2, Enabled: true},
+	})
+
+	result := engine.Filter(&EmailMessage{Subject: "summer sale"})
+	if result.RuleID != 2 || result.Action != ActionFlag {
+		t.Fatalf("result = %+v, want later valid rule", result)
+	}
+}
+
+func TestLegacySenderSubstringBehaviorIsFrozenForMigrationReplay(t *testing.T) {
+	if !matchSender("@trusted.example", "Sender <notice@trusted.example>") {
+		t.Fatal("legacy domain pattern did not match the expected sender")
+	}
+	if !matchSender("@trusted.example", "Sender <notice@trusted.example.attacker>") {
+		t.Fatal("legacy substring baseline changed before strict matching has shadow evidence")
+	}
+}

@@ -119,12 +119,9 @@ GET  /api/v1/orders/{order_id}/emails
 GET  /api/v1/mailboxes/{email}/messages
 GET  /api/v1/emails/{message_id}/body?mailbox={email}
 GET  /api/v1/emails/{message_id}/attachments/{index}?mailbox={email}
-
-GET    /api/v1/filters
-POST   /api/v1/filters
-PUT    /api/v1/filters/{id}
-DELETE /api/v1/filters/{id}
 ```
+
+旧 `/api/v1/filters` 已退役。迁移期间仅保留 Session 鉴权的管理端 legacy CRUD 和供 mail-node 拉取的内部接口；版本化 manual/ad 策略外部 API 将按重构设计单独发布。
 
 ### 2.4 管理后台 API
 
@@ -295,7 +292,7 @@ stateDiagram-v2
 |------|----------|----------|
 | `/admin/*` 页面 | `mgmt_session` Session Cookie | 重定向登录或返回 401 |
 | `/api/v1/admin/*` | Session Cookie | 返回 JSON 错误 |
-| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*`、`/api/v1/filters*` | 外部应用 Bearer Token + permission | Token 无效 401，权限不足 403 |
+| `/api/v1/mailboxes*`、`/api/v1/orders*`、`/api/v1/emails*` | 外部应用 Bearer Token + permission | Token 无效 401，权限不足 403 |
 | `mgmt-system /api/v1/internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 | `mail-node /internal/*` | `X-Internal-Token` | 缺失或不匹配直接拒绝 |
 

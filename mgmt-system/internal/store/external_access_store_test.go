@@ -7,8 +7,40 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/ticket/email-mgmt-system/internal/model"
 	"gorm.io/gorm"
 )
+
+func TestSyncAPIRegistryRemovesRetiredPermissionGrants(t *testing.T) {
+	s, mock, closeDB := newMockStore(t)
+	defer closeDB()
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `api_permissions` SET `active`=\\?,`updated_at`=\\? WHERE active = \\?").
+		WithArgs(false, sqlmock.AnyArg(), true).
+		WillReturnResult(sqlmock.NewResult(0, 4))
+	mock.ExpectExec("INSERT INTO `api_permissions`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE `api_resources` SET `status`=\\?,`updated_at`=\\? WHERE status = \\?").
+		WithArgs("retired", sqlmock.AnyArg(), "active").
+		WillReturnResult(sqlmock.NewResult(0, 4))
+	mock.ExpectExec("INSERT INTO `api_resources`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("DELETE FROM `api_application_permissions` WHERE permission_code IN \\(SELECT `code` FROM `api_permissions` WHERE active = \\?\\)").
+		WithArgs(false).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectCommit()
+
+	err := s.SyncAPIRegistry(
+		[]model.APIPermission{{Code: "mailbox:read", GroupName: "mailbox", Name: "read", Active: true}},
+		[]model.APIResource{{Method: "GET", Path: "/api/v1/mailboxes/:mailbox_ref", PermissionCode: "mailbox:read", Name: "read", Status: "active"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestDeleteAPICredentialPermanentlyDeletesOwnedCredential(t *testing.T) {
 	s, mock, closeDB := newMockStore(t)

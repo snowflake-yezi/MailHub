@@ -101,7 +101,7 @@ function PermissionSelector({ permissions, selected, onChange }) {
     <div className="permission-groups">
       {Object.entries(groups).map(([group, items]) => (
         <section className="permission-group" key={group}>
-          <div className="permission-group-title">{t(`externalAccess.permissions.groups.${group === '邮箱账号' ? 'mailbox' : group === '邮件读取' ? 'email' : group === '过滤规则' ? 'filter' : 'unknown'}`, { defaultValue: group })}</div>
+          <div className="permission-group-title">{t(`externalAccess.permissions.groups.${group === '邮箱账号' ? 'mailbox' : group === '邮件读取' ? 'email' : 'unknown'}`, { defaultValue: group })}</div>
           {items.map(permission => (
             <label className={`permission-option ${selected.includes(permission.code) ? 'selected' : ''}`} key={permission.code}>
               <input type="checkbox" checked={selected.includes(permission.code)} onChange={() => toggle(permission.code)} />

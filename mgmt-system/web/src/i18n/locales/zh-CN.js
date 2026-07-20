@@ -204,7 +204,7 @@ const pages = {
         schedule_interval_minutes: { label: '调度间隔（分钟）', description: 'mgmt-system 生命周期 scheduler 执行间隔' },
       },
       filter: {
-        default_action: { label: '默认过滤动作', description: 'pass=放行 / flag=标记 / block=丢弃' },
+        default_action: { label: '默认过滤动作', description: 'pass=放行转发 / flag=标记后转发 / block=停止转发并保留原件' },
         flag_subject_prefix: { label: '标记邮件标题前缀', description: 'filter action=flag 时添加的标题前缀' },
         sync_interval: { label: '规则同步间隔（秒）', description: '节点启动时立即同步，配置重载后在线更新周期；允许 1-86400 秒' },
       },
@@ -317,8 +317,8 @@ const pages = {
   filters: {
     title: '过滤规则', subtitle: '按 pass、flag、block 管理过滤策略；优先级数字越小越先匹配。', loading: '加载过滤规则...', add: '新增规则', all: '全部',
     ruleTypes: { whitelist_sender: '发件人白名单', blacklist_sender: '发件人黑名单', keyword: '关键词', regex: '正则表达式' },
-    actions: { pass: 'pass 放行转发', flag: 'flag 标记疑似', block: 'block 直接丢弃' },
-    summary: { total: '规则总数', enabled: '已启用', flagged: '标记疑似', blocked: '直接丢弃' },
+    actions: { pass: 'pass 放行转发', flag: 'flag 标记疑似', block: 'block 停止转发（保留原件）' },
+    summary: { total: '规则总数', enabled: '已启用', flagged: '标记疑似', blocked: '已停止转发' },
     list: { title: '策略列表', caption: '修改后 mail-node 会按配置拉取周期自动生效。', priority: '优先级', rule: '规则', type: '类型', pattern: '匹配模式', action: '动作', enabled: '启用', operations: '操作', empty: '暂无匹配规则', emptyDesc: '新增规则后即可按策略过滤和转发邮件。' },
     drawer: { addAria: '新增过滤规则', editAria: '编辑过滤规则', addTitle: '新增过滤规则', editTitle: '编辑 {{name}}', name: '规则名称', namePlaceholder: '例如：白名单-航司通知', type: '类型', action: '动作', pattern: '匹配模式', patternPlaceholder: '@airline.com / 行程单 / (?i)itinerary', patternHint: '白名单和黑名单通常填写发件人域名；关键词填写要匹配的词；正则使用 Go 正则表达式。', priority: '优先级', priorityHint: '数字越小越先匹配。', enabled: '启用状态' },
     dialogs: { deleteTitle: '删除过滤规则', deleteMessage: '确定删除「{{name}}」吗？节点下一次拉取配置后将不再应用这条规则。' },
@@ -360,7 +360,7 @@ const pages = {
     summary: { applications: '外部应用', enabled: '已启用', credentials: '有效凭证', used: '已有调用' },
     token: { aria: '新 API Token', title: '新 API Token', alert: '完整 Token 仅本次显示，关闭后无法再次查看。', copy: '复制 Token', copied: 'Token 已复制', copyFailed: '复制失败，请手动选择 Token' },
     confirm: { processing: '处理中...' },
-    permissions: { other: '其他', groups: { mailbox: '邮箱账号', email: '邮件读取', filter: '过滤规则' }, mailbox_create: '创建或复用邮箱', mailbox_read: '查询邮箱', mailbox_disable: '禁用邮箱', email_list: '查询邮件列表', email_body: '查看邮件正文', email_attachment: '下载附件', filter_read: '查询过滤规则', filter_create: '创建过滤规则', filter_update: '更新过滤规则', filter_delete: '删除过滤规则' },
+    permissions: { other: '其他', groups: { mailbox: '邮箱账号', email: '邮件读取' }, mailbox_create: '创建或复用邮箱', mailbox_read: '查询邮箱', mailbox_disable: '禁用邮箱', email_list: '查询邮件列表', email_body: '查看邮件正文', email_attachment: '下载附件' },
     drawer: { createAria: '新增外部访问', editAria: '编辑外部访问', createTitle: '新增外部访问', name: '访问名称', namePlaceholder: '例如：出票中心', description: '说明', descriptionPlaceholder: '业务用途、负责人或环境', status: '状态', functions: '可调用功能', credentialName: '凭证名称', expiresAt: '到期时间', credentials: 'API 凭证', credentialCount: '{{count}} 个凭证', issueAndCopy: '签发并复制 Token', lastUsed: '最近使用：{{date}}', revoked: '已撤销', revokeCredentialTitle: '撤销凭证', deleteCredentialTitle: '永久删除凭证', recentCalls: '最近调用', logCount: '{{count}} 条记录', unknownIp: '未知 IP', noLogs: '暂无调用记录' },
     credentialDialog: { title: '签发新凭证', issue: '签发并复制' },
     list: { title: '调用方列表', caption: '权限变更、应用停用和凭证撤销即时生效。', application: '外部访问', status: '状态', functions: '可调用功能', credentials: '有效凭证', lastUsed: '最近调用', operations: '操作', enabled: '已启用', disabled: '已停用', edit: '编辑与查看详情', empty: '暂无外部访问', emptyDesc: '创建调用方并授予所需功能。' },
