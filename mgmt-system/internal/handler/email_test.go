@@ -51,6 +51,18 @@ func (s *emailStoreStub) FindServerByEmailDomain(string) (*model.MailServer, err
 	return nil, errors.New("server not found")
 }
 
+func newEmailHandlerForUpstream(apiHost string) *EmailHandler {
+	mailbox := &model.MailboxAccount{EmailAddress: "box@example.com", ServerID: 9}
+	store := &emailStoreStub{
+		mailboxByEmail: map[string]*model.MailboxAccount{mailbox.EmailAddress: mailbox},
+		mailboxByOrder: map[string]*model.MailboxAccount{},
+		servers: map[uint64]*model.MailServer{
+			9: {ID: 9, APIHost: apiHost},
+		},
+	}
+	return NewEmailHandler(store, "shared-secret")
+}
+
 func TestEmailListRoutesProxyByOrderOrMailbox(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -161,6 +173,108 @@ func TestGetOrderEmailsReturnsNotFoundForUnknownOrder(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if body.Code != ErrCodeNotFound || !strings.Contains(body.Message, "UNKNOWN") {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestGetEmailBodyPassesUpstreamNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Internal-Token"); got != "shared-secret" {
+			t.Errorf("X-Internal-Token = %q, want shared-secret", got)
+		}
+		if got := r.URL.Path; got != "/internal/messages/missing-message" {
+			t.Errorf("upstream path = %q", got)
+		}
+		if got := r.URL.Query().Get("mailbox"); got != "box@example.com" {
+			t.Errorf("mailbox = %q, want box@example.com", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":2003,"message":"message not found"}`))
+	}))
+	defer upstream.Close()
+
+	handler := newEmailHandlerForUpstream(strings.TrimPrefix(upstream.URL, "http://"))
+	router := gin.New()
+	router.GET("/emails/:message_id/body", handler.GetEmailBody)
+
+	response := httptest.NewRecorder()
+	target := "/emails/missing-message/body?mailbox=box%40example.com"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != ErrCodeNotFound || body.Message != "message not found" || body.RequestID == "" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestGetEmailBodyProxiesSuccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"data":{"message_id":"m-1","text_body":"hello"}}`))
+	}))
+	defer upstream.Close()
+
+	handler := newEmailHandlerForUpstream(strings.TrimPrefix(upstream.URL, "http://"))
+	router := gin.New()
+	router.GET("/emails/:message_id/body", handler.GetEmailBody)
+
+	response := httptest.NewRecorder()
+	target := "/emails/m-1/body?mailbox=box%40example.com"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Code      int    `json:"code"`
+		RequestID string `json:"request_id"`
+		Data      struct {
+			MessageID string `json:"message_id"`
+			TextBody  string `json:"text_body"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != 0 || body.RequestID == "" || body.Data.MessageID != "m-1" || body.Data.TextBody != "hello" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestGetEmailBodyRejectsMalformedUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("missing"))
+	}))
+	defer upstream.Close()
+
+	handler := newEmailHandlerForUpstream(strings.TrimPrefix(upstream.URL, "http://"))
+	router := gin.New()
+	router.GET("/emails/:message_id/body", handler.GetEmailBody)
+
+	response := httptest.NewRecorder()
+	target := "/emails/missing-message/body?mailbox=box%40example.com"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != ErrCodeExternalFail || !strings.Contains(body.Message, "upstream error: 404") || body.RequestID == "" {
 		t.Fatalf("body = %#v", body)
 	}
 }

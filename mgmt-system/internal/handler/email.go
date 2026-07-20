@@ -126,22 +126,7 @@ func (h *EmailHandler) proxyEmailBody(c *gin.Context, messageID, emailAddr strin
 		return
 	}
 
-	query := url.Values{}
-	query.Set("mailbox", mb.EmailAddress)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "?" + query.Encode()
-	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
-	if err != nil {
-		serverError(c, ErrCodeExternalFail, "failed to fetch email body: "+err.Error())
-		return
-	}
-
-	var rawResp map[string]interface{}
-	if err := json.Unmarshal(data, &rawResp); err != nil {
-		serverError(c, ErrCodeExternalFail, "failed to parse email body response")
-		return
-	}
-	rawResp["request_id"] = uuidShort()
-	c.JSON(200, rawResp)
+	h.proxyEmailBodyDirect(c, srv, messageID, mb.EmailAddress)
 }
 
 func mailboxParam(c *gin.Context) string {
@@ -308,6 +293,9 @@ func (h *EmailHandler) proxyEmailBodyDirect(c *gin.Context, srv *model.MailServe
 	path := "/internal/messages/" + url.PathEscape(messageID) + "?" + query.Encode()
 	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
 	if err != nil {
+		if writeUpstreamJSONError(c, err) {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, "failed to fetch email body: "+err.Error())
 		return
 	}

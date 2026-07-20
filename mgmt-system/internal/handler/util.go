@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+type upstreamHTTPError struct {
+	StatusCode int
+	Body       []byte
+}
+
+func (e *upstreamHTTPError) Error() string {
+	return fmt.Sprintf("upstream error: %d - %s", e.StatusCode, string(e.Body))
+}
 
 // uuidShort 返回短 UUID（前 8 位），用作 request_id
 func uuidShort() string {
@@ -53,10 +63,35 @@ func proxyToServer(serverAPIHost string, method string, path string, body io.Rea
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return nil, &upstreamHTTPError{StatusCode: resp.StatusCode, Body: data}
 	}
 
 	return data, nil
+}
+
+// writeUpstreamJSONError preserves a mail-node JSON error response while
+// attaching the mgmt-system request ID. Transport and malformed responses are
+// not handled here; callers should map those to ErrCodeExternalFail.
+func writeUpstreamJSONError(c *gin.Context, err error) bool {
+	var upstreamErr *upstreamHTTPError
+	if !errors.As(err, &upstreamErr) {
+		return false
+	}
+
+	var rawResp map[string]interface{}
+	if json.Unmarshal(upstreamErr.Body, &rawResp) != nil {
+		return false
+	}
+	if _, ok := rawResp["code"]; !ok {
+		return false
+	}
+	if message, ok := rawResp["message"].(string); !ok || message == "" {
+		return false
+	}
+
+	rawResp["request_id"] = uuidShort()
+	c.JSON(upstreamErr.StatusCode, rawResp)
+	return true
 }
 
 // writeJSON 写入 JSON 响应（代理转发用）
