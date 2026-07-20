@@ -1087,7 +1087,7 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | ID | 阶段 | 状态 | 主要交付物 | 默认行为 | 完成证据 |
 |----|------|------|------------|----------|----------|
 | S0 | P0 | completed | v1 schema、canonical JSON 规则、golden EML、标注准则草案 | 不改运行行为 | schema/fixture 评审记录，golden 测试可执行 |
-| S1 | P0 | in_progress | 退役 legacy 外部 filters API，保留管理端迁移入口 | legacy 邮件行为不变 | 旧外部路由不可用、权限元数据退役、无现有授权方 |
+| S1 | P0 | completed | 退役 legacy 外部 filters API，保留管理端迁移入口 | legacy 邮件行为不变 | 旧外部路由不可用、权限元数据退役、无现有授权方 |
 | S2 | P1 | pending | `mailparse` 领域包和完整 `MailFeatures` | 查询和转发结果不变 | 新旧解析 golden 对比、编码/MIME/URL 测试通过 |
 | S3 | P2 | pending | 新策略、判定、节点状态和隔离表及约束 | 无 active revision | MariaDB 10.5 副本迁移、重复启动、备份恢复通过 |
 | S4 | P2 | pending | draft/validate/publish/clone、active pointer、internal bundle | 只允许创建 shadow 草稿 | 事务并发、checksum、整批校验和权限测试通过 |
@@ -1222,6 +1222,7 @@ npm run build
 | 2026-07-20 | PLAN | completed | - | 文档 fence、表格、JSON 示例、路由去重和旧术语检查通过 | v0.4 记录实施顺序；S0-S13 代码均未开始 |
 | 2026-07-20 | S0 | completed | working tree | `mail-node go test ./...`、`mgmt-system go test ./...`、`web npm test`、`web npm run build` 通过；canonical/checksum、8 类 EML/golden、4096-byte attachment 测试通过 | 冻结 filter contract v1 与标注准则草案；不接入运行链路，不决定生产权重和阈值 |
 | 2026-07-20 | S1 | in_progress | working tree | 外部 `/api/v1/filters` 四方法 404、admin/internal 路由保留、失效 grant 清理、保存校验、priority/invalid-regex 回归测试通过；两个 Go 模块全量测试及 web test/build 通过 | 代码纠偏完成；待部署前备份、生产 registry/grant 核对、部署后 internal 拉取 smoke。严格域名匹配保持 legacy 基线，等待 shadow/样本证据后启用 |
+| 2026-07-20 | S1 | completed | `fbae266` | 生产四种 legacy 外部方法及公网 GET 均为 404；四项权限 inactive、四条资源 retired、filter grant 为 0；admin/internal 鉴权入口保留；两节点启动后完成规则同步且 healthy | 回滚点：主机 `/opt/mgmt-system/backups/filter-p0-fbae266-20260720-074337`，节点 2 `/root/mailhub-backups/filter-p0-fbae266-20260720-074137`；完整 DB dump 含 20 张表。严格域名匹配未改变 legacy 行为，留待 dual shadow 评估 |
 
 ---
 
