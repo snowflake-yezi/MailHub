@@ -13,6 +13,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+type FilterDecisionRecord struct {
+	model.FilterDecision
+	Mailbox string `gorm:"column:mailbox" json:"mailbox"`
+}
+
 const maxFilterJSONPayloadBytes = 4 << 20
 
 var (
@@ -99,6 +104,45 @@ func (s *Store) SaveFilterDecision(decision *model.FilterDecision) error {
 		decision.CreatedAt = existing.CreatedAt
 		return nil
 	}
+}
+
+func (s *Store) ListFilterDecisions(page, size int, action string) ([]FilterDecisionRecord, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 200 {
+		size = 50
+	}
+	query := s.db.Table("filter_decisions")
+	if action != "" {
+		if !validFilterAction(action) {
+			return nil, 0, ErrInvalidFilterDecision
+		}
+		query = query.Where("filter_decisions.final_action = ?", action)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var result []FilterDecisionRecord
+	err := query.
+		Select("filter_decisions.*, mailbox_accounts.email_address AS mailbox").
+		Joins("LEFT JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
+		Order("filter_decisions.evaluated_at DESC, filter_decisions.id DESC").
+		Offset((page - 1) * size).Limit(size).Scan(&result).Error
+	return result, total, err
+}
+
+func (s *Store) GetFilterDecision(decisionKey string) (*FilterDecisionRecord, error) {
+	var result FilterDecisionRecord
+	err := s.db.Table("filter_decisions").
+		Select("filter_decisions.*, mailbox_accounts.email_address AS mailbox").
+		Joins("LEFT JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
+		Where("filter_decisions.decision_key = ?", decisionKey).First(&result).Error
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (s *Store) UpsertFilterNodeState(state *model.FilterNodeState) error {

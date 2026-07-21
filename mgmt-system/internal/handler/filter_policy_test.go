@@ -28,8 +28,11 @@ func TestFilterPolicyRoutesCoverAdminAndNodeContracts(t *testing.T) {
 		"POST /api/v1/admin/ad-filter-revisions/:revision/composites",
 		"PUT /api/v1/admin/ad-filter-revisions/:revision/weights/:symbol",
 		"POST /api/v1/admin/ad-filter-revisions/:revision/publish",
+		"GET /api/v1/admin/filter-decisions",
+		"GET /api/v1/admin/filter-decisions/:decision_key",
 		"GET /api/v1/internal/filter-bundles/:policy_kind",
 		"POST /api/v1/internal/filter-node-states",
+		"POST /api/v1/internal/filter-decisions",
 	} {
 		if !routes[route] {
 			t.Fatalf("required route %q is missing", route)

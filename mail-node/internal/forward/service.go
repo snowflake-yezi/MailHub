@@ -13,9 +13,13 @@ import (
 	"sync"
 	"time"
 
+	filtercontract "github.com/ticket/email-filter-contract"
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/filter"
+	"github.com/ticket/email-mail-node/internal/filterdecision"
+	"github.com/ticket/email-mail-node/internal/filteroutbox"
 	"github.com/ticket/email-mail-node/internal/mailbox"
+	"github.com/ticket/email-mail-node/internal/mailparse"
 )
 
 // Action mirrors filter.Action for forward-specific labels.
@@ -55,9 +59,16 @@ type Service struct {
 	mgr       *mailbox.Manager
 	remoteCfg *config.RemoteConfig // 动态配置，用于热加载转发目标 target_address
 	scanReset chan struct{}
+	decision  *filterdecision.Engine
+	outbox    *filteroutbox.Queue
 
 	mu         sync.Mutex
 	activeJobs int // count of files currently being processed
+}
+
+func (s *Service) ConfigurePolicyRuntime(engine *filterdecision.Engine, outbox *filteroutbox.Queue) {
+	s.decision = engine
+	s.outbox = outbox
 }
 
 // New 创建转发服务。remoteCfg 用于热加载 forward.target_address（可为 nil）。
@@ -334,12 +345,54 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 		Body:    bodyPreview,
 	}
 	result := s.engine.Filter(msg)
+	attemptedAction := legacyContractAction(result.Action)
+	decisionKey := ""
+	mode := s.currentEngineMode()
+	if mode != filterdecision.EngineModeLegacy && s.decision != nil && s.outbox != nil {
+		parsed, parseErr := mailparse.ParseFile(filePath, mailparse.Options{
+			Mailbox: sourceAddr, MaildirBase: s.mgr.MaildirBase(), MaildirUniqueName: filepath.Base(filePath),
+			ServerID: s.remoteCfg.NodeID(),
+		})
+		if parseErr != nil {
+			log.Printf("[filter] normalize failed, retaining legacy action: mailbox=%s error=%v", sourceAddr, parseErr)
+		} else {
+			stat, statErr := os.Stat(filePath)
+			evaluatedAt := time.Now().UTC()
+			if statErr == nil {
+				evaluatedAt = stat.ModTime().UTC()
+			}
+			decision, decisionErr := s.decision.Evaluate(parsed.Features, filterdecision.Options{
+				AutoQuarantineEnabled: s.remoteCfg.GetBool(filterdecision.AutoQuarantineConfigKey, false), EvaluatedAt: evaluatedAt,
+			})
+			if decisionErr != nil {
+				log.Printf("[filter] decision failed, retaining legacy action: mailbox=%s error=%v", sourceAddr, decisionErr)
+			} else {
+				event := filtercontract.OutboxEvent{
+					SchemaVersion: filtercontract.SchemaVersionV1, Phase: "staged", NodeID: parsed.Features.ServerID,
+					Mailbox: sourceAddr, MessageID: parsed.Features.MessageID, Decision: decision,
+				}
+				if stageErr := s.outbox.Stage(event); stageErr != nil {
+					log.Printf("[filter] HIGH: outbox stage failed, retaining legacy action: message_key=%s error=%v", parsed.Features.MessageKey, stageErr)
+				} else {
+					decisionKey = decision.DecisionKey
+					if mode == filterdecision.EngineModeDualFilter {
+						attemptedAction = decision.FinalAction
+						result.Action = contractLegacyAction(decision.FinalAction)
+						result.Reason = "versioned filter decision " + decision.DecisionKey
+						result.RuleID = 0
+					}
+				}
+			}
+		}
+	}
 
 	// 4. Block → keep original for LLM API, move to cur/ so we don't re-scan
 	if result.Action == filter.ActionBlock {
 		if err := moveToCur(filePath); err != nil {
+			s.completeDecision(decisionKey, attemptedAction, filtercontract.ActionQuarantine, err)
 			return fmt.Errorf("blocked message move to cur: %w", err)
 		}
+		s.completeDecision(decisionKey, attemptedAction, filtercontract.ActionQuarantine, nil)
 		log.Printf("[forward] blocked: from=%s to=%s rule=%d reason=%s",
 			msg.From, msg.To, result.RuleID, result.Reason)
 		return nil
@@ -352,19 +405,70 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	smtpUser, smtpPass := s.currentSMTPAuth()
 	if err := streamToSMTP(s.currentSMTPConfig(), filePath, newSubject, sourceAddr, target, smtpUser, smtpPass); err != nil {
 		// SMTP failed → leave in new/ for next-scan retry (natural backoff)
+		s.completeDecision(decisionKey, attemptedAction, legacyContractAction(result.Action), err)
 		return fmt.Errorf("smtp: %w", err)
 	}
 
 	// 6. Forward success → move to cur/ (Maildir Seen semantics)
 	if err := commitDeliveredFile(filePath); err != nil {
+		s.completeDecision(decisionKey, attemptedAction, legacyContractAction(result.Action), err)
 		return err
 	}
+	s.completeDecision(decisionKey, attemptedAction, legacyContractAction(result.Action), nil)
 
 	elapsed := time.Since(start).Milliseconds()
 	log.Printf("[forward] forwarded: %s → %s (action=%s, rule=%d, latency=%dms)",
 		sourceAddr, target, result.Action, result.RuleID, elapsed)
 
 	return nil
+}
+
+func (s *Service) currentEngineMode() string {
+	if s.remoteCfg == nil {
+		return filterdecision.EngineModeLegacy
+	}
+	mode := s.remoteCfg.GetString(filterdecision.EngineModeConfigKey, filterdecision.EngineModeLegacy)
+	if !filterdecision.ValidMode(mode) {
+		return filterdecision.EngineModeLegacy
+	}
+	return mode
+}
+
+func (s *Service) completeDecision(decisionKey, attemptedAction, actualAction string, processingErr error) {
+	if decisionKey == "" || s.outbox == nil {
+		return
+	}
+	result := filtercontract.ProcessingResult{Status: "succeeded", AttemptedAction: attemptedAction, ActualAction: actualAction}
+	if processingErr != nil {
+		result.Status = "failed"
+		result.ErrorCode = "processing_failed"
+		result.ErrorSummary = processingErr.Error()
+	}
+	if err := s.outbox.Ready(decisionKey, result); err != nil {
+		log.Printf("[filter] HIGH: outbox ready failed: decision_key=%s error=%v", decisionKey, err)
+	}
+}
+
+func legacyContractAction(action filter.Action) string {
+	switch action {
+	case filter.ActionFlag:
+		return filtercontract.ActionTag
+	case filter.ActionBlock:
+		return filtercontract.ActionQuarantine
+	default:
+		return filtercontract.ActionAllow
+	}
+}
+
+func contractLegacyAction(action string) filter.Action {
+	switch action {
+	case filtercontract.ActionTag:
+		return filter.ActionFlag
+	case filtercontract.ActionQuarantine:
+		return filter.ActionBlock
+	default:
+		return filter.ActionPass
+	}
 }
 
 func commitDeliveredFile(filePath string) error {

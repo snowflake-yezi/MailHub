@@ -324,6 +324,18 @@ const pages = {
     dialogs: { deleteTitle: '删除过滤规则', deleteMessage: '确定删除「{{name}}」吗？节点下一次拉取配置后将不再应用这条规则。' },
     messages: { saved: '保存成功', deleted: '已删除', enabled: '规则已启用', disabled: '规则已停用' },
   },
+  filterPolicy: {
+    revisionDiff: '版本差异', comparedWith: '对比基线 #{{revision}}', added: '新增', modified: '修改', removed: '删除', actionPreview: '动作面预览', validationResult: '校验结果', notValidated: '尚未校验；未知引用和 DAG 循环会在这里显示', validBundle: 'Bundle 有效 · {{bytes}} 字节', enforcePreview: 'Enforce 规则 {{before}} -> {{after}}', adActionPreview: 'Enforce producers {{before}} -> {{after}} · Tag {{oldTag}} -> {{tag}} · Quarantine {{oldQuarantine}} -> {{quarantine}}',
+    title: '过滤策略', subtitle: '管理版本化人工规则、广告识别策略、节点收敛状态与判定记录。', loading: '正在加载过滤策略...', activeKinds: '{{count}} 套 active 策略',
+    tabs: { overview: '概览', manual: '人工规则', ad: '广告策略', decisions: '命中分析', legacy: 'Legacy 规则' },
+    revision: '策略版本', selectRevision: '选择版本', notPublished: '尚未发布', createDraft: '创建草稿', clone: '克隆为草稿', validate: '校验', publish: '发布',
+    editor: '策略编辑器', editItem: '编辑策略项', addItem: '新增策略项', logicalId: '逻辑 ID', name: '名称', action: '动作', mode: '模式', priority: '优先级', symbol: 'Symbol', scorePolicy: '计分策略', conditions: '条件', addCondition: '添加条件', negated: '取反', operations: '操作',
+    activeManual: 'Active 人工版本', activeAd: 'Active 广告版本', manualVersions: '人工版本数', adVersions: '广告版本数', nodeConvergence: '节点策略收敛', node: '节点', kind: '策略类型', lastError: '最近错误', updated: '更新时间', noNodeState: '暂无节点策略状态',
+    manualRules: '人工规则', manualCaption: '只有 draft 可编辑；enforce 按优先级首条命中，shadow 仅记录候选结果。', addRule: '新增规则', noRules: '当前版本没有人工规则',
+    tagThreshold: 'Tag 阈值', quarantineThreshold: 'Quarantine 阈值', detectors: 'Detectors', composites: 'Composites', weights: 'Symbol 权重', score: '分数',
+    allActions: '全部动作', totalDecisions: '共 {{count}} 条判定', evaluated: '判定时间', mailbox: '邮箱', noDecisions: '暂无判定记录', reasons: '人工规则原因', symbols: '广告 Symbols', shadowResults: 'Shadow 结果', parseWarnings: '解析警告',
+    saved: '策略已保存', draftCreated: '草稿已创建', validationPassed: '校验完成', publishConfirm: '确认发布当前版本？发布后内容不可修改。', published: '策略版本已发布',
+  },
   servers: {
     title: '服务器池', subtitle: '管理 mail-node 节点、域名归属、容量水位与主动探测状态。', loading: '加载服务器池...', register: '注册服务器',
     status: { healthy: '健康', degraded: '降级', draining: '缩容中', down: '离线' },

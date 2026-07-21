@@ -26,6 +26,7 @@ const AdSeedV1 = "ad-seed-v1"
 var (
 	ErrFilterPolicyDraftRequired = errors.New("filter policy revision is not an editable draft")
 	ErrFilterPolicySeed          = errors.New("unknown filter policy seed")
+	ErrFilterDecisionNode        = errors.New("filter decision node does not own mailbox")
 )
 
 type FilterPolicyService struct {
@@ -74,6 +75,33 @@ type AdFilterRevisionView struct {
 type FilterPolicyStatus struct {
 	ActiveStates []model.FilterActiveState `json:"active_states"`
 	NodeStates   []model.FilterNodeState   `json:"node_states"`
+}
+
+type FilterDecisionView struct {
+	ID             uint64                          `json:"id"`
+	DecisionKey    string                          `json:"decision_key"`
+	MessageKey     string                          `json:"message_key"`
+	MessageID      string                          `json:"message_id,omitempty"`
+	Mailbox        string                          `json:"mailbox"`
+	NodeID         uint64                          `json:"node_id"`
+	ManualRevision uint64                          `json:"manual_revision"`
+	AdRevision     uint64                          `json:"ad_revision"`
+	ManualAction   string                          `json:"manual_action"`
+	AdAction       string                          `json:"ad_action"`
+	FinalAction    string                          `json:"final_action"`
+	AdScore        filtercontract.Score            `json:"ad_score"`
+	Reasons        []filtercontract.DecisionReason `json:"reasons"`
+	AdSymbols      []filtercontract.AdSymbolResult `json:"ad_symbols"`
+	ShadowResults  []filtercontract.ShadowResult   `json:"shadow_results"`
+	ParseWarnings  []string                        `json:"parse_warnings"`
+	EvaluatedAt    time.Time                       `json:"evaluated_at"`
+}
+
+type FilterDecisionPage struct {
+	Items []FilterDecisionView `json:"items"`
+	Total int64                `json:"total"`
+	Page  int                  `json:"page"`
+	Size  int                  `json:"size"`
 }
 
 func NewFilterPolicyService(s *store.Store) *FilterPolicyService {
@@ -506,6 +534,110 @@ func (s *FilterPolicyService) ReportNodeState(state *model.FilterNodeState) erro
 		}
 	}
 	return s.store.UpsertFilterNodeState(state)
+}
+
+func (s *FilterPolicyService) RecordDecision(event filtercontract.OutboxEvent) (*model.FilterDecision, error) {
+	if err := event.Validate(); err != nil {
+		return nil, err
+	}
+	if event.Phase != "ready" || event.Result == nil {
+		return nil, store.ErrInvalidFilterDecision
+	}
+	mailbox, err := s.store.GetMailboxByEmail(event.Mailbox)
+	if err != nil {
+		return nil, err
+	}
+	if mailbox.ServerID != event.NodeID {
+		return nil, ErrFilterDecisionNode
+	}
+	decision, err := decisionModel(event, mailbox.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.store.SaveFilterDecision(decision); err != nil {
+		return nil, err
+	}
+	return decision, nil
+}
+
+func (s *FilterPolicyService) ListDecisions(page, size int, action string) (*FilterDecisionPage, error) {
+	records, total, err := s.store.ListFilterDecisions(page, size, action)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FilterDecisionView, 0, len(records))
+	for _, record := range records {
+		view, err := decisionView(record)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *view)
+	}
+	return &FilterDecisionPage{Items: items, Total: total, Page: page, Size: size}, nil
+}
+
+func (s *FilterPolicyService) GetDecision(decisionKey string) (*FilterDecisionView, error) {
+	record, err := s.store.GetFilterDecision(decisionKey)
+	if err != nil {
+		return nil, err
+	}
+	return decisionView(*record)
+}
+
+func decisionView(record store.FilterDecisionRecord) (*FilterDecisionView, error) {
+	view := &FilterDecisionView{
+		ID: record.ID, DecisionKey: record.DecisionKey, MessageKey: record.MessageKey, MessageID: record.MessageID,
+		Mailbox: record.Mailbox, NodeID: record.NodeID, ManualRevision: record.ManualRevision, AdRevision: record.AdRevision,
+		ManualAction: record.ManualAction, AdAction: record.AdAction, FinalAction: record.FinalAction,
+		AdScore: filtercontract.Score(record.AdScoreMilli), EvaluatedAt: record.EvaluatedAt,
+		Reasons: []filtercontract.DecisionReason{}, AdSymbols: []filtercontract.AdSymbolResult{},
+		ShadowResults: []filtercontract.ShadowResult{}, ParseWarnings: []string{},
+	}
+	for _, item := range []struct {
+		payload string
+		target  any
+	}{
+		{record.ReasonsText, &view.Reasons},
+		{record.AdSymbolsText, &view.AdSymbols},
+		{record.ShadowResultsText, &view.ShadowResults},
+		{record.ParseWarningsText, &view.ParseWarnings},
+	} {
+		if err := json.Unmarshal([]byte(item.payload), item.target); err != nil {
+			return nil, fmt.Errorf("decode filter decision evidence: %w", err)
+		}
+	}
+	return view, nil
+}
+
+func decisionModel(event filtercontract.OutboxEvent, mailboxAccountID uint64) (*model.FilterDecision, error) {
+	marshal := func(value any) (string, error) {
+		data, err := json.Marshal(value)
+		return string(data), err
+	}
+	reasons, err := marshal(event.Decision.Reasons)
+	if err != nil {
+		return nil, err
+	}
+	symbols, err := marshal(event.Decision.AdSymbols)
+	if err != nil {
+		return nil, err
+	}
+	shadow, err := marshal(event.Decision.ShadowResults)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := marshal(event.Decision.ParseWarnings)
+	if err != nil {
+		return nil, err
+	}
+	return &model.FilterDecision{
+		SchemaVersion: event.Decision.SchemaVersion, DecisionKey: event.Decision.DecisionKey,
+		MessageKey: event.Decision.MessageKey, MessageID: event.MessageID, MailboxAccountID: mailboxAccountID, NodeID: event.NodeID,
+		ManualRevision: event.Decision.ManualRevision, AdRevision: event.Decision.AdRevision,
+		ManualAction: event.Decision.ManualAction, AdAction: event.Decision.AdAction, FinalAction: event.Decision.FinalAction,
+		AdScoreMilli: int64(event.Decision.AdScore), ReasonsText: reasons, AdSymbolsText: symbols,
+		ShadowResultsText: shadow, ParseWarningsText: warnings, EvaluatedAt: event.Decision.EvaluatedAt,
+	}, nil
 }
 
 func (s *FilterPolicyService) putAdDetectors(view *AdFilterRevisionView, detectors []filtercontract.AdDetector, actor, requestID, action string) (*AdFilterRevisionView, error) {

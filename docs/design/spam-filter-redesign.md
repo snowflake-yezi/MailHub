@@ -1091,9 +1091,9 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | S2 | P1 | completed | `mailparse` 领域包和完整 `MailFeatures` | 查询和转发结果不变 | 新旧解析 golden 对比、编码/MIME/URL 测试通过 |
 | S3 | P2 | completed | 新策略、判定、节点状态和隔离表及约束 | 无 active revision | MariaDB 10.5 副本迁移、重复启动、备份恢复通过 |
 | S4 | P2 | completed | draft/validate/publish/clone、active pointer、internal bundle | 只允许创建 shadow 草稿 | 事务并发、checksum、整批校验和权限测试通过 |
-| S5 | P2 | pending | manual/ad 编译器、symbol DAG、atomic snapshot、状态上报 | 节点保持 `legacy` | 单元测试、bundle 故障保留最后版本、双节点 checksum 一致 |
-| S6 | P2 | pending | `dual_shadow`、统一决策记录、本地两阶段 outbox、回放工具 | legacy 决定真实动作 | shadow 零副作用、断网恢复、同 revision 确定性回放通过 |
-| S7 | P2 | pending | 概览、人工规则、广告策略、命中分析和版本历史 UI | 只编辑 draft | UI contract、i18n、构建和 API 权限测试通过 |
+| S5 | P2 | completed | manual/ad 编译器、symbol DAG、atomic snapshot、状态上报 | 节点保持 `legacy` | 单元测试、bundle 故障保留最后版本、双客户端 checksum 一致 |
+| S6 | P2 | completed | `dual_shadow`、统一决策记录、本地两阶段 outbox、回放工具 | legacy 决定真实动作 | shadow 零副作用、断网恢复、同 revision 确定性回放通过 |
+| S7 | P2 | completed | 概览、人工规则、广告策略、命中分析和版本历史 UI | 只编辑 draft | UI contract、i18n、构建和 API 权限测试通过 |
 | S8 | P3 | pending | Maildir 外 quarantine、索引失效、节点查看/放行/receipt、GC | 自动 quarantine 关闭 | 路径边界、原子移动、崩溃恢复、普通查询不可见测试通过 |
 | S9 | P3 | pending | 管理端隔离区、放行、confirm_ad、误判标签和审计 | 仅人工审核 | 幂等放行、附件代理、反馈标签、expired 对账通过 |
 | S10 | P4 | pending | manual/ad 新外部配置 API 和独立权限 | 默认无应用授权 | registry、Bearer 权限、审计、隔离数据不可访问测试通过 |
@@ -1144,6 +1144,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 
 #### S5：实现 mail-node 新引擎
 
+> 完成记录（2026-07-21）：新增共享条件匹配器以及独立 manual/ad 编译快照，覆盖 v1 全部字段、域名 label 边界、unknown/negated、首条 enforce、shadow、symbol 去重、composite DAG、direct input suppression 和定点计分。manual/ad bundle 分别构建候选并 atomic swap，坏 bundle 保留最后有效快照并上报错误；两个独立客户端同步同一 bundle 后 revision/checksum 完全一致。节点运行模式仍默认为 `legacy`。
+
 - 新增 `mail-node/internal/manualfilter`、`adfilter` 和 `filterdecision`；legacy `mail-node/internal/filter` 在迁移期原样保留。
 - manualfilter 编译结构化条件并按 priority 首条命中；adfilter 编译 detector、DAG、mode、weight 和 threshold，启动/热切换都执行与控制面相同的整批校验。
 - 节点分别拉取 manual/ad bundle，在候选内存构建完整 snapshot；成功后 atomic swap，失败继续使用该 policy kind 最后有效版本并上报错误。
@@ -1151,12 +1153,16 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 
 #### S6：接入 dual shadow、decision 与 outbox
 
+> 完成记录（2026-07-21）：增加默认 `legacy` 的 `filter.engine_mode` 和默认 `false` 的 `filter.auto_quarantine_enabled`，在 forward 链路捕获同一 revision pair；直接 Maildir 集成测试证明 `dual_shadow` 记录候选 allow 时，legacy block 仍决定真实移动且不改变 Subject/SMTP，processing result 的 attempted/actual action 均记录 legacy 实际分支。两阶段 outbox 使用 staged/ready、文件与目录 fsync、原子 rename、容量上限、启动恢复和失败重试，控制面严格接收并幂等保存结构化证据；离线回放对相同 EML/bundle 产出 byte-for-byte 一致的 canonical decision。
+
 - 在 `mgmt-system/internal/configschema/schema.go`、mail-node remote config 和 runtime snapshot 增加 `filter.engine_mode` 与 `filter.auto_quarantine_enabled`；前者只允许 `legacy / dual_shadow / dual_filter` 且默认 `legacy`，后者默认 `false`。
 - 在 `forward.Service.processFile` 中同时运行 legacy 与新引擎；`dual_shadow` 下只把新结果写入 decision，不允许它影响 block、Subject 或 SMTP 分支。
 - 新增 `mail-node/internal/filteroutbox`，按第 9.1 节实现 staged/ready、fsync、原子 rename、重试、容量上限和启动恢复。
 - 回放工具读取 EML 与指定 revision bundle，输出 canonical decision；相同输入重复运行必须 byte-for-byte 一致，时间字段除外。
 
 #### S7：实现策略管理 UI
+
+> 完成记录（2026-07-21）：管理端过滤页拆出 Legacy 入口并上线概览、人工规则、广告策略、命中分析和 Legacy 五个页签；支持 revision 创建/克隆/选择、结构化 condition、detector/composite/weight/threshold 编辑、持久校验结果、相对 base diff、动作面预览、发布和节点 desired/applied/checksum/error 收敛状态。命中详情展示 reasons、symbols（含 contribution/suppressed_by）、shadow results 和 parse warnings；只有 draft 可编辑。UI contract、864 个三语键检查、Vite 生产构建及管理端全量 API/权限回归测试通过。
 
 - 在现有 `mgmt-system/web/src/pages/FiltersPage.jsx` 基础上拆分策略子组件，避免继续把 legacy 单表表单扩成一个超大组件；同步更新 `web/src/api.js` 和三套 i18n 文案。
 - 先交付 revision 列表、diff、validate 和 publish，再交付 detector/composite/weight 编辑器；所有新增 producer 默认 shadow，weight 不设置 mode。
@@ -1234,6 +1240,9 @@ npm run build
 | 2026-07-20 | S2 | completed | working tree | 双节点 mail-node SHA256 均为 `58ccff7e1203580def25d8bc2e4b8d8ab28bca849729199db20f655ee05d87e5`；authenticated health 200、规则同步完成、当前 PID 错误日志为 0；控制面 ready 200，节点 revision `4/4` 与 `3/3` | 节点 2 回滚点 `/root/mailhub-backups/filter-p1-s2-20260720-093055`，主节点回滚点 `/opt/mgmt-system/backups/filter-p1-s2-20260720-093517`；主节点真实邮件列表 200、账号仍为 14/14，节点 2 仍为 0/0；mgmt 未重启 |
 | 2026-07-21 | S4 | completed | working tree | `filter-contract`、`mail-node`、`mgmt-system` 全量 `go test -mod=readonly -count=1 ./...` 与 `go vet` 通过；MariaDB `10.5.29`、`5.5.64` 均通过 seed draft、整批校验、两路并发重复 publish、active/desired、bundle checksum、不可变写保护和 clone 测试 | 未部署、未创建生产草稿或 active revision；一次性数据库和 Docker 服务已清理。P2 尚余 S5-S7，下一步进入 S5，节点继续保持 legacy |
 | 2026-07-21 | S4 | completed | `56f7fb7` | 仅发布 mgmt binary；生产 SHA256 `369a98ec9d0e75c0ef8d8f828813179a01aadde0c18251df7c49dea006276edf`，PID `7047 -> 15144`，health/ready 200，新 PID 错误日志 0；manual/ad revision、active state、filter node state 仍全为 0；新 admin/internal 路由未鉴权 401，带内部鉴权且无 active bundle 404，legacy internal 200、legacy external 404 | 回滚点 `/opt/mgmt-system/backups/filter-p2-s4-56f7fb7-20260721-025723`，完整 dump 71,749 字节、SHA256 `843516ce63a283767d1df09c52401d328e5fdad9c44537e0a2bdbb6444e0ff36`；两台 mail-node 未替换，PID `809` / `11613`、SHA256 `58ccff7e1203580def25d8bc2e4b8d8ab28bca849729199db20f655ee05d87e5` 不变，均 healthy 且 revision `4/4`、`3/3` |
+| 2026-07-21 | S5 | completed | working tree | manual/ad/filtermatch/filterdecision/filterpolicy 单元测试通过；坏 bundle 保留最后有效快照并上报错误，两个独立客户端同步后的 revision/checksum 一致；mail-node 全量 test/vet 通过 | 未部署；运行模式默认并保持 `legacy`，legacy 引擎未删除 |
+| 2026-07-21 | S6 | completed | working tree | `dual_shadow` Maildir 集成测试验证 legacy block 动作不变；outbox 两阶段持久化、目录 fsync、断网保留、启动恢复和容量测试通过；回放输出 byte-for-byte 一致；decision 严格入站与结构化证据回归通过 | 未部署、未切换生产配置；`auto_quarantine_enabled=false` |
+| 2026-07-21 | S7 | completed | working tree | 五页签/策略生命周期/Legacy UI contract、864 个三语键、Vite build、mgmt-system 全量 test/vet 通过；版本 diff、动作面预览、节点收敛和 decision evidence 已覆盖 | 未部署；UI 只允许编辑 draft，Legacy 页面继续保留 |
 
 ---
 

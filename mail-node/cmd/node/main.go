@@ -21,6 +21,9 @@ import (
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
+	"github.com/ticket/email-mail-node/internal/filterdecision"
+	"github.com/ticket/email-mail-node/internal/filteroutbox"
+	"github.com/ticket/email-mail-node/internal/filterpolicy"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/handler"
 	"github.com/ticket/email-mail-node/internal/mailbox"
@@ -65,6 +68,7 @@ func main() {
 	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
 	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
+	remoteCfg.RegisterApplyHook(filterdecision.ValidateConfig)
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -81,6 +85,23 @@ func main() {
 		configuredFilterSyncInterval(remoteCfg, cfg.Management.FilterSyncInterval),
 		cfg.SharedSecret,
 	)
+	decisionEngine := filterdecision.New()
+	outbox, err := filteroutbox.New(cfg.Filter.OutboxPath, filteroutbox.DefaultMaxEvents, filteroutbox.DefaultMaxBytes)
+	if err != nil {
+		log.Fatalf("Failed to initialize filter outbox: %v", err)
+	}
+	if recovered, recoverErr := outbox.RecoverStaged(); recoverErr != nil {
+		log.Printf("[filter] WARNING: outbox recovery incomplete: recovered=%d error=%v", recovered, recoverErr)
+	} else if recovered > 0 {
+		log.Printf("[filter] recovered %d staged decisions", recovered)
+	}
+	policyClient := filterpolicy.NewClient(cfg.Management.APIURL, cfg.SharedSecret, decisionEngine, func() (uint64, string) {
+		boot, _ := remoteCfg.BootIdentity()
+		return remoteCfg.NodeID(), boot
+	})
+	if err := policyClient.SyncOnce(context.Background()); err != nil {
+		log.Printf("[filter] WARNING: initial policy sync failed: %v", err)
+	}
 
 	// 初始化邮箱管理器（Maildir 属主 UID/GID 可配置，适配宝塔共存机或独立虚拟用户）
 	mailboxMgr := mailbox.NewManager(cfg.Maildir.BasePath, cfg.Maildir.VmailUID, cfg.Maildir.VmailGID)
@@ -110,6 +131,7 @@ func main() {
 		TLSMinVersion:   remoteCfg.GetInt("forward.tls_min_version", 12),
 	}
 	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
+	fwdSvc.ConfigurePolicyRuntime(decisionEngine, outbox)
 
 	// 初始化生命周期管理器（安全软删除 + 垃圾回收 + 重启对账）
 	// 超时/间隔参数优先用远程配置，0 值触发默认值回退
@@ -149,6 +171,12 @@ func main() {
 	go remoteCfg.StartPolling(ctx, time.Minute, func(err error) {
 		log.Printf("[config] periodic pull failed: %v", err)
 	})
+	go policyClient.Start(ctx, func() time.Duration {
+		return time.Duration(remoteCfg.GetInt(filter.SyncIntervalConfigKey, cfg.Management.FilterSyncInterval)) * time.Second
+	}, func(err error) {
+		log.Printf("[filter] periodic policy sync failed: %v", err)
+	})
+	go filteroutbox.NewUploader(outbox, cfg.Management.APIURL, cfg.SharedSecret).Start(ctx)
 	go fwdSvc.Start(ctx)
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
@@ -258,6 +286,10 @@ func reportRuntimeConfigSnapshot(remoteCfg *config.RemoteConfig, engine *filter.
 func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, engine *filter.Engine, forwardCfg forward.ForwardConfig, trashRetention time.Duration) map[string]string {
 	return map[string]string{
 		filter.SyncIntervalConfigKey:       strconv.Itoa(engine.SyncIntervalSeconds()),
+		filterdecision.EngineModeConfigKey: remoteCfg.GetString(filterdecision.EngineModeConfigKey, filterdecision.EngineModeLegacy),
+		filterdecision.AutoQuarantineConfigKey: strconv.FormatBool(
+			remoteCfg.GetBool(filterdecision.AutoQuarantineConfigKey, false),
+		),
 		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
 		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
 		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),

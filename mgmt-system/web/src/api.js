@@ -74,6 +74,36 @@ export const filterAPI = {
   remove(id) { return request(`/filters/${id}`, { method: 'DELETE' }); },
 };
 
+export const filterPolicyAPI = {
+  status() { return get('/filter-policy-status'); },
+  manualRevisions() { return get('/manual-filter-revisions'); },
+  manualRevision(revision) { return get(`/manual-filter-revisions/${revision}`); },
+  createManual(data = {}) { return request('/manual-filter-revisions', { method: 'POST', body: JSON.stringify(data) }); },
+  replaceManual(revision, rules) { return request(`/manual-filter-revisions/${revision}`, { method: 'PUT', body: JSON.stringify({ rules }) }); },
+  validateManual(revision) { return request(`/manual-filter-revisions/${revision}/validate`, { method: 'POST' }); },
+  publishManual(revision) { return request(`/manual-filter-revisions/${revision}/publish`, { method: 'POST' }); },
+  cloneManual(revision) { return request(`/manual-filter-revisions/${revision}/clone`, { method: 'POST' }); },
+  adRevisions() { return get('/ad-filter-revisions'); },
+  adRevision(revision) { return get(`/ad-filter-revisions/${revision}`); },
+  createAd(data = {}) { return request('/ad-filter-revisions', { method: 'POST', body: JSON.stringify(data) }); },
+  updateAdThresholds(revision, tagThreshold, quarantineThreshold) {
+    return request(`/ad-filter-revisions/${revision}`, { method: 'PUT', body: JSON.stringify({ tag_threshold: tagThreshold, quarantine_threshold: quarantineThreshold }) });
+  },
+  addAdDetector(revision, detector) { return request(`/ad-filter-revisions/${revision}/detectors`, { method: 'POST', body: JSON.stringify(detector) }); },
+  updateAdDetector(revision, logicalId, detector) { return request(`/ad-filter-revisions/${revision}/detectors/${encodeURIComponent(logicalId)}`, { method: 'PUT', body: JSON.stringify(detector) }); },
+  removeAdDetector(revision, logicalId) { return request(`/ad-filter-revisions/${revision}/detectors/${encodeURIComponent(logicalId)}`, { method: 'DELETE' }); },
+  addAdComposite(revision, composite) { return request(`/ad-filter-revisions/${revision}/composites`, { method: 'POST', body: JSON.stringify(composite) }); },
+  updateAdComposite(revision, logicalId, composite) { return request(`/ad-filter-revisions/${revision}/composites/${encodeURIComponent(logicalId)}`, { method: 'PUT', body: JSON.stringify(composite) }); },
+  removeAdComposite(revision, logicalId) { return request(`/ad-filter-revisions/${revision}/composites/${encodeURIComponent(logicalId)}`, { method: 'DELETE' }); },
+  putAdWeight(revision, symbol, score) { return request(`/ad-filter-revisions/${revision}/weights/${encodeURIComponent(symbol)}`, { method: 'PUT', body: JSON.stringify({ score }) }); },
+  removeAdWeight(revision, symbol) { return request(`/ad-filter-revisions/${revision}/weights/${encodeURIComponent(symbol)}`, { method: 'DELETE' }); },
+  validateAd(revision) { return request(`/ad-filter-revisions/${revision}/validate`, { method: 'POST' }); },
+  publishAd(revision) { return request(`/ad-filter-revisions/${revision}/publish`, { method: 'POST' }); },
+  cloneAd(revision) { return request(`/ad-filter-revisions/${revision}/clone`, { method: 'POST' }); },
+  decisions(params = {}) { return get('/filter-decisions', params); },
+  decision(key) { return get(`/filter-decisions/${encodeURIComponent(key)}`); },
+};
+
 // ─── Mailboxes ───────────────────────────────────────────
 export const mailboxAPI = {
   list(params) { return get('/mailboxes', params); },

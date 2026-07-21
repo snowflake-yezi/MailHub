@@ -25,6 +25,8 @@ func TestRuntimeConfigApplyStrategies(t *testing.T) {
 		"forward.tls_insecure_skip":        ReadThrough,
 		"forward.tls_min_version":          ReadThrough,
 		"filter.sync_interval":             ReloadHook,
+		"filter.engine_mode":               ReadThrough,
+		"filter.auto_quarantine_enabled":   ReadThrough,
 		"lifecycle.gc_interval_minutes":    ReloadHook,
 		"lifecycle.drain_timeout_minutes":  ReadThrough,
 		"lifecycle.drain_poll_interval_ms": ReadThrough,

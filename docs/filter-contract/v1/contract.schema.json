@@ -203,10 +203,13 @@
     "outboxEvent": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "phase", "decision", "result"],
+      "required": ["schema_version", "phase", "node_id", "mailbox", "message_id", "decision", "result"],
       "properties": {
         "schema_version": { "$ref": "#/$defs/schemaVersion" },
         "phase": { "enum": ["staged", "ready"] },
+        "node_id": { "type": "integer", "minimum": 1 },
+        "mailbox": { "type": "string", "minLength": 1 },
+        "message_id": { "type": "string" },
         "decision": { "$ref": "#/$defs/filterDecision" },
         "result": { "oneOf": [{ "$ref": "#/$defs/processingResult" }, { "type": "null" }] }
       }

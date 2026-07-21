@@ -171,6 +171,18 @@ const pages = {
     dialogs: { deleteTitle: 'Delete filter rule', deleteMessage: 'Delete “{{name}}”? The node will stop applying it after the next configuration poll.' },
     messages: { saved: 'Saved', deleted: 'Deleted', enabled: 'Rule enabled', disabled: 'Rule disabled' },
   },
+  filterPolicy: {
+    revisionDiff: 'Revision diff', comparedWith: 'Compared with #{{revision}}', added: 'added', modified: 'modified', removed: 'removed', actionPreview: 'Action surface preview', validationResult: 'Validation', notValidated: 'Not validated; unknown references and DAG cycles appear here', validBundle: 'Bundle valid · {{bytes}} bytes', enforcePreview: 'Enforce rules {{before}} -> {{after}}', adActionPreview: 'Enforce producers {{before}} -> {{after}} · Tag {{oldTag}} -> {{tag}} · Quarantine {{oldQuarantine}} -> {{quarantine}}',
+    title: 'Filter policies', subtitle: 'Manage versioned manual rules, advertising policies, node convergence, and decisions.', loading: 'Loading filter policies...', activeKinds: '{{count}} active policy sets',
+    tabs: { overview: 'Overview', manual: 'Manual rules', ad: 'Advertising', decisions: 'Hit analysis', legacy: 'Legacy rules' },
+    revision: 'Policy revision', selectRevision: 'Select a revision', notPublished: 'Not published', createDraft: 'Create draft', clone: 'Clone as draft', validate: 'Validate', publish: 'Publish',
+    editor: 'Policy editor', editItem: 'Edit policy item', addItem: 'Add policy item', logicalId: 'Logical ID', name: 'Name', action: 'Action', mode: 'Mode', priority: 'Priority', symbol: 'Symbol', scorePolicy: 'Score policy', conditions: 'Conditions', addCondition: 'Add condition', negated: 'Negated', operations: 'Actions',
+    activeManual: 'Active manual revision', activeAd: 'Active ad revision', manualVersions: 'Manual revisions', adVersions: 'Ad revisions', nodeConvergence: 'Node policy convergence', node: 'Node', kind: 'Policy kind', lastError: 'Last error', updated: 'Updated', noNodeState: 'No node policy state',
+    manualRules: 'Manual rules', manualCaption: 'Only drafts are editable. Enforce uses the first priority match; shadow only records candidates.', addRule: 'Add rule', noRules: 'This revision has no manual rules',
+    tagThreshold: 'Tag threshold', quarantineThreshold: 'Quarantine threshold', detectors: 'Detectors', composites: 'Composites', weights: 'Symbol weights', score: 'Score',
+    allActions: 'All actions', totalDecisions: '{{count}} decisions', evaluated: 'Evaluated', mailbox: 'Mailbox', noDecisions: 'No decisions recorded', reasons: 'Manual reasons', symbols: 'Advertising symbols', shadowResults: 'Shadow results', parseWarnings: 'Parse warnings',
+    saved: 'Policy saved', draftCreated: 'Draft created', validationPassed: 'Validation completed', publishConfirm: 'Publish this revision? Published contents are immutable.', published: 'Policy revision published',
+  },
   servers: {
     title: 'Server pool', subtitle: 'Manage mail-node servers, domain ownership, capacity, and active probe state.', loading: 'Loading server pool...', register: 'Register server',
     status: { healthy: 'Healthy', degraded: 'Degraded', draining: 'Draining', down: 'Offline' },

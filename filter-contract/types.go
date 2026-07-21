@@ -241,6 +241,9 @@ type ProcessingResult struct {
 type OutboxEvent struct {
 	SchemaVersion int               `json:"schema_version"`
 	Phase         string            `json:"phase"`
+	NodeID        uint64            `json:"node_id"`
+	Mailbox       string            `json:"mailbox"`
+	MessageID     string            `json:"message_id"`
 	Decision      FilterDecision    `json:"decision"`
 	Result        *ProcessingResult `json:"result"`
 }

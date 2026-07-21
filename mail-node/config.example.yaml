@@ -27,6 +27,7 @@ forward:
 filter:
   default_action: "pass"
   flag_subject_prefix: "[疑似]"
+  outbox_path: "/var/lib/mail-node/filter-outbox"
 
 node:
   id: 1

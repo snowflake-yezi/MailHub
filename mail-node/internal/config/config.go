@@ -55,6 +55,7 @@ type ForwardConfig struct {
 type FilterConfig struct {
 	DefaultAction     string `yaml:"default_action"`
 	FlagSubjectPrefix string `yaml:"flag_subject_prefix"`
+	OutboxPath        string `yaml:"outbox_path"`
 }
 
 type NodeConfig struct {
@@ -83,7 +84,7 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Server:     ServerConfig{Port: 8081, Mode: "release"},
 		Management: ManagementConfig{FilterSyncInterval: defaultFilterSyncIntervalSeconds},
-		Filter:     FilterConfig{DefaultAction: "pass", FlagSubjectPrefix: "[疑似]"},
+		Filter:     FilterConfig{DefaultAction: "pass", FlagSubjectPrefix: "[疑似]", OutboxPath: "/var/lib/mail-node/filter-outbox"},
 		DKIM:       DKIMConfig{Selector: "mail"},
 	}
 
@@ -103,6 +104,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Management.FilterSyncInterval <= 0 {
 		cfg.Management.FilterSyncInterval = defaultFilterSyncIntervalSeconds
+	}
+	if strings.TrimSpace(cfg.Filter.OutboxPath) == "" {
+		cfg.Filter.OutboxPath = "/var/lib/mail-node/filter-outbox"
 	}
 
 	return cfg, nil

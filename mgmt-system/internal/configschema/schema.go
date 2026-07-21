@@ -33,6 +33,8 @@ var definitionOrder = []string{
 	"forward.tls_insecure_skip",
 	"forward.tls_min_version",
 	"filter.sync_interval",
+	"filter.engine_mode",
+	"filter.auto_quarantine_enabled",
 	"lifecycle.trash_retention_hours",
 	"lifecycle.message_retention_days",
 	"lifecycle.gc_interval_minutes",
@@ -72,6 +74,14 @@ var definitions = map[string]Definition{
 	"filter.sync_interval": {
 		Key: "filter.sync_interval", Owner: "mail-node", Category: "filter", Label: "规则同步间隔", Description: "节点启动时立即同步，配置重载后在线更新周期",
 		ValueType: "int", DefaultValue: "30", Unit: "秒", Min: 1, Max: 86400, NodeOverridable: true, ApplyStrategy: ReloadHook,
+	},
+	"filter.engine_mode": {
+		Key: "filter.engine_mode", Owner: "mail-node", Category: "filter", Label: "Filter engine mode", Description: "Select legacy, dual shadow, or dual filter execution",
+		ValueType: "string", DefaultValue: "legacy", Unit: "mode", Min: 1, Max: 32, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"filter.auto_quarantine_enabled": {
+		Key: "filter.auto_quarantine_enabled", Owner: "mail-node", Category: "filter", Label: "Automatic quarantine", Description: "Allow automatic advertising decisions to quarantine messages",
+		ValueType: "bool", DefaultValue: "false", Unit: "switch", Min: 0, Max: 1, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"lifecycle.trash_retention_hours": {
 		Key: "lifecycle.trash_retention_hours", Owner: "mail-node", Category: "lifecycle",

@@ -2,6 +2,7 @@ package service
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -80,6 +81,50 @@ func TestAdModelRoundTripPreservesCanonicalChecksum(t *testing.T) {
 	}
 	if roundTrip.Checksum != want {
 		t.Fatalf("round-trip checksum = %s, want %s", roundTrip.Checksum, want)
+	}
+}
+
+func TestDecisionModelPreservesOutboxEvidence(t *testing.T) {
+	event := filtercontract.OutboxEvent{
+		SchemaVersion: 1, Phase: "ready", NodeID: 7, Mailbox: "inbox@example.com", MessageID: "<fixture@example.com>",
+		Decision: filtercontract.FilterDecision{
+			SchemaVersion: 1, DecisionKey: "decision", MessageKey: "message", ManualRevision: 2, AdRevision: 4,
+			ManualAction: "allow", AdAction: "tag", FinalAction: "tag", AdScore: 2500,
+			Reasons: []filtercontract.DecisionReason{}, AdSymbols: []filtercontract.AdSymbolResult{},
+			ShadowResults: []filtercontract.ShadowResult{}, ParseWarnings: []string{"warning"}, EvaluatedAt: time.Unix(100, 0).UTC(),
+		},
+		Result: &filtercontract.ProcessingResult{Status: "succeeded", AttemptedAction: "tag", ActualAction: "allow"},
+	}
+	decision, err := decisionModel(event, 11)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.MailboxAccountID != 11 || decision.NodeID != 7 || decision.MessageID != event.MessageID || decision.AdScoreMilli != 2500 {
+		t.Fatalf("decision = %#v", decision)
+	}
+	var warnings []string
+	if err := json.Unmarshal([]byte(decision.ParseWarningsText), &warnings); err != nil || len(warnings) != 1 {
+		t.Fatalf("warnings = %#v / %v", warnings, err)
+	}
+}
+
+func TestDecisionViewDecodesStructuredEvidence(t *testing.T) {
+	record := store.FilterDecisionRecord{
+		FilterDecision: model.FilterDecision{
+			ID: 1, DecisionKey: "decision", MessageKey: "message", NodeID: 7,
+			ManualAction: "allow", AdAction: "tag", FinalAction: "tag", AdScoreMilli: 2500,
+			ReasonsText: "[null]", AdSymbolsText: "[null]", ShadowResultsText: "[null]", ParseWarningsText: "[null]",
+			EvaluatedAt: time.Unix(100, 0).UTC(),
+		},
+		Mailbox: "inbox@example.com",
+	}
+	view, err := decisionView(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Mailbox != record.Mailbox || view.AdScore != 2500 || len(view.Reasons) != 1 ||
+		len(view.AdSymbols) != 1 || len(view.ShadowResults) != 1 || len(view.ParseWarnings) != 1 {
+		t.Fatalf("view = %#v", view)
 	}
 }
 

@@ -171,6 +171,18 @@ const pages = {
     dialogs: { deleteTitle: 'フィルタールールを削除', deleteMessage: '「{{name}}」を削除しますか？次回の設定取得後、ノードはこのルールを適用しません。' },
     messages: { saved: '保存しました', deleted: '削除しました', enabled: 'ルールを有効にしました', disabled: 'ルールを無効にしました' },
   },
+  filterPolicy: {
+    revisionDiff: 'バージョン差分', comparedWith: '比較元 #{{revision}}', added: '追加', modified: '変更', removed: '削除', actionPreview: 'アクション面のプレビュー', validationResult: '検証結果', notValidated: '未検証です。不明な参照と DAG 循環はここに表示されます', validBundle: 'Bundle は有効 · {{bytes}} バイト', enforcePreview: 'Enforce ルール {{before}} -> {{after}}', adActionPreview: 'Enforce producers {{before}} -> {{after}} · Tag {{oldTag}} -> {{tag}} · Quarantine {{oldQuarantine}} -> {{quarantine}}',
+    title: 'フィルターポリシー', subtitle: 'バージョン化された手動ルール、広告ポリシー、ノード収束、判定履歴を管理します。', loading: 'フィルターポリシーを読み込み中...', activeKinds: 'Active ポリシー {{count}} 件',
+    tabs: { overview: '概要', manual: '手動ルール', ad: '広告ポリシー', decisions: 'ヒット分析', legacy: 'Legacy ルール' },
+    revision: 'ポリシーバージョン', selectRevision: 'バージョンを選択', notPublished: '未公開', createDraft: 'ドラフト作成', clone: 'ドラフトへ複製', validate: '検証', publish: '公開',
+    editor: 'ポリシーエディター', editItem: 'ポリシー項目を編集', addItem: 'ポリシー項目を追加', logicalId: '論理 ID', name: '名前', action: 'アクション', mode: 'モード', priority: '優先度', symbol: 'Symbol', scorePolicy: 'スコア方式', conditions: '条件', addCondition: '条件を追加', negated: '否定', operations: '操作',
+    activeManual: 'Active 手動バージョン', activeAd: 'Active 広告バージョン', manualVersions: '手動バージョン数', adVersions: '広告バージョン数', nodeConvergence: 'ノードのポリシー収束', node: 'ノード', kind: 'ポリシー種別', lastError: '最新エラー', updated: '更新日時', noNodeState: 'ノード状態はありません',
+    manualRules: '手動ルール', manualCaption: '編集できるのはドラフトのみです。enforce は優先度順の最初の一致、shadow は候補のみ記録します。', addRule: 'ルール追加', noRules: 'このバージョンに手動ルールはありません',
+    tagThreshold: 'Tag しきい値', quarantineThreshold: 'Quarantine しきい値', detectors: 'Detectors', composites: 'Composites', weights: 'Symbol 重み', score: 'スコア',
+    allActions: 'すべてのアクション', totalDecisions: '判定 {{count}} 件', evaluated: '判定日時', mailbox: 'メールボックス', noDecisions: '判定履歴はありません', reasons: '手動ルールの理由', symbols: '広告 Symbols', shadowResults: 'Shadow 結果', parseWarnings: '解析警告',
+    saved: 'ポリシーを保存しました', draftCreated: 'ドラフトを作成しました', validationPassed: '検証が完了しました', publishConfirm: 'このバージョンを公開しますか？公開後は変更できません。', published: 'ポリシーバージョンを公開しました',
+  },
   servers: {
     title: 'サーバープール', subtitle: 'mail-node、ドメインの所属、容量、アクティブプローブ状態を管理します。', loading: 'サーバープールを読み込み中...', register: 'サーバーを登録',
     status: { healthy: '正常', degraded: '低下', draining: 'ドレイン中', down: 'オフライン' },

@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -51,11 +53,43 @@ func (h *FilterPolicyHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.POST("/ad-filter-revisions/:revision/validate", h.ValidateAdRevision)
 	r.POST("/ad-filter-revisions/:revision/publish", h.PublishAdRevision)
 	r.POST("/ad-filter-revisions/:revision/clone", h.CloneAdRevision)
+
+	r.GET("/filter-decisions", h.ListDecisions)
+	r.GET("/filter-decisions/:decision_key", h.GetDecision)
+}
+
+func (h *FilterPolicyHandler) ListDecisions(c *gin.Context) {
+	page := parsePositiveInt(c.Query("page"), 1)
+	size := parsePositiveInt(c.Query("size"), 50)
+	value, err := h.service.ListDecisions(page, size, c.Query("action"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "success", value)
+}
+
+func (h *FilterPolicyHandler) GetDecision(c *gin.Context) {
+	value, err := h.service.GetDecision(c.Param("decision_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "success", value)
+}
+
+func parsePositiveInt(value string, fallback int) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func (h *FilterPolicyHandler) RegisterInternalRoutes(r *gin.RouterGroup) {
 	r.GET("/filter-bundles/:policy_kind", h.GetActiveBundle)
 	r.POST("/filter-node-states", h.ReportNodeState)
+	r.POST("/filter-decisions", h.RecordDecision)
 }
 
 func (h *FilterPolicyHandler) ListManualRevisions(c *gin.Context) {
@@ -383,6 +417,25 @@ func (h *FilterPolicyHandler) ReportNodeState(c *gin.Context) {
 	success(c, "filter node state recorded", state)
 }
 
+func (h *FilterPolicyHandler) RecordDecision(c *gin.Context) {
+	data, err := io.ReadAll(io.LimitReader(c.Request.Body, 5<<20))
+	if err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid filter decision event: "+err.Error())
+		return
+	}
+	var event filtercontract.OutboxEvent
+	if err := filtercontract.DecodeStrict(data, &event); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid filter decision event: "+err.Error())
+		return
+	}
+	decision, err := h.service.RecordDecision(event)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "filter decision recorded", decision)
+}
+
 func (h *FilterPolicyHandler) writeError(c *gin.Context, err error) {
 	var contractError *filtercontract.ContractError
 	switch {
@@ -390,7 +443,10 @@ func (h *FilterPolicyHandler) writeError(c *gin.Context, err error) {
 		notFound(c, "filter policy revision or resource not found")
 	case errors.Is(err, store.ErrFilterPolicyImmutable), errors.Is(err, service.ErrFilterPolicyDraftRequired), errors.Is(err, store.ErrFilterPolicyConflict):
 		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
+	case errors.Is(err, store.ErrFilterDecisionConflict):
+		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
 	case errors.As(err, &contractError), errors.Is(err, service.ErrFilterPolicySeed),
+		errors.Is(err, service.ErrFilterDecisionNode), errors.Is(err, store.ErrInvalidFilterDecision),
 		errors.Is(err, store.ErrInvalidFilterPolicyRevision), errors.Is(err, store.ErrInvalidFilterNodeState):
 		badRequest(c, ErrCodeParamInvalid, err.Error())
 	default:

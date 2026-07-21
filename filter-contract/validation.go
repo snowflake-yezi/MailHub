@@ -371,6 +371,9 @@ func (e OutboxEvent) Validate() error {
 	if e.SchemaVersion != SchemaVersionV1 {
 		return &ContractError{Code: ErrorInvalidSchemaVersion, Path: "schema_version", Message: "only schema version 1 is supported"}
 	}
+	if e.NodeID == 0 || strings.TrimSpace(e.Mailbox) == "" {
+		return &ContractError{Code: ErrorRequired, Path: "node_id", Message: "node_id and mailbox are required"}
+	}
 	if err := e.Decision.Validate(); err != nil {
 		return err
 	}
