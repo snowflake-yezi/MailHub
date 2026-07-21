@@ -1090,7 +1090,7 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | S1 | P0 | completed | 退役 legacy 外部 filters API，保留管理端迁移入口 | legacy 邮件行为不变 | 旧外部路由不可用、权限元数据退役、无现有授权方 |
 | S2 | P1 | completed | `mailparse` 领域包和完整 `MailFeatures` | 查询和转发结果不变 | 新旧解析 golden 对比、编码/MIME/URL 测试通过 |
 | S3 | P2 | completed | 新策略、判定、节点状态和隔离表及约束 | 无 active revision | MariaDB 10.5 副本迁移、重复启动、备份恢复通过 |
-| S4 | P2 | pending | draft/validate/publish/clone、active pointer、internal bundle | 只允许创建 shadow 草稿 | 事务并发、checksum、整批校验和权限测试通过 |
+| S4 | P2 | completed | draft/validate/publish/clone、active pointer、internal bundle | 只允许创建 shadow 草稿 | 事务并发、checksum、整批校验和权限测试通过 |
 | S5 | P2 | pending | manual/ad 编译器、symbol DAG、atomic snapshot、状态上报 | 节点保持 `legacy` | 单元测试、bundle 故障保留最后版本、双节点 checksum 一致 |
 | S6 | P2 | pending | `dual_shadow`、统一决策记录、本地两阶段 outbox、回放工具 | legacy 决定真实动作 | shadow 零副作用、断网恢复、同 revision 确定性回放通过 |
 | S7 | P2 | pending | 概览、人工规则、广告策略、命中分析和版本历史 UI | 只编辑 draft | UI contract、i18n、构建和 API 权限测试通过 |
@@ -1134,6 +1134,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 - 在生产结构副本验证首次迁移、重复启动、旧 binary 读取旧表以及从备份恢复；此时不得创建 active revision。
 
 #### S4：实现策略服务与 bundle
+
+> 完成记录（2026-07-21）：将 filter contract 抽为控制面与节点共用的独立 Go 模块，补齐条件类型、规范化地址/域名、producer、weight、bundle 大小和 composite DAG 整批校验；新增 manual/ad 草稿编辑、克隆、校验、并发幂等发布、审计、active pointer、节点 desired/applied 状态、收敛查询及 internal bundle API。`ad-seed-v1` 作为仓库内显式导入的全 shadow 资源，不在启动时自动创建草稿或 active revision。发布事务使用 revision 行锁并在同一事务冻结快照、切换 active、推进所有节点 desired revision 和写审计；published revision 的后续写入被拒绝。相同工作流已在 `10.5.29-MariaDB` 与现网同代 `5.5.64-MariaDB` 上验证，两路并发重复 publish 最终只有一个 active pointer，checksum 与拉取 bundle 一致。
 
 - 建议新增 `mgmt-system/internal/handler/filter_policy.go`，store 只提供持久化原语，handler/service 负责 draft 状态机、完整校验、clone、publish 和审计。
 - 实现 manual/ad 两套独立 active pointer、canonical checksum、internal bundle、节点 desired/applied state 和发布收敛查询。
@@ -1202,6 +1204,9 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 本地每个相关步骤至少执行：
 
 ```text
+cd filter-contract
+go test ./...
+
 cd mail-node
 go test ./...
 
@@ -1227,6 +1232,7 @@ npm run build
 | 2026-07-20 | S1 | completed | `fbae266` | 生产四种 legacy 外部方法及公网 GET 均为 404；四项权限 inactive、四条资源 retired、filter grant 为 0；admin/internal 鉴权入口保留；两节点启动后完成规则同步且 healthy | 回滚点：主机 `/opt/mgmt-system/backups/filter-p0-fbae266-20260720-074337`，节点 2 `/root/mailhub-backups/filter-p0-fbae266-20260720-074137`；完整 DB dump 含 20 张表。严格域名匹配未改变 legacy 行为，留待 dual shadow 评估 |
 | 2026-07-20 | S2 | completed | working tree | `mail-node go test -mod=readonly -count=1 ./...`、`go vet -mod=readonly ./...` 通过；8 类 EML 的 `MailFeatures` 与 v1 golden 完全一致，GB18030、身份关系和 URL 上限测试通过 | handler 查询改用共享 parser，fallback Message-ID、正文、附件 index 回归通过；legacy forward 继续使用原始 preview，不改变过滤和转发动作 |
 | 2026-07-20 | S2 | completed | working tree | 双节点 mail-node SHA256 均为 `58ccff7e1203580def25d8bc2e4b8d8ab28bca849729199db20f655ee05d87e5`；authenticated health 200、规则同步完成、当前 PID 错误日志为 0；控制面 ready 200，节点 revision `4/4` 与 `3/3` | 节点 2 回滚点 `/root/mailhub-backups/filter-p1-s2-20260720-093055`，主节点回滚点 `/opt/mgmt-system/backups/filter-p1-s2-20260720-093517`；主节点真实邮件列表 200、账号仍为 14/14，节点 2 仍为 0/0；mgmt 未重启 |
+| 2026-07-21 | S4 | completed | working tree | `filter-contract`、`mail-node`、`mgmt-system` 全量 `go test -mod=readonly -count=1 ./...` 与 `go vet` 通过；MariaDB `10.5.29`、`5.5.64` 均通过 seed draft、整批校验、两路并发重复 publish、active/desired、bundle checksum、不可变写保护和 clone 测试 | 未部署、未创建生产草稿或 active revision；一次性数据库和 Docker 服务已清理。P2 尚余 S5-S7，下一步进入 S5，节点继续保持 legacy |
 
 ---
 

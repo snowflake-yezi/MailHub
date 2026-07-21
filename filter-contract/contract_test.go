@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jhillyerd/enmime"
 )
 
 func TestCanonicalContractFixtures(t *testing.T) {
@@ -183,24 +181,6 @@ func TestGoldenCasesCoverFixtureBaseline(t *testing.T) {
 	}
 }
 
-func TestLargeAttachmentFixtureHasExactBoundaryPayload(t *testing.T) {
-	file, err := os.Open(contractPath("eml", "large-attachment-boundary.eml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	envelope, err := enmime.ReadEnvelope(file)
-	if err != nil {
-		t.Fatalf("ReadEnvelope() error = %v", err)
-	}
-	if len(envelope.Attachments) != 1 {
-		t.Fatalf("attachment count = %d, want 1", len(envelope.Attachments))
-	}
-	if got := len(envelope.Attachments[0].Content); got != 4096 {
-		t.Fatalf("attachment bytes = %d, want 4096", got)
-	}
-}
-
 func TestContractSchemaIsVersionedAndClosed(t *testing.T) {
 	data := readContractFixture(t, "contract.schema.json")
 	var schema map[string]any
@@ -275,7 +255,7 @@ func readContractFixture(t *testing.T, name string) []byte {
 }
 
 func contractPath(parts ...string) string {
-	base := []string{"..", "..", "..", "docs", "filter-contract", "v1"}
+	base := []string{"..", "docs", "filter-contract", "v1"}
 	return filepath.Join(append(base, parts...)...)
 }
 

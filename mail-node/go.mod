@@ -5,10 +5,13 @@ go 1.22.0
 require (
 	github.com/gin-gonic/gin v1.9.1
 	github.com/jhillyerd/enmime v1.3.0
+	github.com/ticket/email-filter-contract v0.0.0
 	golang.org/x/net v0.23.0
 	golang.org/x/text v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+replace github.com/ticket/email-filter-contract => ../filter-contract
 
 require (
 	github.com/bytedance/sonic v1.9.1 // indirect

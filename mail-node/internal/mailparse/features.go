@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jhillyerd/enmime"
-	"github.com/ticket/email-mail-node/internal/filtercontract"
+	"github.com/ticket/email-filter-contract"
 	"golang.org/x/net/html"
 )
 

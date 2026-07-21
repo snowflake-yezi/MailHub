@@ -3,7 +3,7 @@ package mailparse
 import (
 	"time"
 
-	"github.com/ticket/email-mail-node/internal/filtercontract"
+	"github.com/ticket/email-filter-contract"
 )
 
 const TextPreviewLimit = 300

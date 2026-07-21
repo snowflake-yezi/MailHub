@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ticket/email-mail-node/internal/filtercontract"
+	"github.com/ticket/email-filter-contract"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 

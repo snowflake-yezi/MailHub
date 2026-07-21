@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"gorm.io/driver/mysql"
@@ -70,6 +71,39 @@ func TestFilterPolicyStoreRejectsInvalidWritesBeforeSQL(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected SQL: %v", err)
+	}
+}
+
+func TestPublishFilterRevisionUpdatesActiveDesiredAndAudit(t *testing.T) {
+	st, mock, cleanup := newMockStore(t)
+	defer cleanup()
+	checksum := strings.Repeat("a", 64)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT \\* FROM `filter_active_states`").
+		WillReturnRows(sqlmock.NewRows([]string{"policy_kind", "active_revision", "checksum", "changed_at", "changed_by"}))
+	mock.ExpectExec("UPDATE `manual_filter_revisions`").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO `filter_active_states`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery("SELECT `id` FROM `mail_servers`").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(3).AddRow(7))
+	mock.ExpectExec("INSERT INTO `filter_node_states`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO `filter_node_states`").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mock.ExpectExec("INSERT INTO `filter_audits`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	err := st.db.Transaction(func(tx *gorm.DB) error {
+		return publishFilterRevisionTx(tx, "manual", 4, 12, checksum, "admin", "request-1")
+	})
+	if err != nil {
+		t.Fatalf("publishFilterRevisionTx() error = %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet SQL expectations: %v", err)
 	}
 }
 

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "policy_kind": "ad",
+  "revision": 1,
+  "checksum": "",
+  "tag_threshold": 50,
+  "quarantine_threshold": 100,
+  "detectors": [
+    {"logical_id":"seed-list-unsubscribe-v1","name":"Standard list unsubscribe header","symbol":"AD_LIST_UNSUBSCRIBE","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"list_unsubscribe","operator":"eq","value":true,"negated":false,"position":0}]},
+    {"logical_id":"seed-list-id-v1","name":"Standard list identifier","symbol":"AD_LIST_ID","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"list_id","operator":"exists","value":null,"negated":false,"position":0}]},
+    {"logical_id":"seed-precedence-bulk-v1","name":"Bulk precedence header","symbol":"AD_PRECEDENCE_BULK","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"precedence","operator":"eq","value":"bulk","negated":false,"position":0}]},
+    {"logical_id":"seed-promo-subject-v1","name":"Promotional subject terms","symbol":"AD_PROMO_SUBJECT","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"subject","operator":"regex","value":"(?i)(sale|discount|promotion|促销|优惠)","negated":false,"position":0}]},
+    {"logical_id":"seed-promo-text-v1","name":"Promotional body terms","symbol":"AD_PROMO_TEXT","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"text","operator":"regex","value":"(?i)(limited time|special offer|coupon|限时|优惠券)","negated":false,"position":0}]},
+    {"logical_id":"seed-url-dense-v1","name":"Dense URL content","symbol":"AD_URL_DENSE","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"url_count","operator":"gte","value":5,"negated":false,"position":0}]},
+    {"logical_id":"seed-tracking-pixel-v1","name":"Tracking pixel present","symbol":"AD_TRACKING_PIXEL","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"tracking_pixel_count","operator":"gte","value":1,"negated":false,"position":0}]},
+    {"logical_id":"seed-reply-mismatch-v1","name":"Reply-To domain mismatch","symbol":"AD_REPLY_DOMAIN_MISMATCH","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"from_reply_to_domain_match","operator":"eq","value":false,"negated":false,"position":0}]},
+    {"logical_id":"seed-transaction-subject-v1","name":"Transactional subject evidence","symbol":"AD_TRANSACTIONAL_SUBJECT","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"subject","operator":"regex","value":"(?i)(verification code|one-time password|invoice|验证码|账单)","negated":false,"position":0}]},
+    {"logical_id":"seed-transaction-text-v1","name":"Transactional body evidence","symbol":"AD_TRANSACTIONAL_TEXT","mode":"shadow","source":"local","source_reference":"ad-seed-v1","conditions":[{"field":"text","operator":"regex","value":"(?i)(verification code|one-time password|flight itinerary|验证码|行程单)","negated":false,"position":0}]}
+  ],
+  "composites": [
+    {"logical_id":"seed-bulk-promotion-v1","name":"Bulk promotion evidence","symbol":"AD_BULK_PROMOTION_COMPOSITE","mode":"shadow","score_policy":"suppress_direct_inputs","all_of":["AD_LIST_UNSUBSCRIBE"],"any_of":["AD_PROMO_SUBJECT","AD_PROMO_TEXT"],"none_of":["AD_TRANSACTIONAL_SUBJECT","AD_TRANSACTIONAL_TEXT"]}
+  ],
+  "weights": [
+    {"symbol":"AD_BULK_PROMOTION_COMPOSITE","score":6},
+    {"symbol":"AD_LIST_ID","score":1},
+    {"symbol":"AD_LIST_UNSUBSCRIBE","score":1},
+    {"symbol":"AD_PRECEDENCE_BULK","score":1},
+    {"symbol":"AD_PROMO_SUBJECT","score":2},
+    {"symbol":"AD_PROMO_TEXT","score":2},
+    {"symbol":"AD_REPLY_DOMAIN_MISMATCH","score":1},
+    {"symbol":"AD_TRACKING_PIXEL","score":1},
+    {"symbol":"AD_TRANSACTIONAL_SUBJECT","score":-4},
+    {"symbol":"AD_TRANSACTIONAL_TEXT","score":-4},
+    {"symbol":"AD_URL_DENSE","score":1}
+  ]
+}
