@@ -149,6 +149,29 @@ func TestDefaultConfigVerifiesSMTPTLSCertificates(t *testing.T) {
 	t.Fatal("forward.tls_insecure_skip seed missing")
 }
 
+func TestDefaultConfigsSeedFilterRuntimeSafetyDefaults(t *testing.T) {
+	configs := make(map[string]seedConfig)
+	for _, cfg := range defaultConfigs() {
+		configs[cfg.Key] = cfg
+	}
+	tests := map[string]struct {
+		value     string
+		valueType string
+	}{
+		"filter.engine_mode":             {value: "legacy", valueType: "string"},
+		"filter.auto_quarantine_enabled": {value: "false", valueType: "bool"},
+	}
+	for key, want := range tests {
+		cfg, ok := configs[key]
+		if !ok {
+			t.Fatalf("%s seed missing", key)
+		}
+		if cfg.Value != want.value || cfg.Default != want.value || cfg.Type != want.valueType || !cfg.Reloadable {
+			t.Fatalf("%s seed = %#v, want value/default %q, type %q, reloadable", key, cfg, want.value, want.valueType)
+		}
+	}
+}
+
 func TestBumpAllServerDesiredRevisions(t *testing.T) {
 	st, mock, cleanup := newMockStore(t)
 	defer cleanup()

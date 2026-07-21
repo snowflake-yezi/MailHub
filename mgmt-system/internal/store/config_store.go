@@ -218,6 +218,8 @@ func defaultConfigs() []seedConfig {
 		{Key: "filter.default_action", Value: "pass", Type: "string", Category: "filter", Label: "默认过滤动作", Desc: "pass=放行转发 / flag=标记后转发 / block=停止转发并保留原件", Default: "pass", Reloadable: true},
 		{Key: "filter.flag_subject_prefix", Value: "[疑似]", Type: "string", Category: "filter", Label: "标记邮件标题前缀", Desc: "filter action=flag 时添加的标题前缀", Default: "[疑似]", Reloadable: true},
 		{Key: "filter.sync_interval", Value: "30", Type: "int", Category: "filter", Label: "规则同步间隔（秒）", Desc: "节点启动时立即同步，配置重载后在线更新周期；允许 1-86400 秒", Default: "30", Reloadable: true},
+		{Key: "filter.engine_mode", Value: "legacy", Type: "string", Category: "filter", Label: "过滤引擎模式", Desc: "legacy=旧引擎 / dual_shadow=双引擎影子判定 / dual_filter=新引擎接管动作", Default: "legacy", Reloadable: true},
+		{Key: "filter.auto_quarantine_enabled", Value: "false", Type: "bool", Category: "filter", Label: "自动隔离", Desc: "是否允许广告策略自动隔离邮件；P2 默认关闭", Default: "false", Reloadable: true},
 
 		// ── lifecycle（生命周期管理）── 双端 ──
 		{Key: "lifecycle.trash_retention_hours", Value: "24", Type: "int", Category: "lifecycle", Label: "回收站保留时间（小时）", Desc: "超过此时间的 .trash 目录将被物理清除", Default: "24", Reloadable: true},
