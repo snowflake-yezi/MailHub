@@ -9,7 +9,32 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 )
+
+func TestRegisterExternalMailboxRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registry := apiregistry.New("/api/v1")
+	(&MailboxHandler{}).RegisterExternalRoutes(registry, router.Group("/api/v1"))
+
+	want := map[string]bool{
+		http.MethodPost + " /api/v1/mailboxes":                      false,
+		http.MethodGet + " /api/v1/mailboxes/:mailbox_ref":          false,
+		http.MethodPost + " /api/v1/mailboxes/:mailbox_ref/disable": false,
+	}
+	for _, route := range router.Routes() {
+		key := route.Method + " " + route.Path
+		if _, ok := want[key]; ok {
+			want[key] = true
+		}
+	}
+	for route, registered := range want {
+		if !registered {
+			t.Errorf("external mailbox route %s was not registered", route)
+		}
+	}
+}
 
 func TestMailboxListFilterFromQuerySeparatesTrashView(t *testing.T) {
 	gin.SetMode(gin.TestMode)

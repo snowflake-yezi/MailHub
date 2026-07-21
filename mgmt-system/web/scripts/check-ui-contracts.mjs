@@ -28,6 +28,11 @@ assert.match(api, /revokeCredential\(id, credentialId\).*\/revoke.*method: 'POST
 assert.match(api, /deleteCredential\(id, credentialId\).*method: 'DELETE'/, 'credential delete API mapping is missing')
 assert.match(externalAccess, /externalAccessAPI\.revokeCredential/, 'credential revoke action is missing')
 assert.match(externalAccess, /externalAccessAPI\.deleteCredential/, 'credential delete action is missing')
+assert.match(externalAccess, /function CallableResources/, 'external endpoint inventory is missing')
+assert.match(externalAccess, /permission\.resources/, 'permission editor does not expose its concrete endpoints')
+for (const route of ['orders/:order_id/emails', 'mailboxes/:mailbox_ref/messages', 'emails/:message_id/body', 'emails/:message_id/attachments/:index']) {
+  assert.match(externalAccess, new RegExp(route.replaceAll('/', '\\/')), `external endpoint inventory is missing ${route}`)
+}
 assert.doesNotMatch(externalAccess, /group === '过滤规则' \? 'filter'/, 'retired legacy filter permissions are still grouped in external access')
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
 assert.match(emails, /emails\.list\.jumpAria/, 'email direct page navigation is missing')

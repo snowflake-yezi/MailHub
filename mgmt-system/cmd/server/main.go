@@ -176,21 +176,7 @@ func main() {
 	api.Use(middleware.AuthRequired(db))
 	externalRegistry := apiregistry.New("/api/v1")
 
-	// Mailbox generation & query
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodPost, Path: "/mailboxes", PermissionCode: "mailbox:create",
-		GroupName: "邮箱账号", Name: "创建或复用邮箱", SortOrder: 10, Handler: mailboxH.CreateMailbox,
-	})
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref", PermissionCode: "mailbox:read",
-		GroupName: "邮箱账号", Name: "查询邮箱", SortOrder: 20, Handler: mailboxH.GetMailbox,
-	})
-	externalRegistry.Register(api, apiregistry.Route{
-		Method: http.MethodPost, Path: "/mailboxes/:mailbox_ref/disable", PermissionCode: "mailbox:disable",
-		GroupName: "邮箱账号", Name: "禁用邮箱", SortOrder: 30, Handler: mailboxH.DisableMailbox,
-	})
-
-	// Email query
+	mailboxH.RegisterExternalRoutes(externalRegistry, api)
 	emailH.RegisterExternalRoutes(externalRegistry, api)
 
 	if err := externalRegistry.Sync(db); err != nil {

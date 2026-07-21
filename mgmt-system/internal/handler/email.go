@@ -145,12 +145,12 @@ func mailboxParam(c *gin.Context) string {
 func (h *EmailHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
 	registry.Register(r, apiregistry.Route{
 		Method: http.MethodGet, Path: "/orders/:order_id/emails", PermissionCode: "email:list",
-		GroupName: "邮件读取", Name: "查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
+		GroupName: "邮件读取", Name: "查询邮件列表", ResourceName: "按订单查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
 		Handler: h.GetOrderEmails,
 	})
 	registry.Register(r, apiregistry.Route{
 		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref/messages", PermissionCode: "email:list",
-		GroupName: "邮件读取", Name: "查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
+		GroupName: "邮件读取", Name: "查询邮件列表", ResourceName: "按邮箱查询邮件列表", Description: "按订单号或邮箱查询邮件列表", SortOrder: 110,
 		Handler: h.GetMailboxMessages,
 	})
 	registry.Register(r, apiregistry.Route{

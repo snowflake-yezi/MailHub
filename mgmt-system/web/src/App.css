@@ -2165,6 +2165,115 @@ textarea {
   font-size: 11px;
 }
 
+.permission-option-copy {
+  min-width: 0;
+}
+
+.permission-resource-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.permission-resource {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.permission-option .permission-resource code {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-heading-muted);
+  line-height: 1.35;
+}
+
+.callable-resources-table {
+  min-width: 760px;
+}
+
+.callable-resources-table td:first-child {
+  width: 26%;
+}
+
+.callable-resources-table td:nth-child(2) {
+  width: 48%;
+}
+
+.api-route {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.api-route code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-heading-muted);
+  font-size: 12px;
+}
+
+.api-method {
+  display: inline-flex;
+  width: 48px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  color: var(--color-heading-muted);
+  background: var(--color-soft-fill);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.api-method[data-method='GET'] {
+  border-color: color-mix(in srgb, var(--color-success) 36%, var(--color-border));
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, var(--color-surface));
+}
+
+.api-method[data-method='POST'] {
+  border-color: color-mix(in srgb, var(--color-brand) 36%, var(--color-border));
+  color: var(--color-brand-strong);
+  background: color-mix(in srgb, var(--color-brand) 8%, var(--color-surface));
+}
+
+.api-method[data-method='PUT'],
+.api-method[data-method='PATCH'] {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+}
+
+.api-method[data-method='DELETE'] {
+  border-color: color-mix(in srgb, var(--color-danger) 36%, var(--color-border));
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+}
+
+.resource-permission {
+  display: grid;
+  gap: 3px;
+}
+
+.resource-permission strong {
+  font-size: 12px;
+}
+
+.resource-permission code {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
 .credential-issue-fields {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

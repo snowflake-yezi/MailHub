@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
@@ -678,11 +679,20 @@ func (h *MailboxHandler) callNodeUpdatePassword(apiHost, email, newPassword stri
 	return nil
 }
 
-// RegisterRoutes registers external API routes on the given group.
-func (h *MailboxHandler) RegisterRoutes(r *gin.RouterGroup) {
-	r.POST("/mailboxes", h.CreateMailbox)
-	r.GET("/mailboxes/:order_id", h.GetMailbox)
-	r.POST("/mailboxes/:order_id/disable", h.DisableMailbox)
+// RegisterExternalRoutes keeps public routes, authorization and UI metadata together.
+func (h *MailboxHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodPost, Path: "/mailboxes", PermissionCode: "mailbox:create",
+		GroupName: "邮箱账号", Name: "创建或复用邮箱", SortOrder: 10, Handler: h.CreateMailbox,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/mailboxes/:mailbox_ref", PermissionCode: "mailbox:read",
+		GroupName: "邮箱账号", Name: "查询邮箱", SortOrder: 20, Handler: h.GetMailbox,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodPost, Path: "/mailboxes/:mailbox_ref/disable", PermissionCode: "mailbox:disable",
+		GroupName: "邮箱账号", Name: "禁用邮箱", SortOrder: 30, Handler: h.DisableMailbox,
+	})
 }
 
 // SyncDeleting 返回指定服务器上所有 deleting 状态的邮箱列表。

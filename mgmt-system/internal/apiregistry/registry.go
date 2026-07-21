@@ -16,6 +16,7 @@ type Route struct {
 	PermissionCode string
 	GroupName      string
 	Name           string
+	ResourceName   string
 	Description    string
 	SortOrder      int
 	Handler        gin.HandlerFunc
@@ -44,9 +45,13 @@ func (r *Registry) Register(group *gin.RouterGroup, route Route) {
 		Code: route.PermissionCode, GroupName: route.GroupName, Name: route.Name,
 		Description: route.Description, SortOrder: route.SortOrder, Active: true,
 	}
+	resourceName := route.ResourceName
+	if resourceName == "" {
+		resourceName = route.Name
+	}
 	r.resources = append(r.resources, model.APIResource{
 		Method: route.Method, Path: r.basePath + route.Path, PermissionCode: route.PermissionCode,
-		Name: route.Name, Status: "active",
+		Name: resourceName, Status: "active",
 	})
 }
 

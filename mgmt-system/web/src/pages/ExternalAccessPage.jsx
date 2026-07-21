@@ -27,6 +27,25 @@ const EMPTY_FORM = {
   expires_at: '',
 }
 
+const RESOURCE_TRANSLATION_KEYS = {
+  'POST /api/v1/mailboxes': 'createMailbox',
+  'GET /api/v1/mailboxes/:mailbox_ref': 'readMailbox',
+  'POST /api/v1/mailboxes/:mailbox_ref/disable': 'disableMailbox',
+  'GET /api/v1/orders/:order_id/emails': 'listEmailsByOrder',
+  'GET /api/v1/mailboxes/:mailbox_ref/messages': 'listEmailsByMailbox',
+  'GET /api/v1/emails/:message_id/body': 'readEmailBody',
+  'GET /api/v1/emails/:message_id/attachments/:index': 'downloadAttachment',
+}
+
+function permissionName(t, permission) {
+  return t(`externalAccess.permissions.${permission.code.replace(':', '_')}`, { defaultValue: permission.name })
+}
+
+function resourceName(t, resource) {
+  const key = RESOURCE_TRANSLATION_KEYS[`${resource.method} ${resource.path}`]
+  return key ? t(`externalAccess.resources.names.${key}`, { defaultValue: resource.name }) : resource.name
+}
+
 function toRFC3339(value) {
   return value ? new Date(value).toISOString() : ''
 }
@@ -106,12 +125,56 @@ function PermissionSelector({ permissions, selected, onChange }) {
             <label className={`permission-option ${selected.includes(permission.code) ? 'selected' : ''}`} key={permission.code}>
               <input type="checkbox" checked={selected.includes(permission.code)} onChange={() => toggle(permission.code)} />
               <span className="permission-check"><Check size={14} /></span>
-              <span><strong>{t(`externalAccess.permissions.${permission.code.replace(':', '_')}`, { defaultValue: permission.name })}</strong><code>{permission.code}</code></span>
+              <span className="permission-option-copy">
+                <strong>{permissionName(t, permission)}</strong>
+                <code className="permission-code">{permission.code}</code>
+                <span className="permission-resource-list">
+                  {(permission.resources || []).map(resource => (
+                    <span className="permission-resource" key={`${resource.method}-${resource.path}`}>
+                      <span className="api-method" data-method={resource.method}>{resource.method}</span>
+                      <code>{resource.path}</code>
+                    </span>
+                  ))}
+                </span>
+              </span>
             </label>
           ))}
         </section>
       ))}
     </div>
+  )
+}
+
+function CallableResources({ permissions }) {
+  const { t } = useTranslation('pages')
+  const resources = useMemo(() => permissions.flatMap(permission =>
+    (permission.resources || []).map(resource => ({ ...resource, permission })),
+  ), [permissions])
+
+  return (
+    <section className="section data-section callable-resources-section">
+      <div className="panel-header">
+        <div>
+          <h3>{t('externalAccess.resources.title')}</h3>
+          <div className="panel-caption">{t('externalAccess.resources.caption', { count: resources.length })}</div>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table className="data-table callable-resources-table">
+          <thead><tr><th>{t('externalAccess.resources.endpoint')}</th><th>{t('externalAccess.resources.request')}</th><th>{t('externalAccess.resources.permission')}</th></tr></thead>
+          <tbody>
+            {resources.map(resource => (
+              <tr key={`${resource.method}-${resource.path}`}>
+                <td><strong>{resourceName(t, resource)}</strong></td>
+                <td><div className="api-route"><span className="api-method" data-method={resource.method}>{resource.method}</span><code>{resource.path}</code></div></td>
+                <td><div className="resource-permission"><strong>{permissionName(t, resource.permission)}</strong><code>{resource.permission_code}</code></div></td>
+              </tr>
+            ))}
+            {resources.length === 0 && <tr><td colSpan={3}><div className="compact-empty">{t('externalAccess.resources.empty')}</div></td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -374,6 +437,8 @@ export default function ExternalAccessPage() {
         <div className="summary-tile" data-tone="info"><span className="summary-icon"><KeyRound size={18} /></span><div><div className="summary-value">{summary.credentials}</div><div className="summary-label">{t('externalAccess.summary.credentials')}</div></div></div>
         <div className="summary-tile" data-tone="warning"><span className="summary-icon"><Clock3 size={18} /></span><div><div className="summary-value">{summary.used}</div><div className="summary-label">{t('externalAccess.summary.used')}</div></div></div>
       </div>
+
+      <CallableResources permissions={permissions} />
 
       <section className="section data-section">
         <div className="panel-header"><div><h3>{t('externalAccess.list.title')}</h3><div className="panel-caption">{t('externalAccess.list.caption')}</div></div></div>
