@@ -22,6 +22,37 @@ func TestRejectsQuarantineInsideMaildir(t *testing.T) {
 	}
 }
 
+func TestConfiguredSymlinkParentUsesPhysicalPaths(t *testing.T) {
+	root := t.TempDir()
+	physicalParent := filepath.Join(root, "spool", "mail")
+	physicalMaildir := filepath.Join(physicalParent, "vhosts")
+	sourceDir := filepath.Join(physicalMaildir, "example.com", "user", "new")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configuredParent := filepath.Join(root, "var-mail")
+	if err := os.Symlink(physicalParent, configuredParent); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+	store, err := New(filepath.Join(configuredParent, "mailhub-quarantine"), filepath.Join(configuredParent, "vhosts"))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if store.root != filepath.Join(physicalParent, "mailhub-quarantine") || store.maildirBase != physicalMaildir {
+		t.Fatalf("physical roots = %q, %q", store.root, store.maildirBase)
+	}
+	source := filepath.Join(configuredParent, "vhosts", "example.com", "user", "new", "message")
+	if err := os.WriteFile(source, []byte("message"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Quarantine(source, "user@example.com", "message-id", "decision-symlink-parent", time.Now()); err != nil {
+		t.Fatalf("Quarantine() error = %v", err)
+	}
+	if _, err := New(filepath.Join(configuredParent, "vhosts", "quarantine"), filepath.Join(configuredParent, "vhosts")); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("New() inside physical Maildir error = %v, want ErrInvalidPath", err)
+	}
+}
+
 func TestQuarantineRejectsSymlinkSource(t *testing.T) {
 	root := t.TempDir()
 	maildir := filepath.Join(root, "maildir")

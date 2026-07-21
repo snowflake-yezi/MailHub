@@ -79,24 +79,16 @@ func validateRoots(root, maildirBase string) (string, string, error) {
 	if root == "" || maildirBase == "" {
 		return "", "", fmt.Errorf("%w: quarantine_base and maildir_base are required", ErrInvalidPath)
 	}
-	rootAbs, err := filepath.Abs(root)
+	rootAbs, err := resolvePhysicalPath(root)
 	if err != nil {
 		return "", "", fmt.Errorf("%w: resolve quarantine_base: %v", ErrInvalidPath, err)
 	}
-	maildirAbs, err := filepath.Abs(maildirBase)
+	maildirAbs, err := resolvePhysicalPath(maildirBase)
 	if err != nil {
 		return "", "", fmt.Errorf("%w: resolve maildir_base: %v", ErrInvalidPath, err)
 	}
-	rootAbs = filepath.Clean(rootAbs)
-	maildirAbs = filepath.Clean(maildirAbs)
 	if pathWithin(rootAbs, maildirAbs) || pathWithin(maildirAbs, rootAbs) {
 		return "", "", fmt.Errorf("%w: quarantine_base must be outside maildir_base", ErrInvalidPath)
-	}
-	if err := rejectSymlinkComponents(rootAbs); err != nil {
-		return "", "", err
-	}
-	if err := rejectSymlinkComponents(maildirAbs); err != nil {
-		return "", "", err
 	}
 	return rootAbs, maildirAbs, nil
 }
@@ -106,22 +98,60 @@ func pathWithin(candidate, parent string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func rejectSymlinkComponents(path string) error {
-	current := filepath.Clean(path)
-	for {
-		info, err := os.Lstat(current)
-		if err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%w: symlink component %s", ErrInvalidPath, current)
-		}
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("%w: inspect %s: %v", ErrInvalidPath, current, err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return nil
-		}
-		current = parent
+func resolvePhysicalPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
 	}
+	abs = filepath.Clean(abs)
+	if runtime.GOOS == "windows" {
+		return abs, nil
+	}
+	volume := filepath.VolumeName(abs)
+	current := volume + string(filepath.Separator)
+	remainder := strings.TrimPrefix(abs, current)
+	parts := strings.Split(remainder, string(filepath.Separator))
+	for index, part := range parts {
+		if part == "" {
+			continue
+		}
+		entries, readErr := os.ReadDir(current)
+		if readErr != nil {
+			return "", readErr
+		}
+		var matched os.DirEntry
+		for _, entry := range entries {
+			if entry.Name() == part || (runtime.GOOS == "windows" && strings.EqualFold(entry.Name(), part)) {
+				matched = entry
+				break
+			}
+		}
+		if matched == nil {
+			for _, missing := range parts[index:] {
+				if missing != "" {
+					current = filepath.Join(current, missing)
+				}
+			}
+			return filepath.Clean(current), nil
+		}
+		candidate := filepath.Join(current, matched.Name())
+		info, infoErr := matched.Info()
+		if infoErr != nil {
+			return "", infoErr
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			current = candidate
+			continue
+		}
+		if index == len(parts)-1 {
+			return "", fmt.Errorf("final path component must not be a symlink")
+		}
+		current, err = filepath.EvalSymlinks(candidate)
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.Clean(current), nil
 }
 
 func KeyForDecision(decisionKey string) string {
@@ -143,17 +173,23 @@ func (s *Store) Quarantine(sourcePath, mailboxAddress, messageID, decisionKey st
 		return nil, fmt.Errorf("invalid mailbox: %w", err)
 	}
 	sourceAbs, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolve source", ErrInvalidPath)
+	}
+	info, err := os.Lstat(sourceAbs)
+	if err != nil {
+		return nil, fmt.Errorf("stat quarantine source: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: source must be a regular file", ErrInvalidPath)
+	}
+	if runtime.GOOS != "windows" {
+		sourceAbs, err = filepath.EvalSymlinks(sourceAbs)
+	}
 	if err != nil || !pathWithin(sourceAbs, s.maildirBase) {
 		return nil, fmt.Errorf("%w: source must be inside maildir_base", ErrInvalidPath)
 	}
 	sourceAbs = filepath.Clean(sourceAbs)
-	if err := rejectSymlinkComponents(sourceAbs); err != nil {
-		return nil, err
-	}
-	info, err := os.Lstat(sourceAbs)
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("stat quarantine source: %w", err)
-	}
 	key := KeyForDecision(decisionKey)
 	lock := s.lockFor(key)
 	lock.Lock()
