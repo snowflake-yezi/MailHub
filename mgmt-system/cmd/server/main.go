@@ -92,6 +92,7 @@ func main() {
 	filterH := handler.NewFilterHandler(db, cfg.Auth.SharedSecret)
 	filterPolicyService := service.NewFilterPolicyService(db)
 	filterPolicyH := handler.NewFilterPolicyHandler(filterPolicyService)
+	filterPolicyH.ConfigureQuarantineProxy(cfg.Auth.SharedSecret)
 	adminH := handler.NewAdminHandler(db)
 	healthH := handler.NewHealthHandler(db)
 	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)

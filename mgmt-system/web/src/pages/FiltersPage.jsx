@@ -8,7 +8,7 @@ import { filterPolicyAPI } from '../api'
 import { formatDateTime } from '../i18n'
 import LegacyFiltersPage from './LegacyFiltersPage'
 
-const TABS = ['overview', 'manual', 'ad', 'decisions', 'legacy']
+const TABS = ['overview', 'manual', 'ad', 'decisions', 'quarantines', 'legacy']
 const ACTIONS = ['allow', 'tag', 'quarantine']
 const MODES = ['shadow', 'enforce', 'disabled']
 const COMMON_FIELDS = [
@@ -261,6 +261,49 @@ function DecisionsPanel({ page, action, selected, onAction, onSelect }) {
   </>
 }
 
+const QUARANTINE_STATUSES = ['quarantined', 'releasing', 'release_failed', 'released', 'confirmed_ad', 'expired']
+
+function QuarantinesPanel({ page, status, selected, message, busy, onStatus, onSelect, onAction }) {
+  const { t } = useTranslation('pages')
+  const [allowScope, setAllowScope] = useState('email')
+  const items = page.items || []
+  const parsed = message?.message
+  return <>
+    <div className="filter-decision-toolbar">
+      <select value={status} onChange={event => onStatus(event.target.value)}>
+        <option value="">{t('filterPolicy.allQuarantineStatuses')}</option>
+        {QUARANTINE_STATUSES.map(value => <option value={value} key={value}>{t(`filterPolicy.quarantineStatus.${value}`)}</option>)}
+      </select>
+      <span>{t('filterPolicy.totalQuarantines', { count: page.total || 0 })}</span>
+    </div>
+    <section className="section data-section"><div className="table-wrap"><table className="data-table filter-decisions-table"><thead><tr>
+      <th>{t('filterPolicy.evaluated')}</th><th>{t('filterPolicy.mailbox')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.quarantineState')}</th><th>{t('filterPolicy.expires')}</th>
+    </tr></thead><tbody>
+      {items.map(item => <tr key={item.quarantine_key} className="clickable-row" onClick={() => onSelect(item.quarantine_key)}><td>{formatDateTime(item.evaluated_at)}</td><td>{item.mailbox}</td><td>{item.ad_score_milli / 1000}</td><td><StatusTag value={item.status} /></td><td>{formatDateTime(item.expires_at)}</td></tr>)}
+      {items.length === 0 && <tr><td colSpan="5"><div className="empty-state"><ShieldCheck size={26} /><strong>{t('filterPolicy.noQuarantines')}</strong></div></td></tr>}
+    </tbody></table></div></section>
+    {selected && <div className="drawer-overlay" onClick={() => onSelect(null)}><aside className="drawer drawer-wide quarantine-review-drawer" onClick={event => event.stopPropagation()}>
+      <div className="drawer-header"><div><div className="drawer-kicker">quarantine</div><h2>{parsed?.subject || selected.quarantine_key}</h2></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => onSelect(null)}><X size={18} /></button></div>
+      <div className="drawer-body decision-detail quarantine-review-detail">
+        <div className="revision-facts"><StatusTag value={selected.status} /><span>{selected.mailbox}</span><strong>{selected.ad_score_milli / 1000}</strong></div>
+        {parsed ? <>
+          <dl className="quarantine-message-facts"><div><dt>{t('filterPolicy.sender')}</dt><dd>{parsed.from || '-'}</dd></div><div><dt>{t('filterPolicy.messageId')}</dt><dd>{parsed.message_id || selected.message_id || '-'}</dd></div></dl>
+          <h3>{t('filterPolicy.messageBody')}</h3><pre>{parsed.text || parsed.body || t('filterPolicy.noMessageBody')}</pre>
+          <h3>{t('filterPolicy.attachments')}</h3>
+          <div className="quarantine-attachments">{(parsed.attachments || []).map(attachment => <a className="btn btn-outline" key={attachment.index} href={filterPolicyAPI.quarantineAttachmentURL(selected.quarantine_key, attachment.index)}><FileClock size={15} />{attachment.filename || `#${attachment.index}`}</a>)}{!(parsed.attachments || []).length && <span>{t('filterPolicy.noAttachments')}</span>}</div>
+        </> : message === false ? <div className="empty-state"><FileClock size={24} /><strong>{t('filterPolicy.quarantineOriginalUnavailable')}</strong></div> : <div className="loading-panel"><span className="spinner" />{t('filterPolicy.loadingQuarantine')}</div>}
+        {selected.last_error && <div className="inline-alert error"><AlertTriangle size={16} /><span>{selected.last_error}</span></div>}
+      </div>
+      <div className="drawer-footer">
+        <button className="btn btn-outline" type="button" disabled={busy || selected.status !== 'quarantined'} onClick={() => onAction('confirm', selected)}><CheckCircle2 size={16} />{t('filterPolicy.confirmAd')}</button>
+        <select className="quarantine-allow-scope" aria-label={t('filterPolicy.allowScope')} value={allowScope} onChange={event => setAllowScope(event.target.value)}><option value="email">{t('filterPolicy.allowEmail')}</option><option value="domain">{t('filterPolicy.allowDomain')}</option></select>
+        <button className="btn btn-outline" type="button" disabled={busy || !['quarantined', 'release_failed'].includes(selected.status)} onClick={() => onAction('allow-release', selected, allowScope)}><Plus size={16} />{t('filterPolicy.allowAndRelease')}</button>
+        <button className="btn btn-primary" type="button" disabled={busy || !['quarantined', 'release_failed'].includes(selected.status)} onClick={() => onAction('release', selected)}><Send size={16} />{t('filterPolicy.falsePositiveRelease')}</button>
+      </div>
+    </aside></div>}
+  </>
+}
+
 export default function FiltersPage() {
   const { t } = useTranslation('pages')
   const [tab, setTab] = useState('overview')
@@ -281,6 +324,10 @@ export default function FiltersPage() {
   const [decisions, setDecisions] = useState({ items: [], total: 0 })
   const [decisionAction, setDecisionAction] = useState('')
   const [selectedDecision, setSelectedDecision] = useState(null)
+  const [quarantines, setQuarantines] = useState({ items: [], total: 0 })
+  const [quarantineStatus, setQuarantineStatus] = useState('')
+  const [selectedQuarantine, setSelectedQuarantine] = useState(null)
+  const [quarantineMessage, setQuarantineMessage] = useState(null)
   const [editor, setEditor] = useState(null)
   const [weightDraft, setWeightDraft] = useState({ symbol: '', score: '0' })
 
@@ -288,13 +335,15 @@ export default function FiltersPage() {
   const loadBase = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const [nextStatus, nextManual, nextAd, nextDecisions] = await Promise.all([
+      const [nextStatus, nextManual, nextAd, nextDecisions, nextQuarantines] = await Promise.all([
         filterPolicyAPI.status(), filterPolicyAPI.manualRevisions(), filterPolicyAPI.adRevisions(), filterPolicyAPI.decisions({ page: 1, size: 50, action: decisionAction }),
+        filterPolicyAPI.quarantines({ page: 1, size: 50, status: quarantineStatus }),
       ])
       setStatus(nextStatus || { active_states: [], node_states: [] })
       setManualRevisions(nextManual || [])
       setAdRevisions(nextAd || [])
       setDecisions(nextDecisions || { items: [], total: 0 })
+      setQuarantines(nextQuarantines || { items: [], total: 0 })
       setManualID(current => current || latest(nextManual || []))
       setAdID(current => current || latest(nextAd || []))
     } catch (error) {
@@ -302,7 +351,7 @@ export default function FiltersPage() {
     } finally {
       setLoading(false)
     }
-  }, [decisionAction])
+  }, [decisionAction, quarantineStatus])
 
   useEffect(() => { loadBase() }, [loadBase])
   useEffect(() => { setManualValidation(null); if (manualID) filterPolicyAPI.manualRevision(manualID).then(setManual).catch(error => setToast({ type: 'error', message: error.message })); else setManual(null) }, [manualID])
@@ -424,6 +473,37 @@ export default function FiltersPage() {
     try { setSelectedDecision(await filterPolicyAPI.decision(key)) } catch (error) { setToast({ type: 'error', message: error.message }) }
   }
 
+  const selectQuarantine = async key => {
+    if (!key) { setSelectedQuarantine(null); setQuarantineMessage(null); return }
+    setQuarantineMessage(null)
+    try {
+      const record = await filterPolicyAPI.quarantine(key)
+      setSelectedQuarantine(record)
+      if (['released', 'expired'].includes(record.status)) {
+        setQuarantineMessage(false)
+      } else {
+        try { setQuarantineMessage(await filterPolicyAPI.quarantineMessage(key)) }
+        catch (error) { setQuarantineMessage(false); setToast({ type: 'error', message: error.message }) }
+      }
+    } catch (error) { setToast({ type: 'error', message: error.message }) }
+  }
+
+  const quarantineAction = async (action, value, allowScope = 'email') => {
+    if (action === 'confirm' && window.confirm(t('filterPolicy.confirmAdPrompt'))) {
+      const updated = await run(() => filterPolicyAPI.confirmQuarantineAd(value.quarantine_key), t('filterPolicy.feedbackSaved'))
+      if (updated) setSelectedQuarantine(updated)
+    }
+    if (action === 'release' && window.confirm(t('filterPolicy.releasePrompt'))) {
+      const updated = await run(() => filterPolicyAPI.releaseQuarantine(value.quarantine_key, 'false_positive'), t('filterPolicy.released'))
+      if (updated) setSelectedQuarantine(updated)
+    }
+    if (action === 'allow-release' && window.confirm(t('filterPolicy.allowReleasePrompt'))) {
+      const result = await run(() => filterPolicyAPI.allowAndReleaseQuarantine(value.quarantine_key, allowScope), t('filterPolicy.allowDraftCreated'))
+      if (result?.release) setSelectedQuarantine(result.release)
+      if (result?.release_error) setToast({ type: 'error', message: `${t('filterPolicy.allowDraftCreated')}: ${result.release_error}` })
+    }
+  }
+
   const activeCount = useMemo(() => (status.active_states || []).length, [status])
   if (loading) return <div className="dashboard-panel loading-panel"><span className="spinner" />{t('filterPolicy.loading')}</div>
   return <div>
@@ -433,6 +513,7 @@ export default function FiltersPage() {
     {tab === 'manual' && <ManualPanel revisions={manualRevisions} selected={manualID} detail={manual} base={manualBase} validation={manualValidation} busy={busy} onSelect={setManualID} onAction={manualAction} onEdit={openEditor} />}
     {tab === 'ad' && <AdPanel revisions={adRevisions} selected={adID} detail={ad} base={adBase} validation={adValidation} busy={busy} weightDraft={weightDraft} onWeightDraft={setWeightDraft} onSelect={setAdID} onAction={adAction} onEdit={openEditor} />}
     {tab === 'decisions' && <DecisionsPanel page={decisions} action={decisionAction} selected={selectedDecision} onAction={setDecisionAction} onSelect={selectDecision} />}
+    {tab === 'quarantines' && <QuarantinesPanel page={quarantines} status={quarantineStatus} selected={selectedQuarantine} message={quarantineMessage} busy={busy} onStatus={setQuarantineStatus} onSelect={selectQuarantine} onAction={quarantineAction} />}
     {tab === 'legacy' && <div className="legacy-filter-panel"><LegacyFiltersPage /></div>}
     {editor && <PolicyDrawer editor={editor} saving={busy} onChange={setEditor} onSave={saveEditor} onClose={() => setEditor(null)} />}
     {toast && <Toast toast={toast} onClose={() => setToast(null)} />}

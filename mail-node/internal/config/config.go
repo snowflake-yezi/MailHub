@@ -56,6 +56,7 @@ type FilterConfig struct {
 	DefaultAction     string `yaml:"default_action"`
 	FlagSubjectPrefix string `yaml:"flag_subject_prefix"`
 	OutboxPath        string `yaml:"outbox_path"`
+	QuarantineBase    string `yaml:"quarantine_base"`
 }
 
 type NodeConfig struct {
@@ -84,8 +85,11 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Server:     ServerConfig{Port: 8081, Mode: "release"},
 		Management: ManagementConfig{FilterSyncInterval: defaultFilterSyncIntervalSeconds},
-		Filter:     FilterConfig{DefaultAction: "pass", FlagSubjectPrefix: "[疑似]", OutboxPath: "/var/lib/mail-node/filter-outbox"},
-		DKIM:       DKIMConfig{Selector: "mail"},
+		Filter: FilterConfig{
+			DefaultAction: "pass", FlagSubjectPrefix: "[疑似]",
+			OutboxPath: "/var/lib/mail-node/filter-outbox", QuarantineBase: "/var/mail/mailhub-quarantine",
+		},
+		DKIM: DKIMConfig{Selector: "mail"},
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
@@ -107,6 +111,9 @@ func Load(path string) (*Config, error) {
 	}
 	if strings.TrimSpace(cfg.Filter.OutboxPath) == "" {
 		cfg.Filter.OutboxPath = "/var/lib/mail-node/filter-outbox"
+	}
+	if strings.TrimSpace(cfg.Filter.QuarantineBase) == "" {
+		cfg.Filter.QuarantineBase = "/var/mail/mailhub-quarantine"
 	}
 
 	return cfg, nil

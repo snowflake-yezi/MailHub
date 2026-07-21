@@ -32,11 +32,11 @@ assert.doesNotMatch(externalAccess, /group === '过滤规则' \? 'filter'/, 'ret
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
 assert.match(emails, /emails\.list\.jumpAria/, 'email direct page navigation is missing')
 
-assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', 'legacy'\]/, 'policy page must expose all five tabs')
+assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', 'quarantines', 'legacy'\]/, 'policy page must expose all six tabs')
 assert.match(filters, /<LegacyFiltersPage \/>/, 'legacy filter panel is missing')
 assert.match(filters, /function RevisionInsights/, 'revision diff and validation panel is missing')
 assert.match(filters, /filterPolicy\.adActionPreview/, 'pre-publish action surface preview is missing')
-for (const method of ['manualRevisions', 'createManual', 'validateManual', 'publishManual', 'adRevisions', 'createAd', 'validateAd', 'publishAd', 'decisions', 'decision']) {
+for (const method of ['manualRevisions', 'createManual', 'validateManual', 'publishManual', 'adRevisions', 'createAd', 'validateAd', 'publishAd', 'decisions', 'decision', 'quarantines', 'quarantineMessage', 'releaseQuarantine', 'allowAndReleaseQuarantine', 'confirmQuarantineAd']) {
   assert.match(api, new RegExp(`\\b${method}\\(`), `filter policy API is missing ${method}`)
 }
 

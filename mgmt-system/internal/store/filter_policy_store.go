@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"gorm.io/gorm"
@@ -18,6 +19,18 @@ type FilterDecisionRecord struct {
 	Mailbox string `gorm:"column:mailbox" json:"mailbox"`
 }
 
+type FilterQuarantineRecord struct {
+	model.FilterQuarantine
+	DecisionKey   string    `gorm:"column:decision_key" json:"decision_key"`
+	MessageKey    string    `gorm:"column:message_key" json:"message_key"`
+	MessageID     string    `gorm:"column:message_id" json:"message_id"`
+	Mailbox       string    `gorm:"column:mailbox" json:"mailbox"`
+	NodeID        uint64    `gorm:"column:node_id" json:"node_id"`
+	AdScoreMilli  int64     `gorm:"column:ad_score_milli" json:"ad_score_milli"`
+	EvaluatedAt   time.Time `gorm:"column:evaluated_at" json:"evaluated_at"`
+	ServerAPIHost string    `gorm:"column:server_api_host" json:"-"`
+}
+
 const maxFilterJSONPayloadBytes = 4 << 20
 
 var (
@@ -26,6 +39,8 @@ var (
 	ErrFilterDecisionConflict      = errors.New("filter decision key already contains different data")
 	ErrInvalidFilterNodeState      = errors.New("invalid filter node state")
 	ErrInvalidFilterAudit          = errors.New("invalid filter audit")
+	ErrInvalidFilterQuarantine     = errors.New("invalid filter quarantine")
+	ErrFilterQuarantineConflict    = errors.New("filter quarantine state conflict")
 )
 
 func (s *Store) CreateManualFilterRevision(revision *model.ManualFilterRevision) error {
@@ -104,6 +119,184 @@ func (s *Store) SaveFilterDecision(decision *model.FilterDecision) error {
 		decision.CreatedAt = existing.CreatedAt
 		return nil
 	}
+}
+
+// SaveFilterDecisionAndQuarantine commits the ready outbox event as one fact.
+// Retries with the same decision/quarantine pair are idempotent.
+func (s *Store) SaveFilterDecisionAndQuarantine(decision *model.FilterDecision, quarantine *model.FilterQuarantine) error {
+	if quarantine == nil {
+		return s.SaveFilterDecision(decision)
+	}
+	if err := validateFilterDecision(decision); err != nil {
+		return err
+	}
+	if strings.TrimSpace(quarantine.QuarantineKey) == "" || quarantine.ExpiresAt.IsZero() || quarantine.Status != "quarantined" {
+		return ErrInvalidFilterQuarantine
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := saveFilterDecisionTx(tx, decision); err != nil {
+			return err
+		}
+		quarantine.DecisionID = decision.ID
+		if err := tx.Create(quarantine).Error; err == nil {
+			return nil
+		}
+		var existing model.FilterQuarantine
+		if err := tx.Where("quarantine_key = ?", quarantine.QuarantineKey).First(&existing).Error; err != nil {
+			return err
+		}
+		if existing.DecisionID != decision.ID || existing.OriginalMaildirKey != quarantine.OriginalMaildirKey || !existing.ExpiresAt.Equal(quarantine.ExpiresAt) {
+			return ErrFilterQuarantineConflict
+		}
+		*quarantine = existing
+		return nil
+	})
+}
+
+func saveFilterDecisionTx(tx *gorm.DB, decision *model.FilterDecision) error {
+	if err := tx.Create(decision).Error; err == nil {
+		return nil
+	}
+	var existing model.FilterDecision
+	if err := tx.Where("decision_key = ?", decision.DecisionKey).First(&existing).Error; err != nil {
+		return err
+	}
+	if !sameFilterDecision(existing, *decision) {
+		return ErrFilterDecisionConflict
+	}
+	decision.ID = existing.ID
+	decision.CreatedAt = existing.CreatedAt
+	return nil
+}
+
+func (s *Store) ListFilterQuarantines(page, size int, status string) ([]FilterQuarantineRecord, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 200 {
+		size = 50
+	}
+	query := s.db.Table("filter_quarantines")
+	if status != "" {
+		if !validQuarantineStatus(status) {
+			return nil, 0, ErrInvalidFilterQuarantine
+		}
+		query = query.Where("filter_quarantines.status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var records []FilterQuarantineRecord
+	err := query.Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host").
+		Joins("JOIN filter_decisions ON filter_decisions.id = filter_quarantines.decision_id").
+		Joins("JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
+		Joins("JOIN mail_servers ON mail_servers.id = filter_decisions.node_id").
+		Order("filter_quarantines.created_at DESC, filter_quarantines.id DESC").
+		Offset((page - 1) * size).Limit(size).Scan(&records).Error
+	return records, total, err
+}
+
+func (s *Store) GetFilterQuarantine(key string) (*FilterQuarantineRecord, error) {
+	var record FilterQuarantineRecord
+	err := s.db.Table("filter_quarantines").
+		Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host").
+		Joins("JOIN filter_decisions ON filter_decisions.id = filter_quarantines.decision_id").
+		Joins("JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
+		Joins("JOIN mail_servers ON mail_servers.id = filter_decisions.node_id").
+		Where("filter_quarantines.quarantine_key = ?", key).First(&record).Error
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+func (s *Store) BeginFilterQuarantineRelease(key, operationID, actor string) (*FilterQuarantineRecord, error) {
+	if strings.TrimSpace(operationID) == "" || strings.TrimSpace(actor) == "" {
+		return nil, ErrInvalidFilterQuarantine
+	}
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var value model.FilterQuarantine
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("quarantine_key = ?", key).First(&value).Error; err != nil {
+			return err
+		}
+		switch value.Status {
+		case "quarantined":
+			return tx.Model(&value).Updates(map[string]any{
+				"status": "releasing", "release_operation_id": operationID, "reviewed_by": actor,
+				"last_error": "", "updated_at": time.Now(),
+			}).Error
+		case "release_failed":
+			if value.ReleaseOperationID == "" {
+				value.ReleaseOperationID = operationID
+			}
+			return tx.Model(&value).Updates(map[string]any{
+				"status": "releasing", "release_operation_id": value.ReleaseOperationID,
+				"reviewed_by": actor, "last_error": "", "updated_at": time.Now(),
+			}).Error
+		case "releasing", "released":
+			return nil
+		default:
+			return ErrFilterQuarantineConflict
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetFilterQuarantine(key)
+}
+
+func (s *Store) CompleteFilterQuarantineRelease(key, operationID, status, receiptText, lastError, feedbackLabel, actor string) error {
+	if status != "released" && status != "release_failed" {
+		return ErrInvalidFilterQuarantine
+	}
+	now := time.Now()
+	updates := map[string]any{
+		"status": status, "release_receipt_text": receiptText, "last_error": lastError,
+		"reviewed_by": actor, "reviewed_at": &now, "updated_at": now,
+	}
+	if status == "released" {
+		if feedbackLabel != "false_positive" {
+			feedbackLabel = "uncertain"
+		}
+		updates["feedback_label"] = feedbackLabel
+	}
+	result := s.db.Model(&model.FilterQuarantine{}).
+		Where("quarantine_key = ? AND release_operation_id = ? AND status IN ?", key, operationID, []string{"releasing", status}).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrFilterQuarantineConflict
+	}
+	return nil
+}
+
+func (s *Store) ReviewFilterQuarantine(key, status, label, note, actor string) error {
+	if status != "confirmed_ad" || label != "confirmed_ad" || strings.TrimSpace(actor) == "" {
+		return ErrInvalidFilterQuarantine
+	}
+	now := time.Now()
+	result := s.db.Model(&model.FilterQuarantine{}).
+		Where("quarantine_key = ? AND status IN ?", key, []string{"quarantined", "confirmed_ad"}).
+		Updates(map[string]any{"status": status, "feedback_label": label, "review_note": note, "reviewed_by": actor, "reviewed_at": &now, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrFilterQuarantineConflict
+	}
+	return nil
+}
+
+func (s *Store) MarkFilterQuarantinesExpired(nodeID uint64, keys []string) error {
+	if nodeID == 0 || len(keys) == 0 {
+		return nil
+	}
+	return s.db.Model(&model.FilterQuarantine{}).
+		Where("quarantine_key IN ? AND status IN ? AND decision_id IN (SELECT id FROM filter_decisions WHERE node_id = ?)", keys, []string{"quarantined", "releasing", "release_failed", "confirmed_ad"}, nodeID).
+		Updates(map[string]any{"status": "expired", "updated_at": time.Now()}).Error
 }
 
 func (s *Store) ListFilterDecisions(page, size int, action string) ([]FilterDecisionRecord, int64, error) {
@@ -258,4 +451,13 @@ func validFilterPolicyKind(value string) bool {
 
 func validFilterAction(value string) bool {
 	return value == "allow" || value == "tag" || value == "quarantine"
+}
+
+func validQuarantineStatus(value string) bool {
+	switch value {
+	case "quarantined", "releasing", "released", "release_failed", "confirmed_ad", "expired":
+		return true
+	default:
+		return false
+	}
 }

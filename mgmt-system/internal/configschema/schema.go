@@ -35,6 +35,7 @@ var definitionOrder = []string{
 	"filter.sync_interval",
 	"filter.engine_mode",
 	"filter.auto_quarantine_enabled",
+	"filter.quarantine_base",
 	"lifecycle.trash_retention_hours",
 	"lifecycle.message_retention_days",
 	"lifecycle.gc_interval_minutes",
@@ -82,6 +83,10 @@ var definitions = map[string]Definition{
 	"filter.auto_quarantine_enabled": {
 		Key: "filter.auto_quarantine_enabled", Owner: "mail-node", Category: "filter", Label: "Automatic quarantine", Description: "Allow automatic advertising decisions to quarantine messages",
 		ValueType: "bool", DefaultValue: "false", Unit: "switch", Min: 0, Max: 1, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"filter.quarantine_base": {
+		Key: "filter.quarantine_base", Owner: "mail-node", Category: "filter", Label: "Quarantine directory", Description: "Maildir-external storage root for quarantined original messages",
+		ValueType: "string", DefaultValue: "/var/mail/mailhub-quarantine", Unit: "path", Min: 2, Max: 255, NodeOverridable: true, ApplyStrategy: RestartProcess,
 	},
 	"lifecycle.trash_retention_hours": {
 		Key: "lifecycle.trash_retention_hours", Owner: "mail-node", Category: "lifecycle",

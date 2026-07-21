@@ -108,6 +108,25 @@ func TestDecisionModelPreservesOutboxEvidence(t *testing.T) {
 	}
 }
 
+func TestQuarantineModelUsesGlobalRetention(t *testing.T) {
+	evaluatedAt := time.Date(2026, 7, 21, 8, 0, 0, 0, time.UTC)
+	event := filtercontract.OutboxEvent{
+		Decision: filtercontract.FilterDecision{EvaluatedAt: evaluatedAt},
+		Result: &filtercontract.ProcessingResult{
+			Status: "succeeded", ActualAction: filtercontract.ActionQuarantine,
+			QuarantineKey: "quarantine-key", OriginalMaildirKey: "maildir-key",
+		},
+	}
+	quarantine, err := quarantineModel(event, 45)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := evaluatedAt.Add(45 * 24 * time.Hour)
+	if !quarantine.ExpiresAt.Equal(want) {
+		t.Fatalf("ExpiresAt = %v, want %v", quarantine.ExpiresAt, want)
+	}
+}
+
 func TestDecisionViewDecodesStructuredEvidence(t *testing.T) {
 	record := store.FilterDecisionRecord{
 		FilterDecision: model.FilterDecision{

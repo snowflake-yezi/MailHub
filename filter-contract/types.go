@@ -21,6 +21,12 @@ const (
 	ActionQuarantine = "quarantine"
 )
 
+const (
+	ReleaseStatusReleasing = "in_progress"
+	ReleaseStatusReleased  = "completed"
+	ReleaseStatusFailed    = "failed"
+)
+
 // ConditionValue is a scalar JSON value. A zero value is encoded as null.
 // Objects, arrays, and fractional numbers are deliberately excluded from v1.
 type ConditionValue struct {
@@ -230,12 +236,13 @@ type FilterDecision struct {
 }
 
 type ProcessingResult struct {
-	Status          string `json:"status"`
-	AttemptedAction string `json:"attempted_action"`
-	ActualAction    string `json:"actual_action"`
-	QuarantineKey   string `json:"quarantine_key"`
-	ErrorCode       string `json:"error_code"`
-	ErrorSummary    string `json:"error_summary"`
+	Status             string `json:"status"`
+	AttemptedAction    string `json:"attempted_action"`
+	ActualAction       string `json:"actual_action"`
+	QuarantineKey      string `json:"quarantine_key"`
+	OriginalMaildirKey string `json:"original_maildir_key,omitempty"`
+	ErrorCode          string `json:"error_code"`
+	ErrorSummary       string `json:"error_summary"`
 }
 
 type OutboxEvent struct {

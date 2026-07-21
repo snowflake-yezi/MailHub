@@ -105,6 +105,57 @@ func (s *Scheduler) purgeExpiredMessages() {
 			log.Printf("[lifecycle] message retention: purged %d messages on server %d", deleted, serverID)
 		}
 	}
+	servers, err := s.store.ListServers()
+	if err != nil {
+		log.Printf("[lifecycle] quarantine retention: list servers failed: %v", err)
+		return
+	}
+	for _, server := range servers {
+		expiredKeys, gcErr := s.callNodePurgeExpiredQuarantines(server.APIHost, retentionDays)
+		if gcErr != nil {
+			log.Printf("[lifecycle] quarantine retention: purge server %d failed: %v", server.ID, gcErr)
+			continue
+		}
+		if err := s.store.MarkFilterQuarantinesExpired(server.ID, expiredKeys); err != nil {
+			log.Printf("[lifecycle] quarantine retention: reconcile server %d failed: %v", server.ID, err)
+		}
+	}
+}
+
+func (s *Scheduler) callNodePurgeExpiredQuarantines(apiHost string, retentionDays int) ([]string, error) {
+	body, err := json.Marshal(map[string]int{"retention_days": retentionDays})
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("http://%s/internal/filter-quarantines/gc", apiHost)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", s.sharedSecret)
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data struct {
+			ExpiredKeys []string `json:"expired_keys"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil || result.Code != 0 {
+		return nil, fmt.Errorf("invalid quarantine gc response")
+	}
+	return result.Data.ExpiredKeys, nil
 }
 
 // watchdog 扫描 deleting 超时的任务，重新向 mail-node 下发 DELETE。

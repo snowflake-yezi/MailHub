@@ -389,6 +389,9 @@ func (e OutboxEvent) Validate() error {
 		if !oneOf(e.Result.Status, "succeeded", "failed") {
 			return invalidEnum("result.status", e.Result.Status)
 		}
+		if e.Result.QuarantineKey != "" && (e.Result.Status != "succeeded" || e.Result.ActualAction != ActionQuarantine || e.Result.OriginalMaildirKey == "") {
+			return &ContractError{Code: ErrorInvalidValue, Path: "result.quarantine_key", Message: "quarantine result requires succeeded quarantine action and original_maildir_key"}
+		}
 	default:
 		return invalidEnum("phase", e.Phase)
 	}

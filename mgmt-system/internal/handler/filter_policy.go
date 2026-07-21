@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,7 +20,12 @@ import (
 )
 
 type FilterPolicyHandler struct {
-	service *service.FilterPolicyService
+	service      *service.FilterPolicyService
+	sharedSecret string
+}
+
+func (h *FilterPolicyHandler) ConfigureQuarantineProxy(sharedSecret string) {
+	h.sharedSecret = sharedSecret
 }
 
 func NewFilterPolicyHandler(policyService *service.FilterPolicyService) *FilterPolicyHandler {
@@ -56,6 +64,215 @@ func (h *FilterPolicyHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 
 	r.GET("/filter-decisions", h.ListDecisions)
 	r.GET("/filter-decisions/:decision_key", h.GetDecision)
+	r.GET("/filter-quarantines", h.ListQuarantines)
+	r.GET("/filter-quarantines/:quarantine_key", h.GetQuarantine)
+	r.GET("/filter-quarantines/:quarantine_key/message", h.GetQuarantineMessage)
+	r.GET("/filter-quarantines/:quarantine_key/attachments/:index", h.GetQuarantineAttachment)
+	r.POST("/filter-quarantines/:quarantine_key/release", h.ReleaseQuarantine)
+	r.POST("/filter-quarantines/:quarantine_key/allow-and-release", h.AllowAndReleaseQuarantine)
+	r.GET("/filter-quarantines/:quarantine_key/release-status", h.GetQuarantineReleaseStatus)
+	r.POST("/filter-quarantines/:quarantine_key/confirm-ad", h.ConfirmQuarantineAd)
+}
+
+func (h *FilterPolicyHandler) ListQuarantines(c *gin.Context) {
+	value, err := h.service.ListQuarantines(parsePositiveInt(c.Query("page"), 1), parsePositiveInt(c.Query("size"), 50), c.Query("status"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "success", value)
+}
+
+func (h *FilterPolicyHandler) GetQuarantine(c *gin.Context) {
+	value, err := h.service.GetQuarantine(c.Param("quarantine_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "success", value)
+}
+
+func (h *FilterPolicyHandler) GetQuarantineMessage(c *gin.Context) {
+	value, err := h.service.GetQuarantine(c.Param("quarantine_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/message", nil, h.sharedSecret)
+	if err != nil {
+		if !writeUpstreamJSONError(c, err) {
+			serverError(c, ErrCodeExternalFail, "fetch quarantined message failed: "+err.Error())
+		}
+		return
+	}
+	writeJSON(c.Writer, data)
+}
+
+func (h *FilterPolicyHandler) GetQuarantineAttachment(c *gin.Context) {
+	value, err := h.service.GetQuarantine(c.Param("quarantine_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	path := "/internal/filter-quarantines/" + value.QuarantineKey + "/attachments/" + c.Param("index")
+	proxyAttachmentToServer(c, value.ServerAPIHost, http.MethodGet, path, h.sharedSecret)
+}
+
+func (h *FilterPolicyHandler) ReleaseQuarantine(c *gin.Context) {
+	var request struct {
+		FeedbackLabel string `json:"feedback_label"`
+	}
+	if err := bindOptionalJSON(c, &request); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid release request: "+err.Error())
+		return
+	}
+	if request.FeedbackLabel != "" && request.FeedbackLabel != "false_positive" && request.FeedbackLabel != "uncertain" {
+		badRequest(c, ErrCodeParamInvalid, "feedback_label must be false_positive or uncertain")
+		return
+	}
+	updated, err := h.executeQuarantineRelease(c.Param("quarantine_key"), policyRequestID(c), request.FeedbackLabel, policyActor(c))
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, err.Error())
+		return
+	}
+	if updated.Status == "release_failed" {
+		fail(c, http.StatusBadGateway, ErrCodeExternalFail, updated.LastError)
+		return
+	}
+	success(c, "quarantine released", updated)
+}
+
+func (h *FilterPolicyHandler) executeQuarantineRelease(key, operationID, feedbackLabel, actor string) (*service.FilterQuarantineView, error) {
+	value, err := h.service.BeginQuarantineRelease(key, operationID, actor)
+	if err != nil {
+		return nil, err
+	}
+	operationID = value.ReleaseOperationID
+	body, _ := json.Marshal(map[string]string{"operation_id": operationID})
+	path := "/internal/filter-quarantines/" + value.QuarantineKey + "/release"
+	data, callErr := proxyToServer(value.ServerAPIHost, http.MethodPost, path, bytes.NewReader(body), h.sharedSecret)
+	receipt, receiptErr := receiptFromProxy(data, callErr)
+	if receiptErr != nil {
+		statusData, statusErr := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/release-status", nil, h.sharedSecret)
+		if statusErr == nil {
+			receipt, receiptErr = receiptFromProxy(statusData, nil)
+		}
+	}
+	if receiptErr != nil {
+		return nil, fmt.Errorf("release response unavailable; retry resumes operation %s: %w", operationID, receiptErr)
+	}
+	if err := h.service.CompleteQuarantineRelease(value.QuarantineKey, operationID, feedbackLabel, actor, *receipt, callErr); err != nil {
+		return nil, err
+	}
+	return h.service.GetQuarantine(value.QuarantineKey)
+}
+
+func (h *FilterPolicyHandler) AllowAndReleaseQuarantine(c *gin.Context) {
+	var request struct {
+		Scope string `json:"scope"`
+	}
+	if err := bindOptionalJSON(c, &request); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid allow-and-release request: "+err.Error())
+		return
+	}
+	if request.Scope == "" {
+		request.Scope = "email"
+	}
+	key := c.Param("quarantine_key")
+	actor := policyActor(c)
+	requestID := policyRequestID(c)
+	value, err := h.service.GetQuarantine(key)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/message", nil, h.sharedSecret)
+	if err != nil {
+		if !writeUpstreamJSONError(c, err) {
+			serverError(c, ErrCodeExternalFail, "read quarantined sender failed: "+err.Error())
+		}
+		return
+	}
+	var envelope struct {
+		Data struct {
+			Message struct {
+				From string `json:"from"`
+			} `json:"message"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil || strings.TrimSpace(envelope.Data.Message.From) == "" {
+		badRequest(c, ErrCodeParamInvalid, "quarantined message has no valid sender")
+		return
+	}
+	draft, err := h.service.CreateQuarantineAllowDraft(key, envelope.Data.Message.From, request.Scope, actor, requestID)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	released, releaseErr := h.executeQuarantineRelease(key, requestID, "false_positive", actor)
+	result := gin.H{"allow_draft": draft, "release": released}
+	if releaseErr != nil {
+		result["release_error"] = releaseErr.Error()
+	} else if released.Status == "release_failed" {
+		result["release_error"] = released.LastError
+	}
+	success(c, "allow draft created; release result recorded separately", result)
+}
+
+func (h *FilterPolicyHandler) GetQuarantineReleaseStatus(c *gin.Context) {
+	value, err := h.service.GetQuarantine(c.Param("quarantine_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/release-status", nil, h.sharedSecret)
+	if err != nil {
+		if !writeUpstreamJSONError(c, err) {
+			serverError(c, ErrCodeExternalFail, "release status failed: "+err.Error())
+		}
+		return
+	}
+	writeJSON(c.Writer, data)
+}
+
+func (h *FilterPolicyHandler) ConfirmQuarantineAd(c *gin.Context) {
+	var request struct {
+		Note string `json:"note"`
+	}
+	if err := bindOptionalJSON(c, &request); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid feedback request: "+err.Error())
+		return
+	}
+	if err := h.service.ConfirmQuarantineAd(c.Param("quarantine_key"), request.Note, policyActor(c), policyRequestID(c)); err != nil {
+		h.writeError(c, err)
+		return
+	}
+	value, err := h.service.GetQuarantine(c.Param("quarantine_key"))
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "advertising feedback recorded", value)
+}
+
+func receiptFromProxy(data []byte, callErr error) (*filtercontract.ReleaseReceipt, error) {
+	if callErr != nil {
+		var upstream *upstreamHTTPError
+		if !errors.As(callErr, &upstream) {
+			return nil, callErr
+		}
+		data = upstream.Body
+	}
+	var envelope struct {
+		Data filtercontract.ReleaseReceipt `json:"data"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil, err
+	}
+	if err := envelope.Data.Validate(); err != nil {
+		return nil, err
+	}
+	return &envelope.Data, nil
 }
 
 func (h *FilterPolicyHandler) ListDecisions(c *gin.Context) {
@@ -445,9 +662,12 @@ func (h *FilterPolicyHandler) writeError(c *gin.Context, err error) {
 		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
 	case errors.Is(err, store.ErrFilterDecisionConflict):
 		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
+	case errors.Is(err, store.ErrFilterQuarantineConflict):
+		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
 	case errors.As(err, &contractError), errors.Is(err, service.ErrFilterPolicySeed),
 		errors.Is(err, service.ErrFilterDecisionNode), errors.Is(err, store.ErrInvalidFilterDecision),
-		errors.Is(err, store.ErrInvalidFilterPolicyRevision), errors.Is(err, store.ErrInvalidFilterNodeState):
+		errors.Is(err, store.ErrInvalidFilterPolicyRevision), errors.Is(err, store.ErrInvalidFilterNodeState),
+		errors.Is(err, store.ErrInvalidFilterQuarantine):
 		badRequest(c, ErrCodeParamInvalid, err.Error())
 	default:
 		serverError(c, ErrCodeInternal, "filter policy operation failed: "+err.Error())

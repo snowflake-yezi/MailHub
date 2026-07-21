@@ -174,13 +174,15 @@ const pages = {
   filterPolicy: {
     revisionDiff: 'バージョン差分', comparedWith: '比較元 #{{revision}}', added: '追加', modified: '変更', removed: '削除', actionPreview: 'アクション面のプレビュー', validationResult: '検証結果', notValidated: '未検証です。不明な参照と DAG 循環はここに表示されます', validBundle: 'Bundle は有効 · {{bytes}} バイト', enforcePreview: 'Enforce ルール {{before}} -> {{after}}', adActionPreview: 'Enforce producers {{before}} -> {{after}} · Tag {{oldTag}} -> {{tag}} · Quarantine {{oldQuarantine}} -> {{quarantine}}',
     title: 'フィルターポリシー', subtitle: 'バージョン化された手動ルール、広告ポリシー、ノード収束、判定履歴を管理します。', loading: 'フィルターポリシーを読み込み中...', activeKinds: 'Active ポリシー {{count}} 件',
-    tabs: { overview: '概要', manual: '手動ルール', ad: '広告ポリシー', decisions: 'ヒット分析', legacy: 'Legacy ルール' },
+    tabs: { overview: '概要', manual: '手動ルール', ad: '広告ポリシー', decisions: 'ヒット分析', quarantines: '隔離レビュー', legacy: 'Legacy ルール' },
     revision: 'ポリシーバージョン', selectRevision: 'バージョンを選択', notPublished: '未公開', createDraft: 'ドラフト作成', clone: 'ドラフトへ複製', validate: '検証', publish: '公開',
     editor: 'ポリシーエディター', editItem: 'ポリシー項目を編集', addItem: 'ポリシー項目を追加', logicalId: '論理 ID', name: '名前', action: 'アクション', mode: 'モード', priority: '優先度', symbol: 'Symbol', scorePolicy: 'スコア方式', conditions: '条件', addCondition: '条件を追加', negated: '否定', operations: '操作',
     activeManual: 'Active 手動バージョン', activeAd: 'Active 広告バージョン', manualVersions: '手動バージョン数', adVersions: '広告バージョン数', nodeConvergence: 'ノードのポリシー収束', node: 'ノード', kind: 'ポリシー種別', lastError: '最新エラー', updated: '更新日時', noNodeState: 'ノード状態はありません',
     manualRules: '手動ルール', manualCaption: '編集できるのはドラフトのみです。enforce は優先度順の最初の一致、shadow は候補のみ記録します。', addRule: 'ルール追加', noRules: 'このバージョンに手動ルールはありません',
     tagThreshold: 'Tag しきい値', quarantineThreshold: 'Quarantine しきい値', detectors: 'Detectors', composites: 'Composites', weights: 'Symbol 重み', score: 'スコア',
     allActions: 'すべてのアクション', totalDecisions: '判定 {{count}} 件', evaluated: '判定日時', mailbox: 'メールボックス', noDecisions: '判定履歴はありません', reasons: '手動ルールの理由', symbols: '広告 Symbols', shadowResults: 'Shadow 結果', parseWarnings: '解析警告',
+    allQuarantineStatuses: 'すべての隔離状態', totalQuarantines: '隔離メール {{count}} 件', quarantineState: 'レビュー状態', expires: '有効期限', noQuarantines: '隔離メールはありません', loadingQuarantine: '隔離された原本を読み込み中...', quarantineOriginalUnavailable: '隔離原本は解放済みまたは期限切れです', sender: '送信者', messageId: 'Message-ID', messageBody: 'メール本文', noMessageBody: '表示できる本文はありません', attachments: '添付ファイル', noAttachments: '添付ファイルなし', confirmAd: '広告と確認', falsePositiveRelease: '誤判定として解放', allowAndRelease: '許可リストに追加して解放', allowScope: '許可リスト範囲', allowEmail: '正確なメール', allowDomain: '正確なドメイン', confirmAdPrompt: 'このメールを広告として記録しますか？原本は隔離されたままです。', releasePrompt: '誤判定として解放しますか？一度だけ転送し、原本をメールボックスへ戻します。', allowReleasePrompt: '選択した範囲の shadow allow 草稿を作成して解放しますか？草稿は自動公開されません。', allowDraftCreated: '許可リスト草稿を作成しました', feedbackSaved: '広告フィードバックを記録しました', released: 'メールを解放しました',
+    quarantineStatus: { quarantined: 'レビュー待ち', releasing: '解放中', release_failed: '解放失敗', released: '解放済み', confirmed_ad: '広告確認済み', expired: '期限切れ' },
     saved: 'ポリシーを保存しました', draftCreated: 'ドラフトを作成しました', validationPassed: '検証が完了しました', publishConfirm: 'このバージョンを公開しますか？公開後は変更できません。', published: 'ポリシーバージョンを公開しました',
   },
   servers: {

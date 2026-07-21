@@ -191,7 +191,7 @@ func TestRuntimeConfigSnapshotContract(t *testing.T) {
 	}, 24*time.Hour)
 	want := []string{
 		filter.SyncIntervalConfigKey,
-		filterdecision.EngineModeConfigKey, filterdecision.AutoQuarantineConfigKey,
+		filterdecision.EngineModeConfigKey, filterdecision.AutoQuarantineConfigKey, "filter.quarantine_base",
 		"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size", "forward.target_address",
 		"forward.smtp_dial_timeout", "forward.tls_insecure_skip", "forward.tls_min_version",
 		"lifecycle.trash_retention_hours", "lifecycle.gc_interval_minutes", "lifecycle.drain_timeout_minutes", "lifecycle.drain_poll_interval_ms",

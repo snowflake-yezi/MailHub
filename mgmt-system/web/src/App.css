@@ -3156,6 +3156,58 @@ textarea {
   white-space: pre-wrap;
 }
 
+.quarantine-message-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.quarantine-message-facts > div {
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.quarantine-message-facts dt {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.quarantine-message-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.quarantine-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quarantine-review-drawer > .drawer-footer {
+  bottom: 0;
+  width: 100%;
+  margin: auto 0 0;
+  box-sizing: border-box;
+}
+
+.quarantine-allow-scope {
+  min-width: 118px;
+  min-height: 38px;
+}
+
+@media (max-width: 640px) {
+  .quarantine-message-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quarantine-review-drawer > .drawer-footer {
+    flex-direction: column;
+  }
+}
+
 .legacy-filter-panel > div > .page-header {
   display: none;
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/ticket/email-mail-node/internal/filterdecision"
 	"github.com/ticket/email-mail-node/internal/filteroutbox"
 	"github.com/ticket/email-mail-node/internal/filterpolicy"
+	"github.com/ticket/email-mail-node/internal/filterquarantine"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/handler"
 	"github.com/ticket/email-mail-node/internal/mailbox"
@@ -90,11 +91,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize filter outbox: %v", err)
 	}
-	if recovered, recoverErr := outbox.RecoverStaged(); recoverErr != nil {
-		log.Printf("[filter] WARNING: outbox recovery incomplete: recovered=%d error=%v", recovered, recoverErr)
-	} else if recovered > 0 {
-		log.Printf("[filter] recovered %d staged decisions", recovered)
-	}
 	policyClient := filterpolicy.NewClient(cfg.Management.APIURL, cfg.SharedSecret, decisionEngine, func() (uint64, string) {
 		boot, _ := remoteCfg.BootIdentity()
 		return remoteCfg.NodeID(), boot
@@ -132,6 +128,17 @@ func main() {
 	}
 	fwdSvc := forward.New(forwardCfg, engine, mailboxMgr, remoteCfg)
 	fwdSvc.ConfigurePolicyRuntime(decisionEngine, outbox)
+	quarantineBase := remoteCfg.GetString("filter.quarantine_base", cfg.Filter.QuarantineBase)
+	quarantineStore, err := filterquarantine.New(quarantineBase, cfg.Maildir.BasePath)
+	if err != nil {
+		log.Fatalf("Failed to initialize filter quarantine: %v", err)
+	}
+	fwdSvc.ConfigureQuarantine(quarantineStore)
+	if recovered, recoverErr := outbox.RecoverStagedWithResolver(quarantineStore.RecoveryResult); recoverErr != nil {
+		log.Printf("[filter] WARNING: outbox recovery incomplete: recovered=%d error=%v", recovered, recoverErr)
+	} else if recovered > 0 {
+		log.Printf("[filter] recovered %d staged decisions", recovered)
+	}
 
 	// 初始化生命周期管理器（安全软删除 + 垃圾回收 + 重启对账）
 	// 超时/间隔参数优先用远程配置，0 值触发默认值回退
@@ -205,6 +212,7 @@ func main() {
 		cfg.SharedSecret,
 		remoteCfg,
 	)
+	nodeH.ConfigureQuarantine(quarantineStore, fwdSvc.ForwardQuarantined)
 
 	// 设置 Gin
 	if cfg.Server.Mode == "release" {
@@ -290,6 +298,7 @@ func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, engine *filter.
 		filterdecision.AutoQuarantineConfigKey: strconv.FormatBool(
 			remoteCfg.GetBool(filterdecision.AutoQuarantineConfigKey, false),
 		),
+		"filter.quarantine_base":           remoteCfg.GetString("filter.quarantine_base", "/var/mail/mailhub-quarantine"),
 		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
 		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
 		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),

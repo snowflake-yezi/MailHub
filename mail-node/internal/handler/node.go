@@ -20,6 +20,7 @@ import (
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
+	"github.com/ticket/email-mail-node/internal/filterquarantine"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 )
@@ -27,17 +28,30 @@ import (
 const maxAttachmentPreviewBytes = 10 * 1024 * 1024
 
 type NodeHandler struct {
-	mailboxMgr       *mailbox.Manager
-	domainMgr        *domain.Manager
-	engine           *filter.Engine
-	lifecycle        *forward.Lifecycle
-	nodeID           uint64
-	nodeName         string
-	managerURL       string
-	sharedSecret     string
-	remoteCfg        *config.RemoteConfig
-	messageIndexOnce sync.Once
-	messageIndex     *messagePathIndex
+	mailboxMgr        *mailbox.Manager
+	domainMgr         *domain.Manager
+	engine            *filter.Engine
+	lifecycle         *forward.Lifecycle
+	nodeID            uint64
+	nodeName          string
+	managerURL        string
+	sharedSecret      string
+	remoteCfg         *config.RemoteConfig
+	messageIndexOnce  sync.Once
+	messageIndex      *messagePathIndex
+	quarantine        *filterquarantine.Store
+	quarantineRelease filterquarantine.ReleaseFunc
+}
+
+func (h *NodeHandler) ConfigureQuarantine(store *filterquarantine.Store, release filterquarantine.ReleaseFunc) {
+	h.quarantine = store
+	h.quarantineRelease = release
+	if store != nil {
+		store.SetIndexHooks(
+			func(mailbox, messageID string) { h.messagePaths().remove(mailbox, messageID) },
+			func(mailbox, messageID, path string) { h.messagePaths().putFile(mailbox, messageID, path) },
+		)
+	}
 }
 
 func NewNodeHandler(mgr *mailbox.Manager, domainMgr *domain.Manager, eng *filter.Engine, lc *forward.Lifecycle, nodeID uint64, nodeName, managerURL, sharedSecret string, remoteCfg *config.RemoteConfig) *NodeHandler {
@@ -778,6 +792,13 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/messages/:message_id", h.DeleteMessage)
 	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
 	rg.GET("/messages/:message_id/attachments/:index/preview", h.GetMessageAttachmentPreview)
+
+	// P3 quarantine paths are the only node APIs allowed to read Maildir-external originals.
+	rg.GET("/filter-quarantines/:quarantine_key/message", h.GetQuarantineMessage)
+	rg.GET("/filter-quarantines/:quarantine_key/attachments/:index", h.GetQuarantineAttachment)
+	rg.POST("/filter-quarantines/:quarantine_key/release", h.ReleaseQuarantine)
+	rg.GET("/filter-quarantines/:quarantine_key/release-status", h.GetQuarantineReleaseStatus)
+	rg.POST("/filter-quarantines/gc", h.PurgeExpiredQuarantines)
 
 	// 健康 & 维护
 	rg.GET("/health", h.Health)

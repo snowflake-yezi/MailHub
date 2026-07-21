@@ -55,6 +55,16 @@ func TestTLSVerificationIsSecureByDefault(t *testing.T) {
 	}
 }
 
+func TestQuarantineBaseRequiresRestart(t *testing.T) {
+	definition, ok := Get("filter.quarantine_base")
+	if !ok {
+		t.Fatal("quarantine base definition missing")
+	}
+	if definition.ApplyStrategy != RestartProcess || definition.Reloadable() || !definition.RequiresRestart() {
+		t.Fatalf("quarantine base apply capability = %#v", definition)
+	}
+}
+
 func TestNodeOverridesAreStableAndComplete(t *testing.T) {
 	definitions := NodeOverrides()
 	expectedKeys := make([]string, 0, len(definitionOrder))

@@ -28,6 +28,8 @@ filter:
   default_action: "pass"
   flag_subject_prefix: "[疑似]"
   outbox_path: "/var/lib/mail-node/filter-outbox"
+  # Must remain outside maildir.base_path and the Dovecot namespace.
+  quarantine_base: "/var/mail/mailhub-quarantine"
 
 node:
   id: 1

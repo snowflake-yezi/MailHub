@@ -327,13 +327,15 @@ const pages = {
   filterPolicy: {
     revisionDiff: '版本差异', comparedWith: '对比基线 #{{revision}}', added: '新增', modified: '修改', removed: '删除', actionPreview: '动作面预览', validationResult: '校验结果', notValidated: '尚未校验；未知引用和 DAG 循环会在这里显示', validBundle: 'Bundle 有效 · {{bytes}} 字节', enforcePreview: 'Enforce 规则 {{before}} -> {{after}}', adActionPreview: 'Enforce producers {{before}} -> {{after}} · Tag {{oldTag}} -> {{tag}} · Quarantine {{oldQuarantine}} -> {{quarantine}}',
     title: '过滤策略', subtitle: '管理版本化人工规则、广告识别策略、节点收敛状态与判定记录。', loading: '正在加载过滤策略...', activeKinds: '{{count}} 套 active 策略',
-    tabs: { overview: '概览', manual: '人工规则', ad: '广告策略', decisions: '命中分析', legacy: 'Legacy 规则' },
+    tabs: { overview: '概览', manual: '人工规则', ad: '广告策略', decisions: '命中分析', quarantines: '隔离审核', legacy: 'Legacy 规则' },
     revision: '策略版本', selectRevision: '选择版本', notPublished: '尚未发布', createDraft: '创建草稿', clone: '克隆为草稿', validate: '校验', publish: '发布',
     editor: '策略编辑器', editItem: '编辑策略项', addItem: '新增策略项', logicalId: '逻辑 ID', name: '名称', action: '动作', mode: '模式', priority: '优先级', symbol: 'Symbol', scorePolicy: '计分策略', conditions: '条件', addCondition: '添加条件', negated: '取反', operations: '操作',
     activeManual: 'Active 人工版本', activeAd: 'Active 广告版本', manualVersions: '人工版本数', adVersions: '广告版本数', nodeConvergence: '节点策略收敛', node: '节点', kind: '策略类型', lastError: '最近错误', updated: '更新时间', noNodeState: '暂无节点策略状态',
     manualRules: '人工规则', manualCaption: '只有 draft 可编辑；enforce 按优先级首条命中，shadow 仅记录候选结果。', addRule: '新增规则', noRules: '当前版本没有人工规则',
     tagThreshold: 'Tag 阈值', quarantineThreshold: 'Quarantine 阈值', detectors: 'Detectors', composites: 'Composites', weights: 'Symbol 权重', score: '分数',
     allActions: '全部动作', totalDecisions: '共 {{count}} 条判定', evaluated: '判定时间', mailbox: '邮箱', noDecisions: '暂无判定记录', reasons: '人工规则原因', symbols: '广告 Symbols', shadowResults: 'Shadow 结果', parseWarnings: '解析警告',
+    allQuarantineStatuses: '全部隔离状态', totalQuarantines: '共 {{count}} 封隔离邮件', quarantineState: '审核状态', expires: '到期时间', noQuarantines: '暂无隔离邮件', loadingQuarantine: '正在读取隔离原件...', quarantineOriginalUnavailable: '隔离原件已放行或过期', sender: '发件人', messageId: 'Message-ID', messageBody: '邮件正文', noMessageBody: '无可显示正文', attachments: '附件', noAttachments: '无附件', confirmAd: '确认广告', falsePositiveRelease: '误判并放行', allowAndRelease: '加白名单并放行', allowScope: '白名单范围', allowEmail: '精确邮箱', allowDomain: '精确域名', confirmAdPrompt: '确认将这封邮件标记为广告？原件会继续留在隔离区。', releasePrompt: '确认这是误判并放行？系统只会转发一次并将原件恢复到邮箱。', allowReleasePrompt: '按所选范围创建 shadow allow 草稿并放行？草稿不会自动发布。', allowDraftCreated: '白名单草稿已创建', feedbackSaved: '广告反馈已记录', released: '邮件已放行',
+    quarantineStatus: { quarantined: '待审核', releasing: '放行中', release_failed: '放行失败', released: '已放行', confirmed_ad: '已确认广告', expired: '已过期' },
     saved: '策略已保存', draftCreated: '草稿已创建', validationPassed: '校验完成', publishConfirm: '确认发布当前版本？发布后内容不可修改。', published: '策略版本已发布',
   },
   servers: {

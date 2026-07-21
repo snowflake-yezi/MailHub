@@ -504,6 +504,7 @@ composite 保存 `revision_id / logical_id / symbol / name / mode / score_policy
 | `reviewed_by / reviewed_at` | 人工处理信息 |
 | `feedback_label` | `confirmed_ad / false_positive / uncertain / NULL` |
 | `review_note / last_error` | 说明和失败摘要 |
+| `release_operation_id / release_receipt_text` | 幂等放行操作与节点持久 receipt |
 
 ### 7.11 `filter_active_states`
 
@@ -1094,8 +1095,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | S5 | P2 | completed | manual/ad 编译器、symbol DAG、atomic snapshot、状态上报 | 节点保持 `legacy` | 单元测试、bundle 故障保留最后版本、双客户端 checksum 一致 |
 | S6 | P2 | completed | `dual_shadow`、统一决策记录、本地两阶段 outbox、回放工具 | legacy 决定真实动作 | shadow 零副作用、断网恢复、同 revision 确定性回放通过 |
 | S7 | P2 | completed | 概览、人工规则、广告策略、命中分析和版本历史 UI | 只编辑 draft | UI contract、i18n、构建和 API 权限测试通过 |
-| S8 | P3 | pending | Maildir 外 quarantine、索引失效、节点查看/放行/receipt、GC | 自动 quarantine 关闭 | 路径边界、原子移动、崩溃恢复、普通查询不可见测试通过 |
-| S9 | P3 | pending | 管理端隔离区、放行、confirm_ad、误判标签和审计 | 仅人工审核 | 幂等放行、附件代理、反馈标签、expired 对账通过 |
+| S8 | P3 | completed | Maildir 外 quarantine、索引失效、节点查看/放行/receipt、GC | 自动 quarantine 关闭 | 路径边界、原子移动、崩溃恢复、普通查询不可见测试通过 |
+| S9 | P3 | completed | 管理端隔离区、放行、confirm_ad、误判标签和审计 | 仅人工审核 | 幂等放行、附件代理、反馈标签、expired 对账通过 |
 | S10 | P4 | pending | manual/ad 新外部配置 API 和独立权限 | 默认无应用授权 | registry、Bearer 权限、审计、隔离数据不可访问测试通过 |
 | S11 | P4 | pending | `ad-seed-v1`、历史回放、阈值报告、canary | 先 shadow/tag，禁止自动 quarantine | 第 15.3 节全部证据和业务签字 |
 | S12 | P4 | pending | `dual_filter` 正式切换、监控和 legacy 回退/收尾 | canary 逐步扩容 | 完整保留周期、回滚演练、生产指标达标 |
@@ -1171,6 +1172,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 
 #### S8：实现节点隔离能力
 
+> 完成记录（2026-07-21，本地 working tree）：新增 Maildir 外 `filterquarantine` 持久层和 `filter.quarantine_base` 重启配置，覆盖目录边界、权限、同盘 rename、跨盘 copy/fsync/rename、staging 恢复、outbox 联合恢复、稳定 key、release receipt、SMTP 成功后仅恢复、GC 与索引失效/预热。节点内部接口提供隔离详情、附件、release、receipt status 和 GC；`dual_filter` 的新引擎 quarantine 才搬出 Maildir，legacy block 保持原行为，默认仍为 `legacy/false`。集成测试证明隔离期间普通 Message-ID 查询 404、专用接口可读、重复放行只 SMTP 一次、恢复后普通查询重新可见，并覆盖“已恢复到 cur 但 completed receipt 尚未写入”的崩溃窗口。
+
 - 在 config schema、mail-node config 和启动校验增加 `filter.quarantine_base` 与 outbox 路径；拒绝空路径、Maildir 内路径、符号链接逃逸和权限不符合要求的目录。
 - 新增 `mail-node/internal/filterquarantine`，实现同文件系统原子 rename；跨文件系统只走 copy、fsync、atomic rename、删除源文件的显式降级路径。
 - 扩展 `mail-node/internal/handler/node.go` 的 internal routes，提供隔离详情、附件、release 和 receipt status；所有路径使用稳定 quarantine key，不接受调用方传任意文件路径。
@@ -1178,6 +1181,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 - 此步骤只提供能力，`filter.engine_mode` 保持 `legacy`，`filter.auto_quarantine_enabled` 保持 `false`。
 
 #### S9：实现管理端审核和反馈闭环
+
+> 完成记录（2026-07-21，本地 working tree）：ready decision 与 quarantine 事实原子落库；控制面增加列表/详情、原件和附件节点代理、数据库条件状态机、operation ID、receipt 超时对账、`confirmed_ad / false_positive / uncertain` 反馈、expired 对账和审计。管理端新增三语“隔离审核”页签，支持状态筛选、原件/附件查看、确认广告、误判放行，以及按精确邮箱或精确域名创建 shadow allow 草稿后独立放行；组合操作分别返回草稿与放行结果且绝不自动发布。桌面 1440px 与移动 390px 浏览器验收无 body/抽屉横向溢出。
 
 - 新增 quarantine/decision store 与 handler，管理端只通过节点专用内部接口代理正文和附件，不把隔离 EML 复制到数据库。
 - release 使用 operation ID、数据库条件更新和节点 receipt 保证幂等；SMTP 已成功时重试只能继续 Maildir 恢复。
@@ -1245,6 +1250,8 @@ npm run build
 | 2026-07-21 | S7 | completed | working tree | 五页签/策略生命周期/Legacy UI contract、864 个三语键、Vite build、mgmt-system 全量 test/vet 通过；版本 diff、动作面预览、节点收敛和 decision evidence 已覆盖 | 未部署；UI 只允许编辑 draft，Legacy 页面继续保留 |
 | 2026-07-21 | S5-S7 | completed | `3793d08` | 三个 Go 模块全量 test/vet、P2 关键包 race、Web 864 个三语键/UI contract/build 及 diff check 通过；生产 mgmt/mail-node/replay SHA256 分别为 `32d95386b45ffe057667e6fd0a1b73c8b13d93ad74e595e9182ef5e99250c954`、`61b1cb62cb50783ef0b11b9b75ea4b3fc75d7540a71eb80a61c6b2ce11aa28ad`、`24665b6327dba62af963494b69a6e6247c8f69ef36cee546ea9e73da387c1e41`，第二节点 canary 后再发布主机，双节点 authenticated health 200、outbox 存在、当前 PID 错误计数 0；公网 index/JS/CSS 200 | 主机回滚点 `/opt/mgmt-system/backups/filter-p2-s5-s7-3793d08-20260721-063501`（DB dump 71,888 字节，SHA256 `719cf8f417a1ed8176373edcac49c90b615a27955d34402f782338a04375a0e1`），第二节点回滚点 `/root/mailhub-backups/filter-p2-s5-s7-3793d08-20260721-063506`；mgmt PID `15144 -> 32269`，主节点 PID `809 -> 32326`，第二节点最终 PID `19333 -> 19466`。验收发现两个运行配置仅在 schema 声明、未写入 `system_configs`，节点 fallback 仍安全保持 `legacy/false`，随后由 `79b8e97` 修复种子 |
 | 2026-07-21 | S6 | completed | `79b8e97` | 从干净提交构建的 mgmt binary 为 21,975,150 字节，SHA256 `57d91dfcd63cff738a3da19c895934bf270faf49fd60fd1077bd7961ddd4e44d`，build info 为 `vcs.revision=79b8e97776fd481355563ed86d5d2fdffd43072c / vcs.modified=false`；生产 PID `32269 -> 1503`，health/ready 200，当前 PID 错误计数 0。`system_configs` 已显式包含 `filter.engine_mode=legacy`、`filter.auto_quarantine_enabled=false`，两节点均上报相同 `global` 快照；manual/ad revision、active state、decision 均为 0，4 条 node state 的 desired/applied/error 均为 0 | 小修复回滚点 `/opt/mgmt-system/backups/filter-p2-seed-79b8e97-20260721-145900`；两台 mail-node 未替换，PID `32326` / `19466`、SHA256 均为 `61b1cb62cb50783ef0b11b9b75ea4b3fc75d7540a71eb80a61c6b2ce11aa28ad`，authenticated health 200、outbox 存在、错误计数 0，节点配置 revision 保持 `4/4` 与 `3/3`。路由验收：admin/internal 无鉴权 401、带鉴权且无 active manual/ad bundle 404、legacy internal 200、legacy external 404；生产未切换 `dual_shadow` 或 `dual_filter` |
+| 2026-07-21 | S8 | completed | working tree | `filterquarantine`、节点 handler/forward/outbox 定向与全量 test/vet 通过；P3 节点高风险包 race 通过；集成覆盖 Maildir 不可见、隔离专用读取、幂等放行、恢复可见、GC、联合崩溃恢复和 receipt 崩溃窗口 | 尚未提交、部署或启用；`filter.engine_mode=legacy`、`filter.auto_quarantine_enabled=false` 的生产安全边界不变 |
+| 2026-07-21 | S9 | completed | working tree | 控制面 store/service/handler/lifecycle 全量 test/vet 与 P3 关键包 race 通过；Web 896 个三语键、UI contract、Vite build 通过；Chrome 1440px/390px 隔离审核抽屉均无横向溢出 | 尚未提交、部署、创建 active 策略或执行生产 shadow/历史邮件试跑；组合白名单操作只创建 shadow draft |
 
 ---
 

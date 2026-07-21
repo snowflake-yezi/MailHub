@@ -160,6 +160,8 @@ type FilterQuarantine struct {
 	FeedbackLabel      *string    `gorm:"type:enum('confirmed_ad','false_positive','uncertain')" json:"feedback_label,omitempty"`
 	ReviewNote         string     `gorm:"type:text" json:"review_note,omitempty"`
 	LastError          string     `gorm:"type:text" json:"last_error,omitempty"`
+	ReleaseOperationID string     `gorm:"size:64;index" json:"release_operation_id,omitempty"`
+	ReleaseReceiptText string     `gorm:"type:longtext" json:"-"`
 	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }

@@ -102,6 +102,19 @@ export const filterPolicyAPI = {
   cloneAd(revision) { return request(`/ad-filter-revisions/${revision}/clone`, { method: 'POST' }); },
   decisions(params = {}) { return get('/filter-decisions', params); },
   decision(key) { return get(`/filter-decisions/${encodeURIComponent(key)}`); },
+  quarantines(params = {}) { return get('/filter-quarantines', params); },
+  quarantine(key) { return get(`/filter-quarantines/${encodeURIComponent(key)}`); },
+  quarantineMessage(key) { return get(`/filter-quarantines/${encodeURIComponent(key)}/message`); },
+  quarantineAttachmentURL(key, index) { return `${API_BASE}/filter-quarantines/${encodeURIComponent(key)}/attachments/${index}`; },
+  releaseQuarantine(key, feedbackLabel = 'uncertain') {
+    return request(`/filter-quarantines/${encodeURIComponent(key)}/release`, { method: 'POST', body: JSON.stringify({ feedback_label: feedbackLabel }) });
+  },
+  allowAndReleaseQuarantine(key, scope = 'email') {
+    return request(`/filter-quarantines/${encodeURIComponent(key)}/allow-and-release`, { method: 'POST', body: JSON.stringify({ scope }) });
+  },
+  confirmQuarantineAd(key, note = '') {
+    return request(`/filter-quarantines/${encodeURIComponent(key)}/confirm-ad`, { method: 'POST', body: JSON.stringify({ note }) });
+  },
 };
 
 // ─── Mailboxes ───────────────────────────────────────────

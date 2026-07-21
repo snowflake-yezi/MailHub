@@ -18,6 +18,7 @@ import (
 	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/filterdecision"
 	"github.com/ticket/email-mail-node/internal/filteroutbox"
+	"github.com/ticket/email-mail-node/internal/filterquarantine"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 	"github.com/ticket/email-mail-node/internal/mailparse"
 )
@@ -54,13 +55,14 @@ type ForwardConfig struct {
 
 // Service 邮件转发服务
 type Service struct {
-	cfg       ForwardConfig
-	engine    *filter.Engine
-	mgr       *mailbox.Manager
-	remoteCfg *config.RemoteConfig // 动态配置，用于热加载转发目标 target_address
-	scanReset chan struct{}
-	decision  *filterdecision.Engine
-	outbox    *filteroutbox.Queue
+	cfg        ForwardConfig
+	engine     *filter.Engine
+	mgr        *mailbox.Manager
+	remoteCfg  *config.RemoteConfig // 动态配置，用于热加载转发目标 target_address
+	scanReset  chan struct{}
+	decision   *filterdecision.Engine
+	outbox     *filteroutbox.Queue
+	quarantine *filterquarantine.Store
 
 	mu         sync.Mutex
 	activeJobs int // count of files currently being processed
@@ -70,6 +72,8 @@ func (s *Service) ConfigurePolicyRuntime(engine *filterdecision.Engine, outbox *
 	s.decision = engine
 	s.outbox = outbox
 }
+
+func (s *Service) ConfigureQuarantine(store *filterquarantine.Store) { s.quarantine = store }
 
 // New 创建转发服务。remoteCfg 用于热加载 forward.target_address（可为 nil）。
 func New(cfg ForwardConfig, engine *filter.Engine, mgr *mailbox.Manager, remoteCfg *config.RemoteConfig) *Service {
@@ -347,6 +351,7 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 	result := s.engine.Filter(msg)
 	attemptedAction := legacyContractAction(result.Action)
 	decisionKey := ""
+	quarantineDecision := false
 	mode := s.currentEngineMode()
 	if mode != filterdecision.EngineModeLegacy && s.decision != nil && s.outbox != nil {
 		parsed, parseErr := mailparse.ParseFile(filePath, mailparse.Options{
@@ -378,6 +383,7 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 					if mode == filterdecision.EngineModeDualFilter {
 						attemptedAction = decision.FinalAction
 						result.Action = contractLegacyAction(decision.FinalAction)
+						quarantineDecision = decision.FinalAction == filtercontract.ActionQuarantine
 						result.Reason = "versioned filter decision " + decision.DecisionKey
 						result.RuleID = 0
 					}
@@ -388,6 +394,16 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 
 	// 4. Block → keep original for LLM API, move to cur/ so we don't re-scan
 	if result.Action == filter.ActionBlock {
+		if quarantineDecision && s.quarantine != nil {
+			metadata, quarantineErr := s.quarantine.Quarantine(filePath, sourceAddr, headers["message-id"], decisionKey, time.Time{})
+			if quarantineErr != nil {
+				s.completeDecisionWithQuarantine(decisionKey, attemptedAction, filtercontract.ActionQuarantine, "", "", quarantineErr)
+				return fmt.Errorf("quarantine message: %w", quarantineErr)
+			}
+			s.completeDecisionWithQuarantine(decisionKey, attemptedAction, filtercontract.ActionQuarantine, metadata.QuarantineKey, metadata.OriginalMaildirKey, nil)
+			log.Printf("[forward] quarantined: from=%s to=%s key=%s", msg.From, msg.To, metadata.QuarantineKey)
+			return nil
+		}
 		if err := moveToCur(filePath); err != nil {
 			s.completeDecision(decisionKey, attemptedAction, filtercontract.ActionQuarantine, err)
 			return fmt.Errorf("blocked message move to cur: %w", err)
@@ -435,10 +451,17 @@ func (s *Service) currentEngineMode() string {
 }
 
 func (s *Service) completeDecision(decisionKey, attemptedAction, actualAction string, processingErr error) {
+	s.completeDecisionWithQuarantine(decisionKey, attemptedAction, actualAction, "", "", processingErr)
+}
+
+func (s *Service) completeDecisionWithQuarantine(decisionKey, attemptedAction, actualAction, quarantineKey, originalMaildirKey string, processingErr error) {
 	if decisionKey == "" || s.outbox == nil {
 		return
 	}
-	result := filtercontract.ProcessingResult{Status: "succeeded", AttemptedAction: attemptedAction, ActualAction: actualAction}
+	result := filtercontract.ProcessingResult{
+		Status: "succeeded", AttemptedAction: attemptedAction, ActualAction: actualAction,
+		QuarantineKey: quarantineKey, OriginalMaildirKey: originalMaildirKey,
+	}
 	if processingErr != nil {
 		result.Status = "failed"
 		result.ErrorCode = "processing_failed"
@@ -447,6 +470,22 @@ func (s *Service) completeDecision(decisionKey, attemptedAction, actualAction st
 	if err := s.outbox.Ready(decisionKey, result); err != nil {
 		log.Printf("[filter] HIGH: outbox ready failed: decision_key=%s error=%v", decisionKey, err)
 	}
+}
+
+// ForwardQuarantined delivers a quarantined original through the same SMTP
+// path as normal forwarding. Release idempotency is owned by filterquarantine.
+func (s *Service) ForwardQuarantined(filePath, sourceAddr string) (string, error) {
+	headers, _, err := readForFiltering(filePath, s.currentMaxEmailSize(), s.currentBodyPreviewSize())
+	if err != nil {
+		return "", err
+	}
+	target := s.currentTarget()
+	user, pass := s.currentSMTPAuth()
+	subject := buildSubject(s.cfg.SubjectPrefix, sourceAddr, filter.ActionPass, headers["subject"])
+	if err := streamToSMTP(s.currentSMTPConfig(), filePath, subject, sourceAddr, target, user, pass); err != nil {
+		return target, err
+	}
+	return target, nil
 }
 
 func legacyContractAction(action filter.Action) string {

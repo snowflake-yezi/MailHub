@@ -104,6 +104,18 @@ type FilterDecisionPage struct {
 	Size  int                  `json:"size"`
 }
 
+type FilterQuarantineView struct {
+	store.FilterQuarantineRecord
+	ReleaseReceipt *filtercontract.ReleaseReceipt `json:"release_receipt,omitempty"`
+}
+
+type FilterQuarantinePage struct {
+	Items []FilterQuarantineView `json:"items"`
+	Total int64                  `json:"total"`
+	Page  int                    `json:"page"`
+	Size  int                    `json:"size"`
+}
+
 func NewFilterPolicyService(s *store.Store) *FilterPolicyService {
 	return &FilterPolicyService{store: s}
 }
@@ -554,10 +566,172 @@ func (s *FilterPolicyService) RecordDecision(event filtercontract.OutboxEvent) (
 	if err != nil {
 		return nil, err
 	}
-	if err := s.store.SaveFilterDecision(decision); err != nil {
+	var quarantine *model.FilterQuarantine
+	if event.Result.QuarantineKey != "" {
+		retentionDays := s.store.GetConfigInt("general.default_retention_days", 30)
+		if retentionDays <= 0 {
+			retentionDays = 30
+		}
+		quarantine, err = quarantineModel(event, retentionDays)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := s.store.SaveFilterDecisionAndQuarantine(decision, quarantine); err != nil {
 		return nil, err
 	}
 	return decision, nil
+}
+
+func quarantineModel(event filtercontract.OutboxEvent, retentionDays int) (*model.FilterQuarantine, error) {
+	if event.Result == nil || event.Result.Status != "succeeded" || event.Result.ActualAction != filtercontract.ActionQuarantine ||
+		strings.TrimSpace(event.Result.QuarantineKey) == "" || retentionDays <= 0 {
+		return nil, store.ErrInvalidFilterQuarantine
+	}
+	return &model.FilterQuarantine{
+		Status: "quarantined", QuarantineKey: event.Result.QuarantineKey,
+		OriginalMaildirKey: event.Result.OriginalMaildirKey,
+		ExpiresAt:          event.Decision.EvaluatedAt.Add(time.Duration(retentionDays) * 24 * time.Hour),
+	}, nil
+}
+
+func (s *FilterPolicyService) ListQuarantines(page, size int, status string) (*FilterQuarantinePage, error) {
+	records, total, err := s.store.ListFilterQuarantines(page, size, status)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]FilterQuarantineView, 0, len(records))
+	for _, record := range records {
+		view, err := quarantineView(record)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *view)
+	}
+	return &FilterQuarantinePage{Items: items, Total: total, Page: page, Size: size}, nil
+}
+
+func (s *FilterPolicyService) GetQuarantine(key string) (*FilterQuarantineView, error) {
+	record, err := s.store.GetFilterQuarantine(key)
+	if err != nil {
+		return nil, err
+	}
+	return quarantineView(*record)
+}
+
+func quarantineView(record store.FilterQuarantineRecord) (*FilterQuarantineView, error) {
+	view := &FilterQuarantineView{FilterQuarantineRecord: record}
+	if record.ReleaseReceiptText != "" {
+		var receipt filtercontract.ReleaseReceipt
+		if err := filtercontract.DecodeStrict([]byte(record.ReleaseReceiptText), &receipt); err != nil {
+			return nil, err
+		}
+		view.ReleaseReceipt = &receipt
+	}
+	return view, nil
+}
+
+func (s *FilterPolicyService) BeginQuarantineRelease(key, operationID, actor string) (*FilterQuarantineView, error) {
+	record, err := s.store.BeginFilterQuarantineRelease(key, operationID, actor)
+	if err != nil {
+		return nil, err
+	}
+	return quarantineView(*record)
+}
+
+func (s *FilterPolicyService) CompleteQuarantineRelease(key, operationID, feedbackLabel, actor string, receipt filtercontract.ReleaseReceipt, callErr error) error {
+	if receipt.OperationID != operationID || receipt.QuarantineKey != key {
+		return store.ErrInvalidFilterQuarantine
+	}
+	if err := receipt.Validate(); err != nil {
+		return err
+	}
+	data, err := receipt.CanonicalJSON()
+	if err != nil {
+		return err
+	}
+	status := "release_failed"
+	lastError := receipt.ErrorSummary
+	if callErr == nil && receipt.Status == filtercontract.ReleaseStatusReleased && receipt.SMTPDelivered && receipt.RestoredToCur {
+		status = "released"
+		lastError = ""
+	}
+	if err := s.store.CompleteFilterQuarantineRelease(key, operationID, status, string(data), lastError, feedbackLabel, actor); err != nil {
+		return err
+	}
+	changes, _ := json.Marshal(map[string]any{"operation_id": operationID, "status": status, "receipt": receipt})
+	return s.store.CreateFilterAudit(&model.FilterAudit{
+		PolicyKind: "quarantine", Action: "release", EntityType: "filter_quarantine", EntityID: key,
+		Actor: actor, ChangesText: string(changes), RequestID: operationID,
+	})
+}
+
+func (s *FilterPolicyService) ConfirmQuarantineAd(key, note, actor, requestID string) error {
+	if err := s.store.ReviewFilterQuarantine(key, "confirmed_ad", "confirmed_ad", note, actor); err != nil {
+		return err
+	}
+	changes, _ := json.Marshal(map[string]string{"feedback_label": "confirmed_ad", "note": note})
+	return s.store.CreateFilterAudit(&model.FilterAudit{
+		PolicyKind: "quarantine", Action: "confirm_ad", EntityType: "filter_quarantine", EntityID: key,
+		Actor: actor, ChangesText: string(changes), RequestID: requestID,
+	})
+}
+
+func (s *FilterPolicyService) CreateQuarantineAllowDraft(key, sender, scope, actor, requestID string) (*ManualFilterRevisionView, error) {
+	address, err := mail.ParseAddress(strings.TrimSpace(sender))
+	if err != nil || strings.TrimSpace(address.Address) == "" {
+		return nil, &filtercontract.ContractError{Code: filtercontract.ErrorInvalidValue, Path: "sender", Message: "quarantined message sender is invalid"}
+	}
+	normalized := strings.ToLower(strings.TrimSpace(address.Address))
+	field := "header_from.address"
+	allowValue := normalized
+	if scope == "domain" {
+		parts := strings.Split(normalized, "@")
+		if len(parts) != 2 || parts[1] == "" {
+			return nil, &filtercontract.ContractError{Code: filtercontract.ErrorInvalidValue, Path: "sender", Message: "sender domain is invalid"}
+		}
+		field, allowValue = "header_from.domain", parts[1]
+	} else if scope != "" && scope != "email" {
+		return nil, &filtercontract.ContractError{Code: filtercontract.ErrorInvalidEnum, Path: "scope", Message: "scope must be email or domain"}
+	}
+	var baseRevision *uint64
+	active, err := s.store.GetFilterActiveState(filtercontract.PolicyManual)
+	if err == nil {
+		baseRevision = &active.ActiveRevision
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	draft, err := s.CreateManualDraft(baseRevision, actor, requestID)
+	if err != nil {
+		return nil, err
+	}
+	logicalSuffix := key
+	if len(logicalSuffix) > 12 {
+		logicalSuffix = logicalSuffix[:12]
+	}
+	draft, err = s.AddManualRule(draft.Revision, filtercontract.ManualRule{
+		LogicalID: "quarantine-allow-" + logicalSuffix, Name: "Allow " + allowValue,
+		ScopeType: "global", Action: filtercontract.ActionAllow, Priority: 1,
+		Mode: filtercontract.ModeShadow, Source: "manual",
+		Conditions: []filtercontract.Condition{{
+			Field: field, Operator: "eq", Value: filtercontract.StringValue(allowValue), Position: 0,
+		}},
+	}, actor, requestID)
+	if err != nil {
+		return nil, err
+	}
+	changes, _ := json.Marshal(map[string]any{"manual_revision": draft.Revision, "scope": scope, "value": allowValue, "mode": "shadow"})
+	if err := s.store.CreateFilterAudit(&model.FilterAudit{
+		PolicyKind: "quarantine", Action: "create_allow_draft", EntityType: "filter_quarantine", EntityID: key,
+		Actor: actor, ChangesText: string(changes), RequestID: requestID,
+	}); err != nil {
+		return nil, err
+	}
+	return draft, nil
+}
+
+func (s *FilterPolicyService) MarkQuarantinesExpired(nodeID uint64, keys []string) error {
+	return s.store.MarkFilterQuarantinesExpired(nodeID, keys)
 }
 
 func (s *FilterPolicyService) ListDecisions(page, size int, action string) (*FilterDecisionPage, error) {

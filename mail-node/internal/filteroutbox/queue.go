@@ -144,6 +144,12 @@ func (queue *Queue) Ready(decisionKey string, result filtercontract.ProcessingRe
 }
 
 func (queue *Queue) RecoverStaged() (int, error) {
+	return queue.RecoverStagedWithResolver(nil)
+}
+
+// RecoverStagedWithResolver lets a durable action store complete an event
+// that committed immediately before the process exited.
+func (queue *Queue) RecoverStagedWithResolver(resolve func(decisionKey string) (filtercontract.ProcessingResult, bool)) (int, error) {
 	entries, err := os.ReadDir(queue.stagedDir)
 	if err != nil {
 		return 0, err
@@ -156,10 +162,16 @@ func (queue *Queue) RecoverStaged() (int, error) {
 			continue
 		}
 		key := strings.TrimSuffix(entry.Name(), ".json")
-		err := queue.Ready(key, filtercontract.ProcessingResult{
+		result := filtercontract.ProcessingResult{
 			Status: "failed", AttemptedAction: filtercontract.ActionAllow, ActualAction: filtercontract.ActionAllow,
 			ErrorCode: "recovered_incomplete", ErrorSummary: "processing did not complete before restart",
-		})
+		}
+		if resolve != nil {
+			if resolved, ok := resolve(key); ok {
+				result = resolved
+			}
+		}
+		err := queue.Ready(key, result)
 		if err != nil {
 			results = append(results, fmt.Errorf("recover %s: %w", key, err))
 			continue
