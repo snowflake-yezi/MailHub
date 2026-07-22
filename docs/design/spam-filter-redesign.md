@@ -1193,6 +1193,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 
 > 完成记录（2026-07-22，本地 working tree）：通过 `apiregistry` 注册第 10.3 节全部 21 条 manual/ad 外部配置路由，使用六项独立精确权限并保持默认零 grant；active 只返回对应 canonical bundle，外部路由不包含 decision、quarantine、正文、附件、放行或反馈。外部应用身份进入策略审计 actor 和 API 访问日志；revision 非正整数、超长 `Idempotency-Key`、逐路由越权、重复 publish 及隔离路径 404 均有契约覆盖。公开 API 文档已更新。认证、handler、registry race 与三个 Go 模块全量 test/vet、Web test/build 均通过。
 
+> 生产验收（2026-07-22）：实现提交 `ed97b26` 与校准工具提交 `fc09a0d` 已推送，控制面从干净 `fc09a0d` 构建并发布。registry 从 6 个 active permissions / 7 条 active resources 增至 12 / 28，新增量准确为 6 / 21；总 grant 仍为 6，两个现有应用仍各 3 个，新权限 grant 为 0。新 manual/ad active 路由无 Token 均为 401，外部 decision/quarantine 路由均为 404。发布未创建、修改或激活任何策略版本。
+
 - 在 `mgmt-system/cmd/server/main.go` 通过 `apiregistry` 注册第 10.3 节路由，权限固定为 `manual-filter:*` 和 `ad-filter:*`，不复用 legacy `filter:*`。
 - 外部写入仍受 draft/validate/publish 状态机约束；外部 API 不注册 decision、quarantine、正文、附件或反馈端点。
 - `apiregistry.Sync` 后核对新资源默认没有应用 grant；授权必须由管理员逐项完成并进入审计。
@@ -1201,6 +1203,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 #### S11-S12：校准、canary 与正式切换
 
 > S11 进展（2026-07-22，本地 working tree）：`filter-replay` 增加严格 manifest 批量模式，可从全 shadow graph 生成 label×action 矩阵、脱敏发件域分层、时间/域 split 泄漏检查、阈值邻近样本和 would-quarantine 清单。报告不输出 EML 路径、正文、Message-ID 或真实发件域。合成三类样本、uncertain 排除、shadow score、泄漏检测和脱敏回归测试通过；生产历史样本、双人复核、shadow 观测、业务签字和 canary 尚未执行，因此 S11 保持 in_progress。
+
+> 工具发布（2026-07-22）：`filter-replay` 已从 `fc09a0d` 构建并安装到生产工具路径，但未执行生产 manifest、历史邮件回放或 shadow 流量采集。生产仍保持 `filter.engine_mode=legacy` 与 `filter.auto_quarantine_enabled=false`；S11/S12 状态不因工具安装而提前完成。
 
 - 先对脱敏历史 Maildir 做离线回放，再在 `dual_shadow` 收集真实流量；报告按 revision 输出三类混淆矩阵、发件域分层结果、阈值附近分布和 would-quarantine 样本。
 - 业务确认误隔离率、shadow 时长、最小样本量和 `ad-seed-v1` 后，只允许通过 server override 选定的 canary 节点进入 `dual_filter`；一期策略没有 mailbox scope。未达到第 15.3 节门槛时，`filter.auto_quarantine_enabled` 必须保持 false，最多启用 tag。
@@ -1259,6 +1263,8 @@ npm run build
 | 2026-07-21 | S8-S9 | completed | `0318ea2` + `d57b3af` | 实现与 canary 修复均已推送；干净构建的 mgmt 为 22,115,648 字节、SHA256 `289fbd89d7d474904b4380eaee9119263403f4478a65a079da700e7a7424de06`、`vcs.revision=0318ea2`，mail-node 为 16,537,194 字节、SHA256 `8dc5ab42bc18dca107261d0c294598e1a7a40d3adc900808703566a05e205501`、`vcs.revision=d57b3af`，两者均 `vcs.modified=false`。mgmt/admin-app 先发布，第二节点 canary 后发布主节点；mgmt PID `1503 -> 9937`，主节点 `32326 -> 12500`，第二节点首次 canary 因 `/var/mail` 父目录 symlink 被安全检查拒绝并自动恢复旧 binary（PID `19466 -> 30782`），`d57b3af` 在节点 Linux 定向测试通过后重新 canary 至 PID `32708`。最终 mgmt/mail-node 均 active，health/ready 200，两节点 healthy 且 revision `4/4`、`3/3`，三个新 PID error 日志为 0；新 admin/internal 路由无鉴权 401、legacy external 404、JS/CSS 200 | 主机回滚点 `/opt/mgmt-system/backups/filter-p3-s8-s9-0318ea2-20260721-084902`，DB dump 77,301 字节、SHA256 `086dba39ecac60c421b226945e5993e2d13c1beb9ce2bc037f0076a43aaa1d58`；第二节点最终回滚点 `/root/mailhub-backups/filter-p3-s8-s9-0318ea2-20260721-091643`，首次 canary 备份 `/root/mailhub-backups/filter-p3-s8-s9-0318ea2-20260721-085215` 保留。`filter.quarantine_base=/var/mail/mailhub-quarantine` 在两节点解析到 `/var/spool/mail/mailhub-quarantine` 且权限为 0700；生产继续保持 `legacy/false`，manual/ad draft 各 1、active/decision/quarantine 均为 0，未执行真实 shadow、历史邮件试跑或自动隔离 |
 | 2026-07-22 | S10 | completed | working tree | 21 条外部策略路由逐项权限测试、无 decision/quarantine 路由、revision/幂等键边界和外部 actor 测试通过；认证/handler/registry race、三个 Go 模块全量 test/vet、Web 909 个三语键/UI contract/build 通过 | 尚未提交或部署；registry 同步不会自动创建应用 grant，未创建或发布策略版本，未修改生产 `legacy/false`。S11/S12 继续等待历史样本、shadow 报告、业务签字和 canary 证据 |
 | 2026-07-22 | S11 | in_progress | working tree | `filter-replay --manifest` 合成三类/uncertain、全 shadow candidate score、label×action 矩阵、时间/域隔离、域哈希、阈值邻近、would-quarantine、敏感内容不出报告及 byte-for-byte 确定性测试通过；mail-node 全量 test/vet 与 replay race 通过 | 工具和操作文档完成；尚无生产脱敏 manifest、真实报告、双人复核或业务签字，未发布 active revision，未切换 `dual_shadow/dual_filter`，未启用自动隔离 |
+| 2026-07-22 | S10 | completed | `ed97b26` + `fc09a0d` | 干净 Linux/amd64 mgmt 制品 22,130,129 字节，SHA256 `dfe07f0417c7d6050cab9fe39cab2c5856a53bb71079b7208c08fc5402bc8f59`，build info 为 `vcs.revision=fc09a0d0b22f9ebf933f88eeebb7f3b82cc1bfcf / vcs.modified=false`；生产 PID `13225 -> 20570`，health/ready 200，新 PID panic/fatal/`[ERROR]` 为 0。registry 实测 active permission/resource 为 12/28，新增 6/21；总 grant 仍为 6，两个应用各 3 个，新权限 grant 为 0；新路由无 Token 401，外部 decision/quarantine 404 | 回滚点 `/opt/mgmt-system/backups/filter-p4-s10-fc09a0d-20260722-022726` 保存旧 mgmt、配置、systemd unit、旧 replay 和完整 DB dump；dump 78,131 字节、SHA256 `6c3370fdc241ae7fb1fc1bbd4e4d524cfcc4b20ae1ebd123ce263f18fe2ab461`。manual/ad revision 各 1 且未变化，active/decision/quarantine 均为 0；两节点直连 health 200、healthy、revision `4/4` 与 `3/3`，生产保持 `legacy/false` |
+| 2026-07-22 | S11 | in_progress | `fc09a0d` | 干净 Linux/amd64 `filter-replay` 制品 7,606,223 字节，SHA256 `f379247fb0690ec4e5c475ebf392a55592da3b1a1b6d5d57edaca5a85c57e9b7`，build info 为 `vcs.revision=fc09a0d0b22f9ebf933f88eeebb7f3b82cc1bfcf / vcs.modified=false`；已安装到生产工具路径且哈希一致，未替换或重启 mail-node | 尚未执行生产脱敏 manifest、历史邮件回放、shadow 观测、双人复核、业务签字或 canary；未发布 active revision，未切换 `dual_shadow/dual_filter`，未启用自动隔离，S11/S12 继续 in_progress |
 
 ---
 
