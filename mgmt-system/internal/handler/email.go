@@ -108,6 +108,30 @@ func (h *EmailHandler) GetEmailBody(c *gin.Context) {
 	h.proxyEmailBody(c, c.Param("message_id"), c.Query("mailbox"))
 }
 
+// GetRawEmail streams the original EML without JSON or Base64 wrapping.
+// GET /api/v1/emails/:message_id/raw?mailbox=xxx
+func (h *EmailHandler) GetRawEmail(c *gin.Context) {
+	h.proxyRawEmail(c, c.Param("message_id"), c.Query("mailbox"))
+}
+
+func (h *EmailHandler) proxyRawEmail(c *gin.Context, messageID, emailAddr string) {
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err != nil {
+		notFound(c, "mailbox not found: "+emailAddr)
+		return
+	}
+	srv, err := h.store.GetServer(mb.ServerID)
+	if err != nil {
+		serverError(c, ErrCodeExternalFail, "mail server not found")
+		return
+	}
+	h.proxyRawEmailDirect(c, srv, messageID, mb.EmailAddress)
+}
+
 func (h *EmailHandler) proxyEmailBody(c *gin.Context, messageID, emailAddr string) {
 	if emailAddr == "" {
 		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
@@ -160,6 +184,10 @@ func (h *EmailHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r 
 	registry.Register(r, apiregistry.Route{
 		Method: http.MethodGet, Path: "/emails/:message_id/attachments/:index", PermissionCode: "email:attachment",
 		GroupName: "邮件读取", Name: "下载附件", SortOrder: 130, Handler: h.GetEmailAttachment,
+	})
+	registry.Register(r, apiregistry.Route{
+		Method: http.MethodGet, Path: "/emails/:message_id/raw", PermissionCode: "email:raw",
+		GroupName: "邮件读取", Name: "下载原始 EML", Description: "流式下载未经重建的原始邮件字节", SortOrder: 140, Handler: h.GetRawEmail,
 	})
 }
 
@@ -341,6 +369,13 @@ func (h *EmailHandler) proxyEmailAttachmentDirect(c *gin.Context, srv *model.Mai
 	query.Set("mailbox", emailAddr)
 	path := "/internal/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(index) + "?" + query.Encode()
 	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
+}
+
+func (h *EmailHandler) proxyRawEmailDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
+	query := url.Values{}
+	query.Set("mailbox", emailAddr)
+	path := "/internal/messages/" + url.PathEscape(messageID) + "/raw?" + query.Encode()
+	proxyRawEmailToServer(c, srv.APIHost, http.MethodGet, path, h.sharedSecret)
 }
 
 func (h *EmailHandler) proxyEmailAttachmentPreviewDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {

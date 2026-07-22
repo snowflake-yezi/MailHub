@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -422,5 +423,87 @@ PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=
 	h.GetMessageAttachment(c3)
 	if w3.Code != http.StatusNotFound {
 		t.Fatalf("missing message status = %d, body = %s", w3.Code, w3.Body.String())
+	}
+}
+
+func TestGetRawMessageReturnsExactMaildirBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	usersFile := filepath.Join(tmp, "users.conf")
+	if err := os.WriteFile(usersFile, []byte("order-raw@example.com:{PLAIN}p::::::\n"), 0600); err != nil {
+		t.Fatalf("write users.conf: %v", err)
+	}
+	vmailbox := filepath.Join(tmp, "vmailbox")
+	if err := os.WriteFile(vmailbox, nil, 0600); err != nil {
+		t.Fatalf("write vmailbox: %v", err)
+	}
+	mgr := mailbox.NewManagerWithFiles(tmp, 5000, 5000, usersFile, vmailbox)
+	h := &NodeHandler{mailboxMgr: mgr, nodeID: 1, nodeName: "test"}
+
+	raw := append([]byte("Message-ID: <raw-1@example.com>\r\nFrom: sender@example.net\r\nTo: order-raw@example.com\r\nContent-Type: application/octet-stream\r\n\r\n"), 0x00, 0xff, '\r', '\n')
+	emlPath := filepath.Join(tmp, "example.com", "order-raw", "new", "message.eml")
+	if err := os.MkdirAll(filepath.Dir(emlPath), 0700); err != nil {
+		t.Fatalf("create maildir: %v", err)
+	}
+	if err := os.WriteFile(emlPath, raw, 0600); err != nil {
+		t.Fatalf("write EML: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/raw/raw?mailbox="+url.QueryEscape("order-raw@example.com"), nil)
+	context.Params = gin.Params{{Key: "message_id", Value: "<raw-1@example.com>"}}
+	h.GetRawMessage(context)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.Bytes())
+	}
+	if !bytes.Equal(response.Body.Bytes(), raw) {
+		t.Fatalf("raw response differs from Maildir file: got %x, want %x", response.Body.Bytes(), raw)
+	}
+	if got := response.Header().Get("Content-Type"); got != "message/rfc822" {
+		t.Errorf("Content-Type = %q, want message/rfc822", got)
+	}
+	if got := response.Header().Get("Content-Length"); got != strconv.Itoa(len(raw)) {
+		t.Errorf("Content-Length = %q, want %d", got, len(raw))
+	}
+	if got := response.Header().Get("Content-Disposition"); !strings.Contains(got, `filename="message.eml"`) {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q", got)
+	}
+}
+
+func TestGetRawMessageReturnsJSONForMissingMessage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmp := t.TempDir()
+	usersFile := filepath.Join(tmp, "users.conf")
+	if err := os.WriteFile(usersFile, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	vmailbox := filepath.Join(tmp, "vmailbox")
+	if err := os.WriteFile(vmailbox, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	h := &NodeHandler{mailboxMgr: mailbox.NewManagerWithFiles(tmp, 5000, 5000, usersFile, vmailbox)}
+
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	context.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/missing/raw?mailbox=box%40example.com", nil)
+	context.Params = gin.Params{{Key: "message_id", Value: "missing"}}
+	h.GetRawMessage(context)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Code != 2003 {
+		t.Fatalf("JSON error = %#v, decode error = %v", body, err)
 	}
 }

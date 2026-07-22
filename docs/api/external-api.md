@@ -26,6 +26,7 @@ Token 由管理端“外部访问”页面签发。管理员创建并命名外�
 - `email:list`：查询邮件列表。
 - `email:body`：查询邮件正文。
 - `email:attachment`：下载邮件附件。
+- `email:raw`：下载字节级原始 EML。
 - `manual-filter:read`：读取生效或指定版本的人工过滤规则。
 - `manual-filter:draft`：创建、修改和校验人工过滤规则草稿。
 - `manual-filter:publish`：发布人工过滤规则版本。
@@ -35,11 +36,11 @@ Token 由管理端“外部访问”页面签发。管理员创建并命名外�
 
 权限编码必须与接口要求完全相等，不做前缀或子串匹配。应用被停用、凭证被撤销或凭证到期后立即返回 401。
 
-升级时，系统会将旧 `api_tokens` 和当时配置的 `auth.tokens` 一次性导入为哈希凭证，逐项验证后删除明文表。旧 `mailbox:create` 同时映射创建和禁用权限，旧 `email:read` 映射邮件列表、正文和附件权限。旧表删除后，`auth.tokens` 只能对应已导入的哈希凭证，不能签发新 Token；完成升级后应从配置文件移除。
+升级时，系统会将旧 `api_tokens` 和当时配置的 `auth.tokens` 一次性导入为哈希凭证，逐项验证后删除明文表。旧 `mailbox:create` 同时映射创建和禁用权限，旧 `email:read` 只映射邮件列表、正文和附件权限，不包含原始 EML。旧表删除后，`auth.tokens` 只能对应已导入的哈希凭证，不能签发新 Token；完成升级后应从配置文件移除。
 
 ### 1.3 JSON 响应信封
 
-除附件下载接口外，接口返回统一 JSON 信封：
+除附件和原始 EML 下载接口外，接口返回统一 JSON 信封：
 
 ```json
 {
@@ -259,16 +260,47 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 
 客户端应按 HTTP 状态码和响应头处理下载，不要按 JSON 解析成功响应体。上游 4xx/5xx 错误可能透传 JSON 错误体。
 
-### 3.5 调用顺序与性能语义
+### 3.5 下载原始 EML
 
-管理后台和外部 API 共用 mail-node 的 Message-ID 路径索引，接口契约不因索引而变化。建议调用方保持“列表 -> 正文/附件”的顺序：
+```http
+GET /api/v1/emails/{message_id}/raw?mailbox={email}
+Authorization: Bearer <token with email:raw permission>
+```
+
+参数：
+
+| 参数 | 位置 | 必填 | 说明 |
+|------|------|------|------|
+| `message_id` | path | 是 | 邮件 Message-ID 或系统 fallback ID |
+| `mailbox` | query | 是 | 邮箱地址 |
+
+成功响应不是 JSON 信封，而是 Maildir 中原始 EML 的字节流：
+
+```http
+HTTP/1.1 200 OK
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="message.eml"
+Content-Length: 12345
+Cache-Control: private, no-store
+X-Content-Type-Options: nosniff
+
+<raw EML bytes>
+```
+
+该接口不会解析后重建邮件，也不会使用 Base64 或 JSON 包装。调用方应先判断状态码，按 `Content-Length` 校验实际接收字节数，并在落库或写入对象存储时自行计算 SHA-256。上游 4xx/5xx 错误仍可能返回 JSON 错误信封。
+
+`email:raw` 是独立的高敏感权限，不包含在旧 `email:read` 映射中，也不会自动授予现有应用。
+
+### 3.6 调用顺序与性能语义
+
+管理后台和外部 API 共用 mail-node 的 Message-ID 路径索引，接口契约不因索引而变化。建议调用方保持“列表 -> 正文/附件/原始 EML”的顺序：
 
 1. 邮件列表解析当前页时会预热该页 Message-ID 到 Maildir 路径的本地索引。
-2. 后续正文、预览和附件请求命中索引后直接定位目标 EML，只完整解析目标邮件一次。
+2. 后续正文、预览、附件和原始 EML 请求命中索引后直接定位目标文件；正文和附件会完整解析目标邮件，原始 EML 接口直接读取文件。
 3. mail-node 重启后的第一次冷请求会扫描该邮箱的邮件头，但不会完整解析每一封正常邮件。
-4. 索引只缓存路径和文件指纹，不缓存正文或附件字节；重复下载仍会解析目标 EML，并继续经过 mgmt-system 二进制代理。
+4. 索引只缓存路径和文件指纹，不缓存正文、附件或 EML 字节；重复下载继续经过 mgmt-system 二进制代理。
 
-因此，本地索引会同时改善管理端和所有外部调用方的正文/附件首字节延迟，但不会替代高并发重复下载所需的 MinIO、Range、CDN 或预签名 URL。容量边界见[部署容量与附件存储边界](../deployment-capacity.md)。
+因此，本地索引会同时改善管理端和所有外部调用方的正文、附件与原始 EML 首字节延迟，但不会替代高并发重复下载所需的 MinIO、Range、CDN 或预签名 URL。容量边界见[部署容量与附件存储边界](../deployment-capacity.md)。
 
 ---
 
@@ -355,6 +387,7 @@ detector、composite 和 weight 的字段契约见[广告邮件过滤重构设�
 |--------|------------|------|
 | 出票中心 | `mailbox:create,mailbox:read,mailbox:disable` | 创建、查询、禁用订单邮箱 |
 | 大模型系统 | `email:list,email:body,email:attachment` | 拉取邮件列表、正文和附件 |
+| 邮件归档系统 | `email:list,email:raw` | 定位邮件并流式归档字节级原始 EML |
 | 策略同步系统 | `manual-filter:read,manual-filter:draft,ad-filter:read,ad-filter:draft` | 维护和校验草稿，不具备发布能力 |
 | 策略发布系统 | 按需增加 `manual-filter:publish`、`ad-filter:publish` | 独立执行经审批的版本发布 |
 

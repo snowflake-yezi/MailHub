@@ -35,6 +35,7 @@ const RESOURCE_TRANSLATION_KEYS = {
   'GET /api/v1/mailboxes/:mailbox_ref/messages': 'listEmailsByMailbox',
   'GET /api/v1/emails/:message_id/body': 'readEmailBody',
   'GET /api/v1/emails/:message_id/attachments/:index': 'downloadAttachment',
+  'GET /api/v1/emails/:message_id/raw': 'downloadRawEmail',
 }
 
 function permissionName(t, permission) {

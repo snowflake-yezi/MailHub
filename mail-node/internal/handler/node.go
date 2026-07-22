@@ -443,6 +443,44 @@ func (h *NodeHandler) GetMessageBody(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "data": msg})
 }
 
+// GetRawMessage streams the Maildir file without MIME parsing or rewriting.
+// GET /internal/messages/:message_id/raw?mailbox=xxx@domain
+func (h *NodeHandler) GetRawMessage(c *gin.Context) {
+	messageID, err := url.PathUnescape(c.Param("message_id"))
+	if err != nil {
+		messageID = c.Param("message_id")
+	}
+	email := c.Query("mailbox")
+	if parts := strings.SplitN(email, "@", 2); len(parts) != 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1002, "message": "invalid mailbox param"})
+		return
+	}
+
+	filePath, ok := h.findMessagePath(email, messageID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"code": 2003, "message": "message not found"})
+		return
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 5000, "message": "failed to open message file"})
+		return
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 5000, "message": "failed to stat message file"})
+		return
+	}
+
+	c.DataFromReader(http.StatusOK, info.Size(), "message/rfc822", file, map[string]string{
+		"Cache-Control":          "private, no-store",
+		"Content-Disposition":    contentDisposition("attachment", "message.eml"),
+		"X-Content-Type-Options": "nosniff",
+	})
+}
+
 // DeleteMessage permanently removes one Maildir message matched by mailbox and Message-ID.
 // DELETE /internal/messages/:message_id?mailbox=xxx@domain
 func (h *NodeHandler) DeleteMessage(c *gin.Context) {
@@ -789,6 +827,7 @@ func (h *NodeHandler) RegisterInternalRoutes(rg *gin.RouterGroup) {
 	rg.DELETE("/mailboxes/:email/messages/expired", h.PurgeExpiredMessages)
 	rg.POST("/messages/retention/purge", h.PurgeExpiredMessagesBatch)
 	rg.GET("/messages/:message_id", h.GetMessageBody)
+	rg.GET("/messages/:message_id/raw", h.GetRawMessage)
 	rg.DELETE("/messages/:message_id", h.DeleteMessage)
 	rg.GET("/messages/:message_id/attachments/:index", h.GetMessageAttachment)
 	rg.GET("/messages/:message_id/attachments/:index/preview", h.GetMessageAttachmentPreview)

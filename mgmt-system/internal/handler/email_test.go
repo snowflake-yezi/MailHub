@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -250,6 +252,81 @@ func TestGetEmailBodyProxiesSuccess(t *testing.T) {
 	}
 }
 
+func TestGetRawEmailProxiesExactBytes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	raw := append([]byte("Message-ID: <raw-1@example.com>\r\nContent-Type: application/octet-stream\r\n\r\n"), 0x00, 0xff, '\r', '\n')
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Internal-Token"); got != "shared-secret" {
+			t.Errorf("X-Internal-Token = %q, want shared-secret", got)
+		}
+		if got := r.URL.Path; got != "/internal/messages/raw-1/raw" {
+			t.Errorf("upstream path = %q", got)
+		}
+		if got := r.URL.Query().Get("mailbox"); got != "box@example.com" {
+			t.Errorf("mailbox = %q, want box@example.com", got)
+		}
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Header().Set("Content-Disposition", `attachment; filename="message.eml"`)
+		w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+		w.Header().Set("Cache-Control", "private, no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(raw)
+	}))
+	defer upstream.Close()
+
+	handler := newEmailHandlerForUpstream(strings.TrimPrefix(upstream.URL, "http://"))
+	router := gin.New()
+	router.GET("/emails/:message_id/raw", handler.GetRawEmail)
+
+	response := httptest.NewRecorder()
+	target := "/emails/raw-1/raw?mailbox=box%40example.com"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.Bytes())
+	}
+	if !bytes.Equal(response.Body.Bytes(), raw) {
+		t.Fatalf("raw response differs from upstream: got %x, want %x", response.Body.Bytes(), raw)
+	}
+	for header, want := range map[string]string{
+		"Content-Type":           "message/rfc822",
+		"Content-Disposition":    `attachment; filename="message.eml"`,
+		"Content-Length":         strconv.Itoa(len(raw)),
+		"Cache-Control":          "private, no-store",
+		"X-Content-Type-Options": "nosniff",
+	} {
+		if got := response.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
+	}
+}
+
+func TestGetRawEmailPassesUpstreamJSONError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":2003,"message":"message not found"}`))
+	}))
+	defer upstream.Close()
+
+	handler := newEmailHandlerForUpstream(strings.TrimPrefix(upstream.URL, "http://"))
+	router := gin.New()
+	router.GET("/emails/:message_id/raw", handler.GetRawEmail)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/emails/missing/raw?mailbox=box%40example.com", nil))
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Code != 2003 {
+		t.Fatalf("JSON error = %#v, decode error = %v", body, err)
+	}
+}
+
 func TestGetEmailBodyRejectsMalformedUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -323,5 +400,27 @@ func TestRegisterExternalEmailListRoutesRequiresEmailListPermission(t *testing.T
 		if body.Code != ErrCodeInsufficientScope || !strings.Contains(body.Message, "required: email:list") {
 			t.Fatalf("%s body = %#v", target, body)
 		}
+	}
+}
+
+func TestRegisterExternalRawEmailRouteRequiresRawPermission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	group := router.Group("/api/v1")
+	registry := apiregistry.New("/api/v1")
+	(&EmailHandler{}).RegisterExternalRoutes(registry, group)
+
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/emails/raw-1/raw?mailbox=box%40example.com", nil))
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var body Response
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Code != ErrCodeInsufficientScope || !strings.Contains(body.Message, "required: email:raw") {
+		t.Fatalf("body = %#v", body)
 	}
 }
