@@ -37,6 +37,7 @@ roundcube.conf
 # === 部署产物 ===
 *.tar.gz
 *.zip
+/build/
 
 # === 备份 ===
 *.bak-*

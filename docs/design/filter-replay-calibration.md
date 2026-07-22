@@ -73,3 +73,32 @@ manifest 模式要求 `--server-id` 和 `--ad-bundle`，不能与单封回放的
 5. 放行幂等、outbox 恢复、策略回滚与 `legacy` 快速回退演练通过。
 
 任何一项未满足时，生产保持 `filter.auto_quarantine_enabled=false`，只允许 shadow 或 tag。
+
+## 5. Shadow 采集切换
+
+历史 baseline 不足时，可以发布全 shadow bundle 并进入 `dual_shadow` 收集真实流量，但真实动作仍由 legacy 引擎决定。使用与控制面相同 revision 构建的 `filter-shadow-ops`，按以下顺序执行：
+
+```bash
+filter-shadow-ops --action status --revision 1
+
+filter-shadow-ops \
+  --action publish-shadow \
+  --revision 1 \
+  --expected-ad-checksum <baseline-ad-checksum> \
+  --confirm PUBLISH_SHADOW
+
+# 等待所有节点的 manual/ad desired_revision、applied_revision 和 checksum 收敛后：
+filter-shadow-ops \
+  --action enable-dual-shadow \
+  --revision 1 \
+  --expected-ad-checksum <baseline-ad-checksum> \
+  --confirm ENABLE_DUAL_SHADOW
+```
+
+命令只接受空 manual revision 和 detector/composite 全为 `shadow` 的 ad revision；存在节点级 `filter.engine_mode` 或 `filter.auto_quarantine_enabled` override、全局自动隔离不为 false、checksum 不符、任一节点缺少策略状态或 applied 未收敛时均拒绝变更。异常时回退：
+
+```bash
+filter-shadow-ops --action legacy --confirm RETURN_LEGACY
+```
+
+`dual_shadow` 不代表 canary enforce 已获批准。进入 `dual_filter` 仍必须满足第 4 节全部门槛。
