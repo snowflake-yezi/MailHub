@@ -1097,8 +1097,8 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 | S7 | P2 | completed | 概览、人工规则、广告策略、命中分析和版本历史 UI | 只编辑 draft | UI contract、i18n、构建和 API 权限测试通过 |
 | S8 | P3 | completed | Maildir 外 quarantine、索引失效、节点查看/放行/receipt、GC | 自动 quarantine 关闭 | 路径边界、原子移动、崩溃恢复、普通查询不可见测试通过 |
 | S9 | P3 | completed | 管理端隔离区、放行、confirm_ad、误判标签和审计 | 仅人工审核 | 幂等放行、附件代理、反馈标签、expired 对账通过 |
-| S10 | P4 | pending | manual/ad 新外部配置 API 和独立权限 | 默认无应用授权 | registry、Bearer 权限、审计、隔离数据不可访问测试通过 |
-| S11 | P4 | pending | `ad-seed-v1`、历史回放、阈值报告、canary | 先 shadow/tag，禁止自动 quarantine | 第 15.3 节全部证据和业务签字 |
+| S10 | P4 | completed | manual/ad 新外部配置 API 和独立权限 | 默认无应用授权 | registry、Bearer 权限、审计、隔离数据不可访问测试通过 |
+| S11 | P4 | in_progress | `ad-seed-v1`、历史回放、阈值报告、canary | 先 shadow/tag，禁止自动 quarantine | 第 15.3 节全部证据和业务签字 |
 | S12 | P4 | pending | `dual_filter` 正式切换、监控和 legacy 回退/收尾 | canary 逐步扩容 | 完整保留周期、回滚演练、生产指标达标 |
 | S13 | P5 | pending | Bayes/FTRL/Rspamd provider shadow 评估 | 不接管最终动作 | 独立离线/在线 shadow 报告和资源成本评审 |
 
@@ -1191,12 +1191,16 @@ S7 和 S8 可以并行开发，但 S9 必须等待两者完成。S10 可以在 s
 
 #### S10：开放新外部配置 API
 
+> 完成记录（2026-07-22，本地 working tree）：通过 `apiregistry` 注册第 10.3 节全部 21 条 manual/ad 外部配置路由，使用六项独立精确权限并保持默认零 grant；active 只返回对应 canonical bundle，外部路由不包含 decision、quarantine、正文、附件、放行或反馈。外部应用身份进入策略审计 actor 和 API 访问日志；revision 非正整数、超长 `Idempotency-Key`、逐路由越权、重复 publish 及隔离路径 404 均有契约覆盖。公开 API 文档已更新。认证、handler、registry race 与三个 Go 模块全量 test/vet、Web test/build 均通过。
+
 - 在 `mgmt-system/cmd/server/main.go` 通过 `apiregistry` 注册第 10.3 节路由，权限固定为 `manual-filter:*` 和 `ad-filter:*`，不复用 legacy `filter:*`。
 - 外部写入仍受 draft/validate/publish 状态机约束；外部 API 不注册 decision、quarantine、正文、附件或反馈端点。
 - `apiregistry.Sync` 后核对新资源默认没有应用 grant；授权必须由管理员逐项完成并进入审计。
 - 更新外部 API 文档和契约测试，覆盖 URL 参数、重复 publish、越权访问和幂等错误响应。
 
 #### S11-S12：校准、canary 与正式切换
+
+> S11 进展（2026-07-22，本地 working tree）：`filter-replay` 增加严格 manifest 批量模式，可从全 shadow graph 生成 label×action 矩阵、脱敏发件域分层、时间/域 split 泄漏检查、阈值邻近样本和 would-quarantine 清单。报告不输出 EML 路径、正文、Message-ID 或真实发件域。合成三类样本、uncertain 排除、shadow score、泄漏检测和脱敏回归测试通过；生产历史样本、双人复核、shadow 观测、业务签字和 canary 尚未执行，因此 S11 保持 in_progress。
 
 - 先对脱敏历史 Maildir 做离线回放，再在 `dual_shadow` 收集真实流量；报告按 revision 输出三类混淆矩阵、发件域分层结果、阈值附近分布和 would-quarantine 样本。
 - 业务确认误隔离率、shadow 时长、最小样本量和 `ad-seed-v1` 后，只允许通过 server override 选定的 canary 节点进入 `dual_filter`；一期策略没有 mailbox scope。未达到第 15.3 节门槛时，`filter.auto_quarantine_enabled` 必须保持 false，最多启用 tag。
@@ -1253,6 +1257,8 @@ npm run build
 | 2026-07-21 | S8 | completed | working tree | `filterquarantine`、节点 handler/forward/outbox 定向与全量 test/vet 通过；P3 节点高风险包 race 通过；集成覆盖 Maildir 不可见、隔离专用读取、幂等放行、恢复可见、GC、联合崩溃恢复和 receipt 崩溃窗口 | 尚未提交、部署或启用；`filter.engine_mode=legacy`、`filter.auto_quarantine_enabled=false` 的生产安全边界不变 |
 | 2026-07-21 | S9 | completed | working tree | 控制面 store/service/handler/lifecycle 全量 test/vet 与 P3 关键包 race 通过；Web 896 个三语键、UI contract、Vite build 通过；Chrome 1440px/390px 隔离审核抽屉均无横向溢出 | 尚未提交、部署、创建 active 策略或执行生产 shadow/历史邮件试跑；组合白名单操作只创建 shadow draft |
 | 2026-07-21 | S8-S9 | completed | `0318ea2` + `d57b3af` | 实现与 canary 修复均已推送；干净构建的 mgmt 为 22,115,648 字节、SHA256 `289fbd89d7d474904b4380eaee9119263403f4478a65a079da700e7a7424de06`、`vcs.revision=0318ea2`，mail-node 为 16,537,194 字节、SHA256 `8dc5ab42bc18dca107261d0c294598e1a7a40d3adc900808703566a05e205501`、`vcs.revision=d57b3af`，两者均 `vcs.modified=false`。mgmt/admin-app 先发布，第二节点 canary 后发布主节点；mgmt PID `1503 -> 9937`，主节点 `32326 -> 12500`，第二节点首次 canary 因 `/var/mail` 父目录 symlink 被安全检查拒绝并自动恢复旧 binary（PID `19466 -> 30782`），`d57b3af` 在节点 Linux 定向测试通过后重新 canary 至 PID `32708`。最终 mgmt/mail-node 均 active，health/ready 200，两节点 healthy 且 revision `4/4`、`3/3`，三个新 PID error 日志为 0；新 admin/internal 路由无鉴权 401、legacy external 404、JS/CSS 200 | 主机回滚点 `/opt/mgmt-system/backups/filter-p3-s8-s9-0318ea2-20260721-084902`，DB dump 77,301 字节、SHA256 `086dba39ecac60c421b226945e5993e2d13c1beb9ce2bc037f0076a43aaa1d58`；第二节点最终回滚点 `/root/mailhub-backups/filter-p3-s8-s9-0318ea2-20260721-091643`，首次 canary 备份 `/root/mailhub-backups/filter-p3-s8-s9-0318ea2-20260721-085215` 保留。`filter.quarantine_base=/var/mail/mailhub-quarantine` 在两节点解析到 `/var/spool/mail/mailhub-quarantine` 且权限为 0700；生产继续保持 `legacy/false`，manual/ad draft 各 1、active/decision/quarantine 均为 0，未执行真实 shadow、历史邮件试跑或自动隔离 |
+| 2026-07-22 | S10 | completed | working tree | 21 条外部策略路由逐项权限测试、无 decision/quarantine 路由、revision/幂等键边界和外部 actor 测试通过；认证/handler/registry race、三个 Go 模块全量 test/vet、Web 909 个三语键/UI contract/build 通过 | 尚未提交或部署；registry 同步不会自动创建应用 grant，未创建或发布策略版本，未修改生产 `legacy/false`。S11/S12 继续等待历史样本、shadow 报告、业务签字和 canary 证据 |
+| 2026-07-22 | S11 | in_progress | working tree | `filter-replay --manifest` 合成三类/uncertain、全 shadow candidate score、label×action 矩阵、时间/域隔离、域哈希、阈值邻近、would-quarantine、敏感内容不出报告及 byte-for-byte 确定性测试通过；mail-node 全量 test/vet 与 replay race 通过 | 工具和操作文档完成；尚无生产脱敏 manifest、真实报告、双人复核或业务签字，未发布 active revision，未切换 `dual_shadow/dual_filter`，未启用自动隔离 |
 
 ---
 

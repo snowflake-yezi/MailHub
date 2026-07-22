@@ -23,6 +23,7 @@ func run(args []string, output io.Writer) error {
 	flags := flag.NewFlagSet("filter-replay", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	emlPath := flags.String("eml", "", "path to an EML file")
+	manifestPath := flags.String("manifest", "", "path to a labeled replay manifest")
 	mailbox := flags.String("mailbox", "", "delivered mailbox address")
 	serverID := flags.Uint64("server-id", 0, "mail node ID")
 	manualPath := flags.String("manual-bundle", "", "path to a canonical manual bundle")
@@ -31,8 +32,14 @@ func run(args []string, output io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *emlPath == "" || *mailbox == "" || *serverID == 0 {
+	if *manifestPath != "" && *emlPath != "" {
+		return fmt.Errorf("--manifest and --eml are mutually exclusive")
+	}
+	if *manifestPath == "" && (*emlPath == "" || *mailbox == "" || *serverID == 0) {
 		return fmt.Errorf("--eml, --mailbox and --server-id are required")
+	}
+	if *manifestPath != "" && (*serverID == 0 || *adPath == "") {
+		return fmt.Errorf("--manifest requires --server-id and --ad-bundle")
 	}
 	engine := filterdecision.New()
 	if *manualPath != "" {
@@ -44,14 +51,19 @@ func run(args []string, output io.Writer) error {
 			return fmt.Errorf("compile manual bundle: %w", err)
 		}
 	}
+	var adBundle *filtercontract.AdBundle
 	if *adPath != "" {
-		var bundle filtercontract.AdBundle
-		if err := readContract(*adPath, &bundle); err != nil {
+		bundle := &filtercontract.AdBundle{}
+		if err := readContract(*adPath, bundle); err != nil {
 			return fmt.Errorf("ad bundle: %w", err)
 		}
-		if err := engine.ApplyAd(bundle); err != nil {
+		if err := engine.ApplyAd(*bundle); err != nil {
 			return fmt.Errorf("compile ad bundle: %w", err)
 		}
+		adBundle = bundle
+	}
+	if *manifestPath != "" {
+		return runManifest(engine, *adBundle, *manifestPath, *serverID, output)
 	}
 	parsed, err := mailparse.ParseFile(*emlPath, mailparse.Options{
 		Mailbox: *mailbox, MaildirBase: filepath.Dir(filepath.Dir(*emlPath)),
