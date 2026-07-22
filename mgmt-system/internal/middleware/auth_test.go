@@ -62,8 +62,10 @@ func TestAuthRequiredUsesNormalizedPrincipal(t *testing.T) {
 		Credential:  model.APICredential{ID: 11},
 		Permissions: []string{"email:list"},
 	}}
+	var auditActor string
 	router := gin.New()
 	router.GET("/protected", AuthRequired(st), RequirePermission("email:list"), func(c *gin.Context) {
+		auditActor = c.GetString("api_actor")
 		c.Status(http.StatusNoContent)
 	})
 
@@ -76,6 +78,9 @@ func TestAuthRequiredUsesNormalizedPrincipal(t *testing.T) {
 	}
 	if st.usageCalls != 1 || len(st.logs) != 1 || st.logs[0].CredentialID != 11 {
 		t.Fatalf("usage=%d logs=%+v", st.usageCalls, st.logs)
+	}
+	if auditActor != "external-app:7:ticket" {
+		t.Fatalf("api_actor = %q", auditActor)
 	}
 }
 

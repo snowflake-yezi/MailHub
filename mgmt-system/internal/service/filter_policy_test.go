@@ -221,6 +221,10 @@ func TestFilterPolicyServiceMariaDBWorkflow(t *testing.T) {
 			t.Fatalf("concurrent publish error: %v", publishErr)
 		}
 	}
+	retried, err := policyService.PublishAdRevision(draft.Revision, "external-app:7:ticket", "same-publish-key")
+	if err != nil || retried.Revision != draft.Revision || retried.Status != "published" {
+		t.Fatalf("idempotent publish retry = %+v, error = %v", retried, err)
+	}
 
 	status, err := policyService.Status()
 	if err != nil {

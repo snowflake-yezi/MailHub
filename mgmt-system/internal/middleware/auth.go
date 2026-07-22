@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ func AuthRequired(store APIAuthStore) gin.HandlerFunc {
 			CredentialID: client.Credential.ID, Permissions: permissions,
 		}
 		c.Set("api_principal", principal)
+		c.Set("api_actor", fmt.Sprintf("external-app:%d:%s", client.Application.ID, strings.TrimSpace(client.Application.Name)))
 		store.UpdateAPICredentialUsage(client.Credential.ID, startedAt, c.ClientIP())
 		c.Next()
 		path := c.FullPath()

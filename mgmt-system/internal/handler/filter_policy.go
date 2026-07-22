@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/ticket/email-filter-contract"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
@@ -72,6 +73,81 @@ func (h *FilterPolicyHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.POST("/filter-quarantines/:quarantine_key/allow-and-release", h.AllowAndReleaseQuarantine)
 	r.GET("/filter-quarantines/:quarantine_key/release-status", h.GetQuarantineReleaseStatus)
 	r.POST("/filter-quarantines/:quarantine_key/confirm-ad", h.ConfirmQuarantineAd)
+}
+
+// RegisterExternalRoutes exposes only versioned policy configuration. Decision
+// evidence, quarantines, message bodies, attachments and feedback stay admin-only.
+func (h *FilterPolicyHandler) RegisterExternalRoutes(registry *apiregistry.Registry, r *gin.RouterGroup) {
+	routes := []apiregistry.Route{
+		{Method: http.MethodGet, Path: "/manual-filter-revisions/active", PermissionCode: "manual-filter:read", ResourceName: "读取生效人工规则", Handler: h.GetActiveManualRevision},
+		{Method: http.MethodPost, Path: "/manual-filter-revisions", PermissionCode: "manual-filter:draft", ResourceName: "创建人工规则草稿", Handler: h.CreateManualRevision},
+		{Method: http.MethodGet, Path: "/manual-filter-revisions/:revision", PermissionCode: "manual-filter:read", ResourceName: "读取人工规则版本", Handler: h.GetManualRevision},
+		{Method: http.MethodPost, Path: "/manual-filter-revisions/:revision/rules", PermissionCode: "manual-filter:draft", ResourceName: "新增人工规则", Handler: h.AddManualRule},
+		{Method: http.MethodPut, Path: "/manual-filter-revisions/:revision/rules/:logical_id", PermissionCode: "manual-filter:draft", ResourceName: "修改人工规则", Handler: h.UpdateManualRule},
+		{Method: http.MethodDelete, Path: "/manual-filter-revisions/:revision/rules/:logical_id", PermissionCode: "manual-filter:draft", ResourceName: "删除人工规则", Handler: h.DeleteManualRule},
+		{Method: http.MethodPost, Path: "/manual-filter-revisions/:revision/validate", PermissionCode: "manual-filter:draft", ResourceName: "校验人工规则草稿", Handler: h.ValidateManualRevision},
+		{Method: http.MethodPost, Path: "/manual-filter-revisions/:revision/publish", PermissionCode: "manual-filter:publish", ResourceName: "发布人工规则版本", Handler: h.PublishManualRevision},
+		{Method: http.MethodGet, Path: "/ad-filter-revisions/active", PermissionCode: "ad-filter:read", ResourceName: "读取生效广告策略", Handler: h.GetActiveAdRevision},
+		{Method: http.MethodPost, Path: "/ad-filter-revisions", PermissionCode: "ad-filter:draft", ResourceName: "创建广告策略草稿", Handler: h.CreateAdRevision},
+		{Method: http.MethodGet, Path: "/ad-filter-revisions/:revision", PermissionCode: "ad-filter:read", ResourceName: "读取广告策略版本", Handler: h.GetAdRevision},
+		{Method: http.MethodPost, Path: "/ad-filter-revisions/:revision/detectors", PermissionCode: "ad-filter:draft", ResourceName: "新增广告检测器", Handler: h.AddAdDetector},
+		{Method: http.MethodPut, Path: "/ad-filter-revisions/:revision/detectors/:logical_id", PermissionCode: "ad-filter:draft", ResourceName: "修改广告检测器", Handler: h.UpdateAdDetector},
+		{Method: http.MethodDelete, Path: "/ad-filter-revisions/:revision/detectors/:logical_id", PermissionCode: "ad-filter:draft", ResourceName: "删除广告检测器", Handler: h.DeleteAdDetector},
+		{Method: http.MethodPost, Path: "/ad-filter-revisions/:revision/composites", PermissionCode: "ad-filter:draft", ResourceName: "新增广告组合规则", Handler: h.AddAdComposite},
+		{Method: http.MethodPut, Path: "/ad-filter-revisions/:revision/composites/:logical_id", PermissionCode: "ad-filter:draft", ResourceName: "修改广告组合规则", Handler: h.UpdateAdComposite},
+		{Method: http.MethodDelete, Path: "/ad-filter-revisions/:revision/composites/:logical_id", PermissionCode: "ad-filter:draft", ResourceName: "删除广告组合规则", Handler: h.DeleteAdComposite},
+		{Method: http.MethodPut, Path: "/ad-filter-revisions/:revision/weights/:symbol", PermissionCode: "ad-filter:draft", ResourceName: "设置广告符号权重", Handler: h.PutAdWeight},
+		{Method: http.MethodDelete, Path: "/ad-filter-revisions/:revision/weights/:symbol", PermissionCode: "ad-filter:draft", ResourceName: "删除广告符号权重", Handler: h.DeleteAdWeight},
+		{Method: http.MethodPost, Path: "/ad-filter-revisions/:revision/validate", PermissionCode: "ad-filter:draft", ResourceName: "校验广告策略草稿", Handler: h.ValidateAdRevision},
+		{Method: http.MethodPost, Path: "/ad-filter-revisions/:revision/publish", PermissionCode: "ad-filter:publish", ResourceName: "发布广告策略版本", Handler: h.PublishAdRevision},
+	}
+	for i := range routes {
+		applyFilterPermissionMetadata(&routes[i])
+		if strings.Contains(routes[i].Path, ":revision") {
+			routes[i].Handler = requireExternalPolicyRevision(routes[i].Handler)
+		}
+		if strings.HasSuffix(routes[i].Path, "/publish") {
+			routes[i].Handler = requireExternalIdempotencyKey(routes[i].Handler)
+		}
+		registry.Register(r, routes[i])
+	}
+}
+
+func requireExternalPolicyRevision(next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if parseUint64(c.Param("revision")) == 0 {
+			badRequest(c, ErrCodeParamInvalid, "revision must be a positive integer")
+			return
+		}
+		next(c)
+	}
+}
+
+func requireExternalIdempotencyKey(next gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if len(strings.TrimSpace(c.GetHeader("Idempotency-Key"))) > 64 {
+			badRequest(c, ErrCodeParamInvalid, "Idempotency-Key must not exceed 64 characters")
+			return
+		}
+		next(c)
+	}
+}
+
+func applyFilterPermissionMetadata(route *apiregistry.Route) {
+	switch route.PermissionCode {
+	case "manual-filter:read":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "人工过滤策略", "读取人工规则", "读取生效或指定版本的人工过滤规则", 410
+	case "manual-filter:draft":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "人工过滤策略", "编辑人工规则草稿", "创建、编辑和校验人工过滤规则草稿", 420
+	case "manual-filter:publish":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "人工过滤策略", "发布人工规则", "发布已校验的人工过滤规则版本", 430
+	case "ad-filter:read":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "广告过滤策略", "读取广告策略", "读取生效或指定版本的广告过滤策略", 510
+	case "ad-filter:draft":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "广告过滤策略", "编辑广告策略草稿", "创建、编辑和校验广告过滤策略草稿", 520
+	case "ad-filter:publish":
+		route.GroupName, route.Name, route.Description, route.SortOrder = "广告过滤策略", "发布广告策略", "发布已校验的广告过滤策略版本", 530
+	}
 }
 
 func (h *FilterPolicyHandler) ListQuarantines(c *gin.Context) {
@@ -316,6 +392,23 @@ func (h *FilterPolicyHandler) ListManualRevisions(c *gin.Context) {
 		return
 	}
 	success(c, "success", values)
+}
+
+func (h *FilterPolicyHandler) GetActiveManualRevision(c *gin.Context) {
+	h.getActivePolicy(c, filtercontract.PolicyManual)
+}
+
+func (h *FilterPolicyHandler) GetActiveAdRevision(c *gin.Context) {
+	h.getActivePolicy(c, filtercontract.PolicyAd)
+}
+
+func (h *FilterPolicyHandler) getActivePolicy(c *gin.Context, policyKind string) {
+	value, err := h.service.ActiveBundle(policyKind)
+	if err != nil {
+		h.writeError(c, err)
+		return
+	}
+	success(c, "success", value)
 }
 
 func (h *FilterPolicyHandler) CreateManualRevision(c *gin.Context) {
@@ -680,6 +773,11 @@ func parsePolicyRevision(c *gin.Context) uint64 {
 
 func policyActor(c *gin.Context) string {
 	if actor, ok := c.Get("admin_user"); ok {
+		if value, ok := actor.(string); ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	if actor, ok := c.Get("api_actor"); ok {
 		if value, ok := actor.(string); ok && strings.TrimSpace(value) != "" {
 			return value
 		}

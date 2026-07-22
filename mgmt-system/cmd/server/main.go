@@ -178,6 +178,7 @@ func main() {
 
 	mailboxH.RegisterExternalRoutes(externalRegistry, api)
 	emailH.RegisterExternalRoutes(externalRegistry, api)
+	filterPolicyH.RegisterExternalRoutes(externalRegistry, api)
 
 	if err := externalRegistry.Sync(db); err != nil {
 		log.Fatalf("Failed to sync external API registry: %v", err)

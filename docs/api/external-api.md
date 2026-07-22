@@ -26,6 +26,12 @@ Token 由管理端“外部访问”页面签发。管理员创建并命名外�
 - `email:list`：查询邮件列表。
 - `email:body`：查询邮件正文。
 - `email:attachment`：下载邮件附件。
+- `manual-filter:read`：读取生效或指定版本的人工过滤规则。
+- `manual-filter:draft`：创建、修改和校验人工过滤规则草稿。
+- `manual-filter:publish`：发布人工过滤规则版本。
+- `ad-filter:read`：读取生效或指定版本的广告过滤策略。
+- `ad-filter:draft`：创建、修改和校验广告过滤策略草稿。
+- `ad-filter:publish`：发布广告过滤策略版本。
 
 权限编码必须与接口要求完全相等，不做前缀或子串匹配。应用被停用、凭证被撤销或凭证到期后立即返回 401。
 
@@ -266,11 +272,80 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 
 ---
 
-## 4. 已退役的过滤规则接口
+## 4. 版本化过滤配置接口
 
 旧 `/api/v1/filters` 及 `filter:read/create/update/delete` 权限已经退役，不再属于外部 API 契约。迁移期间，legacy 规则只能由 Session 鉴权的管理端维护；mail-node 继续通过内部 Shared-Secret 接口拉取，不影响现有邮件处理。
 
-后续版本化的人工规则与广告策略 API 将使用独立 revision、validate、publish 和权限语义。在该新契约正式发布前，外部系统不得依赖管理端或内部 legacy 接口。
+新接口将人工规则和广告策略分别版本化、分别授权。所有写入必须先创建 `draft`，完成修改和显式校验后再调用 `publish`；已发布版本不可修改，回滚时应以历史版本为 `base_revision` 创建新的单调递增草稿。
+
+### 4.1 人工规则
+
+| Method | Path | Permission | 用途 |
+|--------|------|------------|------|
+| GET | `/manual-filter-revisions/active` | `manual-filter:read` | 读取当前生效 bundle |
+| POST | `/manual-filter-revisions` | `manual-filter:draft` | 创建空草稿或从 `base_revision` 克隆 |
+| GET | `/manual-filter-revisions/:revision` | `manual-filter:read` | 读取指定版本及完整规则 |
+| POST | `/manual-filter-revisions/:revision/rules` | `manual-filter:draft` | 新增规则 |
+| PUT/DELETE | `/manual-filter-revisions/:revision/rules/:logical_id` | `manual-filter:draft` | 修改或删除规则 |
+| POST | `/manual-filter-revisions/:revision/validate` | `manual-filter:draft` | 校验完整草稿并计算 checksum |
+| POST | `/manual-filter-revisions/:revision/publish` | `manual-filter:publish` | 原子发布版本 |
+
+创建回滚草稿：
+
+```json
+{
+  "base_revision": 7
+}
+```
+
+新增或更新规则的请求体：
+
+```json
+{
+  "logical_id": "cf4dd635-b0ae-4cb8-936e-b488135699c9",
+  "name": "放行航司通知域名",
+  "scope_type": "global",
+  "action": "allow",
+  "mode": "shadow",
+  "priority": 10,
+  "source": "external",
+  "conditions": [
+    {
+      "field": "header_from.domain",
+      "operator": "eq",
+      "value": "airline.example"
+    }
+  ]
+}
+```
+
+### 4.2 广告策略
+
+| Method | Path | Permission | 用途 |
+|--------|------|------------|------|
+| GET | `/ad-filter-revisions/active` | `ad-filter:read` | 读取当前生效 bundle |
+| POST | `/ad-filter-revisions` | `ad-filter:draft` | 创建空草稿、克隆历史版本或导入审核 seed |
+| GET | `/ad-filter-revisions/:revision` | `ad-filter:read` | 读取指定版本及完整策略图 |
+| POST | `/ad-filter-revisions/:revision/detectors` | `ad-filter:draft` | 新增 detector |
+| PUT/DELETE | `/ad-filter-revisions/:revision/detectors/:logical_id` | `ad-filter:draft` | 修改或删除 detector |
+| POST | `/ad-filter-revisions/:revision/composites` | `ad-filter:draft` | 新增 composite |
+| PUT/DELETE | `/ad-filter-revisions/:revision/composites/:logical_id` | `ad-filter:draft` | 修改或删除 composite |
+| PUT/DELETE | `/ad-filter-revisions/:revision/weights/:symbol` | `ad-filter:draft` | 设置或删除 symbol weight |
+| POST | `/ad-filter-revisions/:revision/validate` | `ad-filter:draft` | 校验完整草稿并计算 checksum |
+| POST | `/ad-filter-revisions/:revision/publish` | `ad-filter:publish` | 原子发布版本 |
+
+`POST /ad-filter-revisions` 接受且仅接受以下三种来源之一：空请求体、`{"base_revision": 7}` 或 `{"seed": "ad-seed-v1"}`。`base_revision` 与 `seed` 不能同时提供。
+
+detector、composite 和 weight 的字段契约见[广告邮件过滤重构设计](../design/spam-filter-redesign.md#104-请求示例)。分值最多保留三位小数；symbol、condition、DAG、阈值关系及 bundle 大小在 validate/publish 时整批校验，不能部分发布。
+
+### 4.3 幂等、审计与安全边界
+
+- publish 请求应携带最长 64 字符的 `Idempotency-Key`；相同版本已处于 active 时，重复请求返回同一已发布结果，不创建新版本。
+- 外部写操作同时记录应用身份、revision、操作类型和请求 ID；Bearer 调用记录还会写入独立 API 访问日志。
+- 新权限只注册为可授权能力，不会自动授予任何现有或新建应用。`manual-filter:publish` 与 `ad-filter:publish` 应仅授予发布系统。
+- `/active` 在对应策略从未发布时返回 404。读取 active 不表示节点已经收敛；节点 desired/applied 状态仅在管理端展示。
+- 外部 API 不注册 decisions、quarantines、隔离正文、隔离附件、放行或反馈端点。普通邮件接口只扫描源 Maildir，因此隔离邮件也无法经邮件查询接口读取。
+- 新接口不会切换 `filter.engine_mode` 或 `filter.auto_quarantine_enabled`。策略发布与生产 enforce/canary 是两个独立操作。
 
 ---
 
@@ -280,6 +355,8 @@ Content-Disposition: attachment; filename="itinerary.pdf"; filename*=UTF-8''itin
 |--------|------------|------|
 | 出票中心 | `mailbox:create,mailbox:read,mailbox:disable` | 创建、查询、禁用订单邮箱 |
 | 大模型系统 | `email:list,email:body,email:attachment` | 拉取邮件列表、正文和附件 |
+| 策略同步系统 | `manual-filter:read,manual-filter:draft,ad-filter:read,ad-filter:draft` | 维护和校验草稿，不具备发布能力 |
+| 策略发布系统 | 按需增加 `manual-filter:publish`、`ad-filter:publish` | 独立执行经审批的版本发布 |
 
 旧版本兼容配置示例（仅用于升级过渡）：
 

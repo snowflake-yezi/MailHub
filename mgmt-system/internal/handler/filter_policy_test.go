@@ -2,10 +2,15 @@ package handler
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	filtercontract "github.com/ticket/email-filter-contract"
+	"github.com/ticket/email-mgmt-system/internal/apiregistry"
+	"github.com/ticket/email-mgmt-system/internal/middleware"
 )
 
 func TestFilterPolicyRoutesCoverAdminAndNodeContracts(t *testing.T) {
@@ -45,6 +50,139 @@ func TestFilterPolicyRoutesCoverAdminAndNodeContracts(t *testing.T) {
 		if !routes[route] {
 			t.Fatalf("required route %q is missing", route)
 		}
+	}
+}
+
+func TestFilterPolicyExternalRoutesUseIndependentPermissions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registry := apiregistry.New("/api/v1")
+	(&FilterPolicyHandler{}).RegisterExternalRoutes(registry, router.Group("/api/v1"))
+
+	tests := []struct {
+		method     string
+		path       string
+		permission string
+	}{
+		{http.MethodGet, "/manual-filter-revisions/active", "manual-filter:read"},
+		{http.MethodPost, "/manual-filter-revisions", "manual-filter:draft"},
+		{http.MethodGet, "/manual-filter-revisions/7", "manual-filter:read"},
+		{http.MethodPost, "/manual-filter-revisions/7/rules", "manual-filter:draft"},
+		{http.MethodPut, "/manual-filter-revisions/7/rules/rule-1", "manual-filter:draft"},
+		{http.MethodDelete, "/manual-filter-revisions/7/rules/rule-1", "manual-filter:draft"},
+		{http.MethodPost, "/manual-filter-revisions/7/validate", "manual-filter:draft"},
+		{http.MethodPost, "/manual-filter-revisions/7/publish", "manual-filter:publish"},
+		{http.MethodGet, "/ad-filter-revisions/active", "ad-filter:read"},
+		{http.MethodPost, "/ad-filter-revisions", "ad-filter:draft"},
+		{http.MethodGet, "/ad-filter-revisions/9", "ad-filter:read"},
+		{http.MethodPost, "/ad-filter-revisions/9/detectors", "ad-filter:draft"},
+		{http.MethodPut, "/ad-filter-revisions/9/detectors/detector-1", "ad-filter:draft"},
+		{http.MethodDelete, "/ad-filter-revisions/9/detectors/detector-1", "ad-filter:draft"},
+		{http.MethodPost, "/ad-filter-revisions/9/composites", "ad-filter:draft"},
+		{http.MethodPut, "/ad-filter-revisions/9/composites/composite-1", "ad-filter:draft"},
+		{http.MethodDelete, "/ad-filter-revisions/9/composites/composite-1", "ad-filter:draft"},
+		{http.MethodPut, "/ad-filter-revisions/9/weights/AD_PROMO", "ad-filter:draft"},
+		{http.MethodDelete, "/ad-filter-revisions/9/weights/AD_PROMO", "ad-filter:draft"},
+		{http.MethodPost, "/ad-filter-revisions/9/validate", "ad-filter:draft"},
+		{http.MethodPost, "/ad-filter-revisions/9/publish", "ad-filter:publish"},
+	}
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "/api/v1"+test.path, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "required: "+test.permission) {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
+	}
+	if len(router.Routes()) != len(tests) {
+		t.Fatalf("external route count = %d, want %d", len(router.Routes()), len(tests))
+	}
+}
+
+func TestFilterPolicyExternalRoutesDoNotExposeEvidenceOrQuarantine(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registry := apiregistry.New("/api/v1")
+	(&FilterPolicyHandler{}).RegisterExternalRoutes(registry, router.Group("/api/v1"))
+
+	for _, path := range []string{
+		"/api/v1/filter-decisions",
+		"/api/v1/filter-decisions/decision-1",
+		"/api/v1/filter-quarantines",
+		"/api/v1/filter-quarantines/quarantine-1/message",
+		"/api/v1/filter-quarantines/quarantine-1/attachments/0",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, response.Code)
+		}
+	}
+}
+
+func TestFilterPolicyExternalRoutesRejectInvalidRevisionParameters(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registry := apiregistry.New("/api/v1")
+	group := router.Group("/api/v1")
+	group.Use(func(c *gin.Context) {
+		c.Set("api_principal", &middleware.APIPrincipal{Permissions: map[string]struct{}{"*": {}}})
+	})
+	(&FilterPolicyHandler{}).RegisterExternalRoutes(registry, group)
+
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/manual-filter-revisions/not-a-number"},
+		{http.MethodPost, "/api/v1/manual-filter-revisions/0/publish"},
+		{http.MethodGet, "/api/v1/ad-filter-revisions/not-a-number"},
+		{http.MethodPost, "/api/v1/ad-filter-revisions/0/validate"},
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(test.method, test.path, nil))
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "positive integer") {
+			t.Fatalf("%s %s status=%d body=%s", test.method, test.path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestFilterPolicyExternalPublishRejectsOversizedIdempotencyKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	registry := apiregistry.New("/api/v1")
+	group := router.Group("/api/v1")
+	group.Use(func(c *gin.Context) {
+		c.Set("api_principal", &middleware.APIPrincipal{Permissions: map[string]struct{}{"*": {}}})
+	})
+	(&FilterPolicyHandler{}).RegisterExternalRoutes(registry, group)
+
+	for _, path := range []string{
+		"/api/v1/manual-filter-revisions/7/publish",
+		"/api/v1/ad-filter-revisions/9/publish",
+	} {
+		request := httptest.NewRequest(http.MethodPost, path, nil)
+		request.Header.Set("Idempotency-Key", strings.Repeat("x", 65))
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "64 characters") {
+			t.Fatalf("POST %s status=%d body=%s", path, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestPolicyActorPrefersAuthenticatedIdentity(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("api_actor", "external-app:7:ticket")
+	if got := policyActor(context); got != "external-app:7:ticket" {
+		t.Fatalf("policyActor() = %q", got)
+	}
+	context.Set("admin_user", "admin")
+	if got := policyActor(context); got != "admin" {
+		t.Fatalf("admin policyActor() = %q", got)
 	}
 }
 
