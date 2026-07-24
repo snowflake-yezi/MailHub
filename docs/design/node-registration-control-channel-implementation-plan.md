@@ -1,6 +1,6 @@
 # 节点注册发现与出站控制通道实施计划
 
-> 状态：NR-P0 已完成，NR-P1 待实施
+> 状态：NR-P0、NR-P1 已完成，NR-P2 待实施
 >
 > 优先级：P0，当前开发主线
 >
@@ -599,6 +599,8 @@ public_host + mail_public_ips
 
 ### NR-P1：身份、地址和数据库模型
 
+状态：已完成（2026-07-24）。
+
 交付：
 
 - node UUID 生成、原子持久化、权限校验和克隆检测基础。
@@ -608,6 +610,8 @@ public_host + mail_public_ips
 - AutoMigrate 和旧数据兼容测试。
 
 验收：旧节点无需 UUID 仍能按 legacy 模式工作；新字段不改变旧分配结果。
+
+实现与验证记录见 [NR-P1 身份、地址与兼容 Schema 验收记录](node-registration-p1-identity-schema.md)。
 
 ### NR-P2：注册、审批和每节点凭证
 

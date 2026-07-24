@@ -50,7 +50,7 @@ func New(dsn string, mode string) (*Store, error) {
 	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
 	// 自动迁移
-	if err := db.AutoMigrate(migrationModels()...); err != nil {
+	if err := migrateSchema(db); err != nil {
 		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
 
@@ -80,7 +80,8 @@ func New(dsn string, mode string) (*Store, error) {
 }
 
 func migrationModels() []any {
-	return append(legacyMigrationModels(), filterPolicyMigrationModels()...)
+	models := append(legacyMigrationModels(), filterPolicyMigrationModels()...)
+	return append(models, nodeRegistrationMigrationModels()...)
 }
 
 func legacyMigrationModels() []any {
@@ -127,6 +128,51 @@ func filterPolicyMigrationModels() []any {
 	}
 }
 
+func nodeRegistrationMigrationModels() []any {
+	return []any{
+		&model.NodeEnrollmentToken{},
+		&model.NodeEnrollmentRequest{},
+		&model.NodeCredential{},
+		&model.NodeCommand{},
+	}
+}
+
+func migrateSchema(db *gorm.DB) error {
+	if err := db.AutoMigrate(migrationModels()...); err != nil {
+		return err
+	}
+	return backfillLegacyNodeStates(db)
+}
+
+func backfillLegacyNodeStates(db *gorm.DB) error {
+	return db.Exec(`UPDATE mail_servers
+		SET enrollment_state = CASE WHEN enrollment_state = '' THEN ? ELSE enrollment_state END,
+			connection_state = CASE WHEN connection_state = '' THEN ? ELSE connection_state END,
+			readiness_state = CASE status
+				WHEN 'healthy' THEN ?
+				WHEN 'draining' THEN ?
+				WHEN 'degraded' THEN ?
+				WHEN 'down' THEN ?
+				ELSE ? END,
+			allocation_state = CASE
+				WHEN status = 'draining' AND allocation_state = ? THEN ?
+				ELSE allocation_state END,
+			transport_mode = CASE WHEN transport_mode = '' THEN ? ELSE transport_mode END
+		WHERE node_uuid IS NULL AND transport_mode IN ('', ?)`,
+		model.EnrollmentLegacyApproved,
+		model.ConnectionUnknown,
+		model.ReadinessReady,
+		model.ReadinessReady,
+		model.ReadinessDegraded,
+		model.ReadinessFailed,
+		model.ReadinessUnknown,
+		model.AllocationActive,
+		model.AllocationDraining,
+		model.TransportLegacyHTTP,
+		model.TransportLegacyHTTP,
+	).Error
+}
+
 func (s *Store) clearLegacyActiveMailboxExpirations() error {
 	return s.db.Model(&model.MailboxAccount{}).
 		Where("status = ? AND expires_at IS NOT NULL", "active").
@@ -166,7 +212,13 @@ func (s *Store) GetDomainByName(name string) (*model.Domain, error) {
 
 // ===== MailServer =====
 
-func (s *Store) CreateServer(srv *model.MailServer) error { return s.db.Create(srv).Error }
+func (s *Store) CreateServer(srv *model.MailServer) error {
+	if srv.Status == "" {
+		srv.Status = "healthy"
+	}
+	srv.ApplyLegacyNodeDefaults()
+	return s.db.Create(srv).Error
+}
 func (s *Store) UpdateServer(srv *model.MailServer) error { return s.db.Save(srv).Error }
 func (s *Store) GetServer(id uint64) (*model.MailServer, error) {
 	var srv model.MailServer
@@ -254,14 +306,18 @@ func (s *Store) UpdateServerHeartbeatState(serverID uint64, load int, appliedRev
 
 // UpdateServerProbe records one active health probe result and advances the
 // server status chosen by the healthcheck scheduler.
-func (s *Store) UpdateServerProbe(serverID uint64, failCount int, status string) error {
+func (s *Store) UpdateServerProbe(serverID uint64, failCount int, status, transportMode string) error {
 	now := time.Now()
+	updates := map[string]interface{}{
+		"last_probe_at":    &now,
+		"probe_fail_count": failCount,
+		"status":           status,
+	}
+	if transportMode == "" || transportMode == model.TransportLegacyHTTP {
+		updates["readiness_state"] = model.LegacyReadinessState(status)
+	}
 	return s.db.Model(&model.MailServer{}).Where("id = ?", serverID).
-		Updates(map[string]interface{}{
-			"last_probe_at":    &now,
-			"probe_fail_count": failCount,
-			"status":           status,
-		}).Error
+		Updates(updates).Error
 }
 
 // ===== ServerDomain（服务器-域名 M:N 绑定） =====

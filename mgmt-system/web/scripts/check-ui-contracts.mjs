@@ -19,10 +19,11 @@ const [api, servers, externalAccess, mailboxes, emails, filters] = await Promise
   source('pages/FiltersPage.jsx'),
 ])
 
-for (const field of ['smtp_host', 'imap_host']) {
+for (const field of ['smtp_host', 'imap_host', 'public_host', 'mail_public_ips']) {
   assert.match(servers, new RegExp(`value=\\{form\\.${field}\\}`), `server editor is missing ${field}`)
   assert.match(servers, new RegExp(`${field}: form\\.${field}`), `server update payload is missing ${field}`)
 }
+assert.match(servers, /mail_public_ips: form\.mail_public_ips\.split/, 'mail public IP payload is not normalized as a list')
 
 assert.match(api, /revokeCredential\(id, credentialId\).*\/revoke.*method: 'POST'/, 'credential revoke API mapping is missing')
 assert.match(api, /deleteCredential\(id, credentialId\).*method: 'DELETE'/, 'credential delete API mapping is missing')

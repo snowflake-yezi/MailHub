@@ -6,37 +6,63 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/model"
 )
 
-func TestDNSRecordsForMXHostPrependsARecordAndRewritesMX(t *testing.T) {
+func TestDNSRecordsForMXHostUsesOnlyManagedPublicIPs(t *testing.T) {
 	records := []DNSRecord{
 		{Type: "MX", Host: "example.com", Value: "mail.example.com"},
 		{Type: "TXT", Host: "example.com", Value: "v=spf1 a mx ~all"},
 	}
 
-	got := dnsRecordsForMXHost(records, "example.com", "mx.example.com", "203.0.113.10:8081")
+	got := dnsRecordsForMXHost(records, "example.com", "mx.example.com", []string{"203.0.113.10", "2001:db8::10"})
 
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("len = %d, want 4", len(got))
 	}
 	if got[0] != (DNSRecord{Type: "A", Host: "mx.example.com", Value: "203.0.113.10"}) {
 		t.Fatalf("first record = %#v", got[0])
 	}
-	if got[1] != (DNSRecord{Type: "MX", Host: "example.com", Value: "mx.example.com"}) {
-		t.Fatalf("mx record = %#v", got[1])
+	if got[1] != (DNSRecord{Type: "AAAA", Host: "mx.example.com", Value: "2001:db8::10"}) {
+		t.Fatalf("second record = %#v", got[1])
+	}
+	if got[2] != (DNSRecord{Type: "MX", Host: "example.com", Value: "mx.example.com"}) {
+		t.Fatalf("mx record = %#v", got[2])
 	}
 }
 
-func TestDNSRecordsForMXHostSkipsARecordForNonIPAPIHost(t *testing.T) {
+func TestDNSRecordsForMXHostDoesNotInferAddressWhenPublicIPsAreEmpty(t *testing.T) {
 	records := []DNSRecord{
 		{Type: "MX", Host: "example.com", Value: "mail.example.com"},
 	}
 
-	got := dnsRecordsForMXHost(records, "example.com", "mx.example.com", "mail-node.example.com:8081")
+	got := dnsRecordsForMXHost(records, "example.com", "mx.example.com", nil)
 
 	if len(got) != len(records) {
 		t.Fatalf("len = %d, want %d", len(got), len(records))
 	}
 	if got[0] != (DNSRecord{Type: "MX", Host: "example.com", Value: "mx.example.com"}) {
 		t.Fatalf("mx record = %#v", got[0])
+	}
+}
+
+func TestNormalizeServerAddressesCanonicalizesManagedMailAddresses(t *testing.T) {
+	server := &model.MailServer{
+		Name: " node-a ", APIHost: " 10.0.0.2:8081 ", SMTPHost: " smtp.example.com ", IMAPHost: " imap.example.com ",
+		PublicHost: "MAIL.Example.COM.", MailPublicIPs: []string{"203.0.113.10", "2001:0db8::10", "203.0.113.10"},
+	}
+	if err := normalizeServerAddresses(server); err != nil {
+		t.Fatal(err)
+	}
+	if server.Name != "node-a" || server.APIHost != "10.0.0.2:8081" || server.PublicHost != "mail.example.com" {
+		t.Fatalf("normalized server = %+v", server)
+	}
+	if len(server.MailPublicIPs) != 2 || server.MailPublicIPs[0] != "203.0.113.10" || server.MailPublicIPs[1] != "2001:db8::10" {
+		t.Fatalf("public IPs = %#v", server.MailPublicIPs)
+	}
+}
+
+func TestNormalizeServerAddressesRejectsControlAddressAsPublicIP(t *testing.T) {
+	server := &model.MailServer{MailPublicIPs: []string{"10.0.0.2:8081"}}
+	if err := normalizeServerAddresses(server); err == nil {
+		t.Fatal("host:port was accepted as a mail public IP")
 	}
 }
 

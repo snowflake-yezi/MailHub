@@ -89,7 +89,7 @@ func (s *Scheduler) probeOne(srv *model.MailServer) error {
 		if status == "down" || status == "degraded" {
 			status = "healthy"
 		}
-		return s.store.UpdateServerProbe(srv.ID, failCount, status)
+		return s.store.UpdateServerProbe(srv.ID, failCount, status, srv.TransportMode)
 	}
 
 	failCount++
@@ -108,7 +108,7 @@ func (s *Scheduler) probeOne(srv *model.MailServer) error {
 		}
 	}
 
-	if updateErr := s.store.UpdateServerProbe(srv.ID, failCount, status); updateErr != nil {
+	if updateErr := s.store.UpdateServerProbe(srv.ID, failCount, status, srv.TransportMode); updateErr != nil {
 		return updateErr
 	}
 	if err != nil {

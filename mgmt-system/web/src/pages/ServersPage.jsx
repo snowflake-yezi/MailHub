@@ -33,6 +33,8 @@ const EMPTY_FORM = {
   api_host: '',
   smtp_host: '',
   imap_host: '',
+  public_host: '',
+  mail_public_ips: '',
   capacity: 5000,
   heartbeat_interval: 30,
   status: 'healthy',
@@ -143,27 +145,45 @@ function ServerDrawer({ mode, form, saving, onChange, onSave, onClose, onDelete 
             />
             <div className="form-hint">{t('servers.drawer.apiHint')}</div>
           </div>
-          {isEdit && (
-            <div className="field-grid">
-              <div className="form-group">
-                <label>{t('servers.drawer.smtpHost')}</label>
-                <input
-                  value={form.smtp_host}
-                  onChange={e => updateField('smtp_host', e.target.value)}
-                  placeholder={t('servers.drawer.smtpPlaceholder')}
-                />
-              </div>
-              <div className="form-group">
-                <label>{t('servers.drawer.imapHost')}</label>
-                <input
-                  value={form.imap_host}
-                  onChange={e => updateField('imap_host', e.target.value)}
-                  placeholder={t('servers.drawer.imapPlaceholder')}
-                />
-              </div>
-              <div className="form-hint field-grid-hint">{t('servers.drawer.mailHostHint')}</div>
+          <div className="field-grid">
+            <div className="form-group">
+              <label>{t('servers.drawer.smtpHost')}</label>
+              <input
+                value={form.smtp_host}
+                onChange={e => updateField('smtp_host', e.target.value)}
+                placeholder={t('servers.drawer.smtpPlaceholder')}
+              />
             </div>
-          )}
+            <div className="form-group">
+              <label>{t('servers.drawer.imapHost')}</label>
+              <input
+                value={form.imap_host}
+                onChange={e => updateField('imap_host', e.target.value)}
+                placeholder={t('servers.drawer.imapPlaceholder')}
+              />
+            </div>
+            <div className="form-hint field-grid-hint">{t('servers.drawer.mailHostHint')}</div>
+          </div>
+          <div className="field-grid">
+            <div className="form-group">
+              <label>{t('servers.drawer.publicHost')}</label>
+              <input
+                value={form.public_host}
+                onChange={e => updateField('public_host', e.target.value)}
+                placeholder={t('servers.drawer.publicHostPlaceholder')}
+              />
+            </div>
+            <div className="form-group">
+              <label>{t('servers.drawer.publicIPs')}</label>
+              <textarea
+                rows={3}
+                value={form.mail_public_ips}
+                onChange={e => updateField('mail_public_ips', e.target.value)}
+                placeholder={t('servers.drawer.publicIPsPlaceholder')}
+              />
+            </div>
+            <div className="form-hint field-grid-hint">{t('servers.drawer.publicAddressHint')}</div>
+          </div>
           <div className="field-grid">
             <div className="form-group">
               <label>{t('servers.drawer.capacity')}</label>
@@ -252,6 +272,8 @@ export default function ServersPage() {
         server.id,
         server.name,
         server.api_host,
+        server.public_host,
+        ...(server.mail_public_ips || []),
         server.status,
         domainText,
       ].some(value => String(value || '').toLowerCase().includes(needle))
@@ -284,6 +306,8 @@ export default function ServersPage() {
       api_host: server.api_host || '',
       smtp_host: server.smtp_host || '',
       imap_host: server.imap_host || '',
+      public_host: server.public_host || '',
+      mail_public_ips: (server.mail_public_ips || []).join('\n'),
       capacity: server.capacity || 5000,
       heartbeat_interval: server.heartbeat_interval || 30,
       status: server.status || 'healthy',
@@ -304,6 +328,8 @@ export default function ServersPage() {
       api_host: form.api_host,
       smtp_host: form.smtp_host,
       imap_host: form.imap_host,
+      public_host: form.public_host,
+      mail_public_ips: form.mail_public_ips.split(/[\s,]+/).map(value => value.trim()).filter(Boolean),
       capacity: Number(form.capacity) || 5000,
       heartbeat_interval: Number(form.heartbeat_interval) || 30,
       status: form.status,
@@ -313,11 +339,7 @@ export default function ServersPage() {
         await serverAPI.update(form.id, payload)
         setToast({ type: 'success', message: t('servers.messages.saved') })
       } else {
-        await serverAPI.create({
-          name: payload.name,
-          api_host: payload.api_host,
-          capacity: payload.capacity,
-        })
+        await serverAPI.create(payload)
         setToast({ type: 'success', message: t('servers.messages.registered') })
       }
       closeDrawer()
@@ -449,7 +471,10 @@ export default function ServersPage() {
                         </div>
                       </div>
                     </td>
-                    <td><code>{server.api_host || '-'}</code></td>
+                    <td>
+                      <code>{server.api_host || '-'}</code>
+                      {server.public_host && <div className="muted-text">{server.public_host}</div>}
+                    </td>
                     <td>
                       <div className="tag-list">
                         {server.domains && server.domains.length > 0

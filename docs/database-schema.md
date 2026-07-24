@@ -26,6 +26,10 @@
 | `filter_rules` | 邮件过滤规则表 | 白名单、黑名单、关键词和正则规则 |
 | `integrated_mailboxes` | 集成邮箱转发目标表 | union 人工兜底转发目标池 |
 | `mail_servers` | 邮件服务器节点表 | mail-node 注册、容量、心跳和健康状态 |
+| `node_enrollment_tokens` | 节点注册邀请表 | 邀请摘要、预绑定 UUID、有效期和使用状态 |
+| `node_enrollment_requests` | 节点注册申请表 | 申请身份、机器信息、审批状态和 request secret 摘要 |
+| `node_credentials` | 节点运行凭证表 | 每节点凭证摘要、代次、到期和撤销状态 |
+| `node_commands` | 节点持久命令表 | 出站控制通道命令、幂等键、状态和执行结果 |
 | `mailbox_accounts` | 邮箱账号资产表 | 当前邮箱账号主表与生命周期状态 |
 | `order_mailbox_mappings` | 订单与邮箱账号关联表 | 订单和邮箱账号的关联关系 |
 | `order_mailboxes` | 历史订单邮箱兼容表 | 旧版 1:1 数据兼容与迁移来源 |
@@ -46,6 +50,9 @@ erDiagram
     DOMAINS ||--o{ SERVER_DOMAINS : domain_id
     MAIL_SERVERS ||--o{ SERVER_CONFIG_OVERRIDES : server_id
     MAIL_SERVERS ||--o{ SERVER_CONFIG_SNAPSHOTS : server_id
+    MAIL_SERVERS ||--o{ NODE_CREDENTIALS : server_id
+    MAIL_SERVERS ||--o{ NODE_COMMANDS : server_id
+    NODE_ENROLLMENT_TOKENS ||--o{ NODE_ENROLLMENT_REQUESTS : enrollment_token_id
     API_APPLICATIONS ||--o{ API_CREDENTIALS : application_id
     API_APPLICATIONS ||--o{ API_APPLICATION_PERMISSIONS : application_id
     API_PERMISSIONS ||--o{ API_APPLICATION_PERMISSIONS : permission_code
@@ -123,11 +130,22 @@ erDiagram
 |------|------|-------------|----------|
 | `id` | BIGINT UNSIGNED | PK, AUTO_INCREMENT | 主键ID |
 | `name` | VARCHAR(128) | NOT NULL | 节点名称 |
+| `node_uuid` | CHAR(36) | NULL, UNIQUE | node 本地生成的永久身份；历史节点保持 NULL |
 | `api_host` | VARCHAR(255) | NOT NULL | 节点内部API地址 |
 | `smtp_host`, `imap_host` | VARCHAR(255) | NOT NULL | SMTP服务地址、IMAP服务地址 |
 | `public_host` | VARCHAR(255) | NULL | 公网主机名 |
+| `mail_public_ips_json` | TEXT | NULL | 显式邮件公网 IPv4/IPv6 列表；DNS 不从 api_host 推导 |
 | `capacity`, `current_load` | BIGINT | `5000`, `0` | 邮箱容量上限、当前邮箱数量 |
 | `status` | ENUM | `healthy` | `healthy / degraded / down / draining` |
+| `enrollment_state` | VARCHAR(24) | `legacy_approved` | `pending / approved / revoked / legacy_approved` |
+| `connection_state` | VARCHAR(24) | `unknown` | `connected / disconnected / unknown` |
+| `readiness_state` | VARCHAR(24) | `unknown` | `ready / degraded / failed / unknown` |
+| `allocation_state` | VARCHAR(24) | `active` | `active / draining / disabled` |
+| `transport_mode` | VARCHAR(24) | `legacy_http` | `legacy_http / dual / control_stream` |
+| `lease_expires_at` | DATETIME(3) | NULL | 出站控制会话租约到期时间 |
+| `agent_version`, `protocol_version` | VARCHAR(64), VARCHAR(32) | NULL | 最近上报的 Agent 和协议版本 |
+| `capabilities_json` | TEXT | NULL | 最近上报的节点能力列表 |
+| `last_connected_at`, `last_disconnected_at` | DATETIME(3) | NULL | 最近控制通道连接、断开时间 |
 | `last_heartbeat` | DATETIME(3) | NULL | 最后心跳时间 |
 | `last_probe_at`, `probe_fail_count` | DATETIME(3), BIGINT | NULL, `0` | 最后主动探测时间、连续失败次数 |
 | `heartbeat_interval` | BIGINT | `30` | 心跳间隔秒数 |
@@ -138,6 +156,15 @@ erDiagram
 | `config_changed_at` | DATETIME(3) | NULL | 最近一次配置 revision 推进时间 |
 | `boot_id_at_change` | VARCHAR(64) | NULL | 最近配置变更发生时的节点启动标识 |
 | `created_at`, `updated_at` | DATETIME(3) | NULL | 创建时间、更新时间 |
+
+### 3.6.1 节点注册与命令表
+
+| 表 | 关键字段与约束 | 说明 |
+|---|---|---|
+| `node_enrollment_tokens` | `token_hash` UNIQUE、`expected_node_uuid`、`state`、`expires_at`、`max_uses/used_count` | 完整邀请 Token 不落库。 |
+| `node_enrollment_requests` | 字符串 `id` PK、`request_secret_hash` UNIQUE、`requested_node_uuid`、`machine_fingerprint`、`state`、`server_id` | 完整 request secret 不落库；批准前不参与节点分配。 |
+| `node_credentials` | `credential_hash` UNIQUE、`server_id+version` UNIQUE、`state`、`expires_at/revoked_at` | 完整节点运行 Token 不落库。 |
+| `node_commands` | `command_id` PK、`server_id+sequence` UNIQUE、`server_id+idempotency_key` UNIQUE、`payload_json/result_json` LONGTEXT、`state/deadline_at` | 命令 payload 不写日志；访问与保留策略由后续命令服务实施。 |
 
 ### 3.7 `mailbox_accounts`
 

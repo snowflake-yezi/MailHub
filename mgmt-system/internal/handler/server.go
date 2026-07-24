@@ -51,24 +51,66 @@ type nodeResponse struct {
 	Data    RemoteDomainSetup `json:"data"`
 }
 
+type createServerRequest struct {
+	Name              string   `json:"name"`
+	APIHost           string   `json:"api_host"`
+	SMTPHost          string   `json:"smtp_host"`
+	IMAPHost          string   `json:"imap_host"`
+	PublicHost        string   `json:"public_host"`
+	MailPublicIPs     []string `json:"mail_public_ips"`
+	Capacity          int      `json:"capacity"`
+	HeartbeatInterval int      `json:"heartbeat_interval"`
+}
+
+type updateServerRequest struct {
+	Name              *string   `json:"name"`
+	APIHost           *string   `json:"api_host"`
+	SMTPHost          *string   `json:"smtp_host"`
+	IMAPHost          *string   `json:"imap_host"`
+	PublicHost        *string   `json:"public_host"`
+	MailPublicIPs     *[]string `json:"mail_public_ips"`
+	Capacity          *int      `json:"capacity"`
+	Status            *string   `json:"status"`
+	HeartbeatInterval *int      `json:"heartbeat_interval"`
+}
+
 // RegisterServer 注册新邮箱服务器
 // POST /api/v1/admin/servers
 func (h *ServerHandler) RegisterServer(c *gin.Context) {
-	var srv model.MailServer
-	if err := c.ShouldBindJSON(&srv); err != nil {
+	var req createServerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, ErrCodeParamMissing, "invalid server data: "+err.Error())
 		return
 	}
-
-	if srv.Name == "" || srv.APIHost == "" {
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.APIHost) == "" {
 		badRequest(c, ErrCodeParamMissing, "name and api_host are required")
 		return
+	}
+	srv := model.MailServer{
+		Name: req.Name, APIHost: req.APIHost, SMTPHost: req.SMTPHost, IMAPHost: req.IMAPHost,
+		PublicHost: req.PublicHost, MailPublicIPs: req.MailPublicIPs, Capacity: req.Capacity,
+		HeartbeatInterval: req.HeartbeatInterval,
 	}
 	if srv.Capacity == 0 {
 		srv.Capacity = h.store.GetConfigInt("general.default_server_capacity", 5000)
 	}
+	if srv.Capacity <= 0 {
+		badRequest(c, ErrCodeParamInvalid, "capacity must be positive")
+		return
+	}
+	if srv.HeartbeatInterval == 0 {
+		srv.HeartbeatInterval = 30
+	}
+	if srv.HeartbeatInterval < 5 || srv.HeartbeatInterval > 600 {
+		badRequest(c, ErrCodeParamInvalid, "heartbeat_interval must be between 5 and 600")
+		return
+	}
 	srv.Status = "healthy"
 	deriveHostDefaults(&srv)
+	if err := normalizeServerAddresses(&srv); err != nil {
+		badRequest(c, ErrCodeParamInvalid, err.Error())
+		return
+	}
 
 	if err := h.store.CreateServer(&srv); err != nil {
 		serverError(c, ErrCodeInternal, "failed to register server: "+err.Error())
@@ -161,6 +203,9 @@ func (h *ServerHandler) AddServerDomain(c *gin.Context) {
 	if aRecordHost == "" {
 		aRecordHost = strings.TrimSpace(req.MXHost)
 	}
+	if aRecordHost == "" {
+		aRecordHost = strings.TrimSpace(srv.PublicHost)
+	}
 	mxHost, err := normalizeMXHost(aRecordHost, name)
 	if err != nil {
 		badRequest(c, ErrCodeParamInvalid, err.Error())
@@ -224,7 +269,7 @@ func (h *ServerHandler) AddServerDomain(c *gin.Context) {
 		syncStatus = "partial"
 		syncError = setup.DKIMError
 	}
-	setup.DNSRecords = dnsRecordsForMXHost(setup.DNSRecords, name, mxHost, srv.APIHost)
+	setup.DNSRecords = dnsRecordsForMXHost(setup.DNSRecords, name, mxHost, srv.MailPublicIPs)
 	now := time.Now()
 	if err := h.store.UpdateServerDomainSync(srv.ID, domain.ID, map[string]interface{}{
 		"status":          "active",
@@ -310,33 +355,71 @@ func (h *ServerHandler) UpdateServer(c *gin.Context) {
 		return
 	}
 
-	var update model.MailServer
+	var update updateServerRequest
 	if err := c.ShouldBindJSON(&update); err != nil {
 		badRequest(c, ErrCodeParamInvalid, "invalid update data")
 		return
 	}
 
 	// 只更新允许的字段
-	if update.Name != "" {
-		existing.Name = update.Name
+	if update.Name != nil {
+		existing.Name = strings.TrimSpace(*update.Name)
+		if existing.Name == "" {
+			badRequest(c, ErrCodeParamInvalid, "name cannot be empty")
+			return
+		}
 	}
-	if update.APIHost != "" {
-		existing.APIHost = update.APIHost
+	if update.APIHost != nil {
+		existing.APIHost = strings.TrimSpace(*update.APIHost)
+		if existing.APIHost == "" {
+			badRequest(c, ErrCodeParamInvalid, "api_host cannot be empty")
+			return
+		}
 	}
-	if update.SMTPHost != "" {
-		existing.SMTPHost = update.SMTPHost
+	if update.SMTPHost != nil {
+		existing.SMTPHost = strings.TrimSpace(*update.SMTPHost)
+		if existing.SMTPHost == "" {
+			badRequest(c, ErrCodeParamInvalid, "smtp_host cannot be empty")
+			return
+		}
 	}
-	if update.IMAPHost != "" {
-		existing.IMAPHost = update.IMAPHost
+	if update.IMAPHost != nil {
+		existing.IMAPHost = strings.TrimSpace(*update.IMAPHost)
+		if existing.IMAPHost == "" {
+			badRequest(c, ErrCodeParamInvalid, "imap_host cannot be empty")
+			return
+		}
 	}
-	if update.Capacity > 0 {
-		existing.Capacity = update.Capacity
+	if update.PublicHost != nil {
+		existing.PublicHost = *update.PublicHost
 	}
-	if update.Status != "" {
-		existing.Status = update.Status
+	if update.MailPublicIPs != nil {
+		existing.MailPublicIPs = *update.MailPublicIPs
 	}
-	if update.HeartbeatInterval >= 5 && update.HeartbeatInterval <= 600 {
-		existing.HeartbeatInterval = update.HeartbeatInterval
+	if update.Capacity != nil {
+		if *update.Capacity <= 0 {
+			badRequest(c, ErrCodeParamInvalid, "capacity must be positive")
+			return
+		}
+		existing.Capacity = *update.Capacity
+	}
+	if update.Status != nil {
+		if !validLegacyServerStatus(*update.Status) {
+			badRequest(c, ErrCodeParamInvalid, "invalid server status")
+			return
+		}
+		existing.ApplyLegacyAdminStatus(*update.Status)
+	}
+	if update.HeartbeatInterval != nil {
+		if *update.HeartbeatInterval < 5 || *update.HeartbeatInterval > 600 {
+			badRequest(c, ErrCodeParamInvalid, "heartbeat_interval must be between 5 and 600")
+			return
+		}
+		existing.HeartbeatInterval = *update.HeartbeatInterval
+	}
+	if err := normalizeServerAddresses(existing); err != nil {
+		badRequest(c, ErrCodeParamInvalid, err.Error())
+		return
 	}
 
 	if err := h.store.UpdateServer(existing); err != nil {
@@ -490,14 +573,21 @@ func (h *ServerHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.DELETE("/servers/:id/domains/:domain_id", h.RemoveServerDomain)
 }
 
-func dnsRecordsForMXHost(records []DNSRecord, domain, mxHost, apiHost string) []DNSRecord {
-	ip := hostIP(apiHost)
-	out := make([]DNSRecord, 0, len(records)+1)
-	if ip != "" {
-		out = append(out, DNSRecord{Type: "A", Host: mxHost, Value: ip})
+func dnsRecordsForMXHost(records []DNSRecord, domain, mxHost string, publicIPs []string) []DNSRecord {
+	out := make([]DNSRecord, 0, len(records)+len(publicIPs))
+	for _, value := range publicIPs {
+		ip := net.ParseIP(value)
+		if ip == nil {
+			continue
+		}
+		recordType := "AAAA"
+		if ip.To4() != nil {
+			recordType = "A"
+		}
+		out = append(out, DNSRecord{Type: recordType, Host: mxHost, Value: ip.String()})
 	}
 	for _, r := range records {
-		if strings.EqualFold(r.Type, "A") {
+		if strings.EqualFold(r.Type, "A") || strings.EqualFold(r.Type, "AAAA") {
 			continue
 		}
 		if strings.EqualFold(r.Type, "MX") {
@@ -507,21 +597,6 @@ func dnsRecordsForMXHost(records []DNSRecord, domain, mxHost, apiHost string) []
 		out = append(out, r)
 	}
 	return out
-}
-
-func hostIP(addr string) string {
-	host := strings.TrimSpace(addr)
-	if host == "" {
-		return ""
-	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.String()
-	}
-	return ""
 }
 
 func normalizeMXHost(input, domain string) (string, error) {
@@ -606,6 +681,49 @@ func deriveHostDefaults(srv *model.MailServer) {
 	}
 	if srv.IMAPHost == "" {
 		srv.IMAPHost = extractHost(srv.APIHost)
+	}
+}
+
+func normalizeServerAddresses(srv *model.MailServer) error {
+	srv.Name = strings.TrimSpace(srv.Name)
+	srv.APIHost = strings.TrimSpace(srv.APIHost)
+	srv.SMTPHost = strings.TrimSpace(srv.SMTPHost)
+	srv.IMAPHost = strings.TrimSpace(srv.IMAPHost)
+
+	publicHost := strings.TrimSpace(strings.TrimSuffix(srv.PublicHost, "."))
+	if publicHost != "" {
+		normalized, err := mailboxaddr.NormalizeDomain(publicHost)
+		if err != nil {
+			return fmt.Errorf("invalid public_host")
+		}
+		publicHost = normalized
+	}
+	srv.PublicHost = publicHost
+
+	seen := make(map[string]struct{}, len(srv.MailPublicIPs))
+	publicIPs := make([]string, 0, len(srv.MailPublicIPs))
+	for _, value := range srv.MailPublicIPs {
+		ip := net.ParseIP(strings.TrimSpace(value))
+		if ip == nil {
+			return fmt.Errorf("invalid mail_public_ips value %q", value)
+		}
+		canonical := ip.String()
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		publicIPs = append(publicIPs, canonical)
+	}
+	srv.MailPublicIPs = publicIPs
+	return nil
+}
+
+func validLegacyServerStatus(status string) bool {
+	switch status {
+	case "healthy", "degraded", "down", "draining":
+		return true
+	default:
+		return false
 	}
 }
 

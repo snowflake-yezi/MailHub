@@ -14,29 +14,42 @@ type Domain struct {
 
 // MailServer 邮箱服务器
 type MailServer struct {
-	ID                uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	Name              string     `gorm:"size:128;not null" json:"name"`
-	APIHost           string     `gorm:"size:255;not null" json:"api_host"`
-	SMTPHost          string     `gorm:"size:255;not null" json:"smtp_host"`
-	IMAPHost          string     `gorm:"size:255;not null" json:"imap_host"`
-	PublicHost        string     `gorm:"size:255" json:"public_host"`
-	Capacity          int        `gorm:"not null;default:5000" json:"capacity"`
-	CurrentLoad       int        `gorm:"not null;default:0" json:"current_load"`
-	Status            string     `gorm:"type:enum('healthy','degraded','down','draining');default:healthy" json:"status"`
-	LastHeartbeat     *time.Time `json:"last_heartbeat"`
-	LastProbeAt       *time.Time `json:"last_probe_at"`
-	ProbeFailCount    int        `gorm:"not null;default:0" json:"probe_fail_count"`
-	HeartbeatInterval int        `gorm:"not null;default:30" json:"heartbeat_interval"`
-	DesiredRevision   uint64     `gorm:"not null;default:0" json:"desired_revision"`
-	AppliedRevision   uint64     `gorm:"not null;default:0" json:"applied_revision"`
-	LastApplyError    string     `gorm:"type:text" json:"last_apply_error,omitempty"`
-	LastBootID        string     `gorm:"size:64" json:"last_boot_id,omitempty"`
-	LastStartedAt     *time.Time `json:"last_started_at,omitempty"`
-	ConfigChangedAt   *time.Time `json:"config_changed_at,omitempty"`
-	BootIDAtChange    string     `gorm:"size:64" json:"boot_id_at_change,omitempty"`
-	LastReloadError   string     `gorm:"type:text" json:"last_reload_error,omitempty"`
-	CreatedAt         time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	UpdatedAt         time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	ID                 uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Name               string     `gorm:"size:128;not null" json:"name"`
+	NodeUUID           *string    `gorm:"type:char(36);uniqueIndex:uk_mail_server_node_uuid" json:"node_uuid,omitempty"`
+	APIHost            string     `gorm:"size:255;not null" json:"api_host"`
+	SMTPHost           string     `gorm:"size:255;not null" json:"smtp_host"`
+	IMAPHost           string     `gorm:"size:255;not null" json:"imap_host"`
+	PublicHost         string     `gorm:"size:255" json:"public_host"`
+	MailPublicIPs      []string   `gorm:"column:mail_public_ips_json;serializer:json;type:text" json:"mail_public_ips"`
+	Capacity           int        `gorm:"not null;default:5000" json:"capacity"`
+	CurrentLoad        int        `gorm:"not null;default:0" json:"current_load"`
+	Status             string     `gorm:"type:enum('healthy','degraded','down','draining');default:healthy" json:"status"`
+	EnrollmentState    string     `gorm:"size:24;not null;default:legacy_approved;index" json:"enrollment_state"`
+	ConnectionState    string     `gorm:"size:24;not null;default:unknown;index" json:"connection_state"`
+	ReadinessState     string     `gorm:"size:24;not null;default:unknown;index" json:"readiness_state"`
+	AllocationState    string     `gorm:"size:24;not null;default:active;index" json:"allocation_state"`
+	TransportMode      string     `gorm:"size:24;not null;default:legacy_http;index" json:"transport_mode"`
+	LeaseExpiresAt     *time.Time `gorm:"index" json:"lease_expires_at,omitempty"`
+	AgentVersion       string     `gorm:"size:64" json:"agent_version,omitempty"`
+	ProtocolVersion    string     `gorm:"size:32" json:"protocol_version,omitempty"`
+	Capabilities       []string   `gorm:"column:capabilities_json;serializer:json;type:text" json:"capabilities"`
+	LastConnectedAt    *time.Time `json:"last_connected_at,omitempty"`
+	LastDisconnectedAt *time.Time `json:"last_disconnected_at,omitempty"`
+	LastHeartbeat      *time.Time `json:"last_heartbeat"`
+	LastProbeAt        *time.Time `json:"last_probe_at"`
+	ProbeFailCount     int        `gorm:"not null;default:0" json:"probe_fail_count"`
+	HeartbeatInterval  int        `gorm:"not null;default:30" json:"heartbeat_interval"`
+	DesiredRevision    uint64     `gorm:"not null;default:0" json:"desired_revision"`
+	AppliedRevision    uint64     `gorm:"not null;default:0" json:"applied_revision"`
+	LastApplyError     string     `gorm:"type:text" json:"last_apply_error,omitempty"`
+	LastBootID         string     `gorm:"size:64" json:"last_boot_id,omitempty"`
+	LastStartedAt      *time.Time `json:"last_started_at,omitempty"`
+	ConfigChangedAt    *time.Time `json:"config_changed_at,omitempty"`
+	BootIDAtChange     string     `gorm:"size:64" json:"boot_id_at_change,omitempty"`
+	LastReloadError    string     `gorm:"type:text" json:"last_reload_error,omitempty"`
+	CreatedAt          time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt          time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 
 	// Domains 该服务器绑定的 active 域名，仅用于列表展示，不落库（transient）。
 	Domains       []Domain             `gorm:"-" json:"domains,omitempty"`
