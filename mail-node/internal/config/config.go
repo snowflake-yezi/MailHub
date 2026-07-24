@@ -11,6 +11,13 @@ import (
 
 const defaultFilterSyncIntervalSeconds = 3600
 
+const (
+	defaultTransportMode  = "legacy_http"
+	defaultIdentityDir    = "/var/lib/mail-node/identity"
+	defaultCredentialFile = "/var/lib/mail-node/identity/credential"
+	defaultManagementCA   = "/etc/mail-node/management-ca.pem"
+)
+
 type Config struct {
 	Server       ServerConfig     `yaml:"server"`
 	Maildir      MaildirConfig    `yaml:"maildir"`
@@ -18,6 +25,7 @@ type Config struct {
 	Forward      ForwardConfig    `yaml:"forward"`
 	Filter       FilterConfig     `yaml:"filter"`
 	Node         NodeConfig       `yaml:"node"`
+	Identity     IdentityConfig   `yaml:"identity"`
 	PublicHost   string           `yaml:"public_host"`
 	Postfix      PostfixConfig    `yaml:"postfix"`
 	DKIM         DKIMConfig       `yaml:"dkim"`
@@ -38,8 +46,16 @@ type MaildirConfig struct {
 
 type ManagementConfig struct {
 	APIURL             string `yaml:"api_url"`
+	ControlURL         string `yaml:"control_url"`
+	TransportMode      string `yaml:"transport_mode"`
+	CredentialFile     string `yaml:"credential_file"`
+	CAFile             string `yaml:"ca_file"`
 	HeartbeatInterval  int    `yaml:"heartbeat_interval"`
 	FilterSyncInterval int    `yaml:"filter_sync_interval"`
+}
+
+type IdentityConfig struct {
+	Directory string `yaml:"directory"`
 }
 
 type ForwardConfig struct {
@@ -83,8 +99,14 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Server:     ServerConfig{Port: 8081, Mode: "release"},
-		Management: ManagementConfig{FilterSyncInterval: defaultFilterSyncIntervalSeconds},
+		Server: ServerConfig{Port: 8081, Mode: "release"},
+		Management: ManagementConfig{
+			FilterSyncInterval: defaultFilterSyncIntervalSeconds,
+			TransportMode:      defaultTransportMode,
+			CredentialFile:     defaultCredentialFile,
+			CAFile:             defaultManagementCA,
+		},
+		Identity: IdentityConfig{Directory: defaultIdentityDir},
 		Filter: FilterConfig{
 			DefaultAction: "pass", FlagSubjectPrefix: "[疑似]",
 			OutboxPath: "/var/lib/mail-node/filter-outbox", QuarantineBase: "/var/mail/mailhub-quarantine",
@@ -108,6 +130,18 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Management.FilterSyncInterval <= 0 {
 		cfg.Management.FilterSyncInterval = defaultFilterSyncIntervalSeconds
+	}
+	if strings.TrimSpace(cfg.Management.TransportMode) == "" {
+		cfg.Management.TransportMode = defaultTransportMode
+	}
+	if strings.TrimSpace(cfg.Management.CredentialFile) == "" {
+		cfg.Management.CredentialFile = defaultCredentialFile
+	}
+	if strings.TrimSpace(cfg.Management.CAFile) == "" {
+		cfg.Management.CAFile = defaultManagementCA
+	}
+	if strings.TrimSpace(cfg.Identity.Directory) == "" {
+		cfg.Identity.Directory = defaultIdentityDir
 	}
 	if strings.TrimSpace(cfg.Filter.OutboxPath) == "" {
 		cfg.Filter.OutboxPath = "/var/lib/mail-node/filter-outbox"

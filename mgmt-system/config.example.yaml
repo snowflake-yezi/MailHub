@@ -27,3 +27,17 @@ filter:
   reload_interval: 30
   default_action: "pass"
   default_flag_subject_prefix: "[疑似]"
+
+# NR-P0 feature flags. Keep node control disabled until its gateway is implemented.
+node_control:
+  enabled: false
+  listen: ":8443"
+  public_url: ""
+  tls_cert_file: ""
+  tls_key_file: ""
+  heartbeat_interval_seconds: 30
+  lease_timeout_seconds: 90
+  command_timeout_seconds: 15
+  data_max_concurrency_per_node: 4
+  data_chunk_size: 262144
+  legacy_http_enabled: true

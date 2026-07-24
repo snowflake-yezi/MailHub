@@ -38,3 +38,43 @@ func TestValidateNormalizesAndRejectsInjectedDomains(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadDefaultsNodeControlToDisabledLegacyMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte("database:\n  dsn: test-dsn\ndomains:\n  - name: example.com\ndefault_retention_days: 30\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.NodeControl.Enabled {
+		t.Fatal("node control must be disabled by default")
+	}
+	if !cfg.NodeControl.LegacyHTTPEnabled {
+		t.Fatal("legacy HTTP must remain enabled by default")
+	}
+	if cfg.NodeControl.Listen != ":8443" || cfg.NodeControl.DataChunkSize != 256*1024 {
+		t.Fatalf("unexpected node control defaults: %+v", cfg.NodeControl)
+	}
+}
+
+func TestLoadAcceptsExplicitNodeControlFlags(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := []byte("database:\n  dsn: test-dsn\ndomains:\n  - name: example.com\ndefault_retention_days: 30\nnode_control:\n  enabled: true\n  listen: ':9443'\n  legacy_http_enabled: false\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NodeControl.Enabled || cfg.NodeControl.LegacyHTTPEnabled || cfg.NodeControl.Listen != ":9443" {
+		t.Fatalf("node control flags not loaded: %+v", cfg.NodeControl)
+	}
+}

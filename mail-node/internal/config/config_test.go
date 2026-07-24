@@ -48,3 +48,46 @@ func TestLoadNormalizesFilterSyncInterval(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadDefaultsNodeTransportToLegacy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  port: 8081\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Management.TransportMode != defaultTransportMode {
+		t.Fatalf("transport mode = %q, want %q", cfg.Management.TransportMode, defaultTransportMode)
+	}
+	if cfg.Management.ControlURL != "" {
+		t.Fatalf("control URL must be empty by default, got %q", cfg.Management.ControlURL)
+	}
+	if cfg.Management.CredentialFile != defaultCredentialFile || cfg.Management.CAFile != defaultManagementCA {
+		t.Fatalf("unexpected management identity defaults: %+v", cfg.Management)
+	}
+	if cfg.Identity.Directory != defaultIdentityDir {
+		t.Fatalf("identity directory = %q, want %q", cfg.Identity.Directory, defaultIdentityDir)
+	}
+}
+
+func TestLoadAcceptsExplicitNodeTransportSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := []byte("management:\n  control_url: node-control.example.com:443\n  transport_mode: control_stream\n  credential_file: /run/mail-node/credential\n  ca_file: /etc/ssl/mailhub.pem\nidentity:\n  directory: /srv/mail-node/identity\n")
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Management.TransportMode != "control_stream" || cfg.Management.ControlURL != "node-control.example.com:443" {
+		t.Fatalf("node transport settings not loaded: %+v", cfg.Management)
+	}
+	if cfg.Identity.Directory != "/srv/mail-node/identity" {
+		t.Fatalf("identity directory = %q", cfg.Identity.Directory)
+	}
+}

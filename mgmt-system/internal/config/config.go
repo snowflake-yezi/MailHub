@@ -11,12 +11,13 @@ import (
 
 // Config 全局配置结构
 type Config struct {
-	Server               ServerConfig   `yaml:"server"`
-	Database             DatabaseConfig `yaml:"database"`
-	Auth                 AuthConfig     `yaml:"auth"`
-	Domains              []DomainConfig `yaml:"domains"`
-	DefaultRetentionDays int            `yaml:"default_retention_days"`
-	Filter               FilterConfig   `yaml:"filter"`
+	Server               ServerConfig      `yaml:"server"`
+	Database             DatabaseConfig    `yaml:"database"`
+	Auth                 AuthConfig        `yaml:"auth"`
+	Domains              []DomainConfig    `yaml:"domains"`
+	DefaultRetentionDays int               `yaml:"default_retention_days"`
+	Filter               FilterConfig      `yaml:"filter"`
+	NodeControl          NodeControlConfig `yaml:"node_control"`
 }
 
 type ServerConfig struct {
@@ -52,6 +53,20 @@ type FilterConfig struct {
 	DefaultFlagSubjectPrefix string `yaml:"default_flag_subject_prefix"`
 }
 
+type NodeControlConfig struct {
+	Enabled                   bool   `yaml:"enabled"`
+	Listen                    string `yaml:"listen"`
+	PublicURL                 string `yaml:"public_url"`
+	TLSCertFile               string `yaml:"tls_cert_file"`
+	TLSKeyFile                string `yaml:"tls_key_file"`
+	HeartbeatIntervalSeconds  int    `yaml:"heartbeat_interval_seconds"`
+	LeaseTimeoutSeconds       int    `yaml:"lease_timeout_seconds"`
+	CommandTimeoutSeconds     int    `yaml:"command_timeout_seconds"`
+	DataMaxConcurrencyPerNode int    `yaml:"data_max_concurrency_per_node"`
+	DataChunkSize             int    `yaml:"data_chunk_size"`
+	LegacyHTTPEnabled         bool   `yaml:"legacy_http_enabled"`
+}
+
 // Load 从文件加载配置
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -69,6 +84,15 @@ func Load(path string) (*Config, error) {
 			ReloadInterval:           30,
 			DefaultAction:            "pass",
 			DefaultFlagSubjectPrefix: "[疑似]",
+		},
+		NodeControl: NodeControlConfig{
+			Listen:                    ":8443",
+			HeartbeatIntervalSeconds:  30,
+			LeaseTimeoutSeconds:       90,
+			CommandTimeoutSeconds:     15,
+			DataMaxConcurrencyPerNode: 4,
+			DataChunkSize:             256 * 1024,
+			LegacyHTTPEnabled:         true,
 		},
 	}
 

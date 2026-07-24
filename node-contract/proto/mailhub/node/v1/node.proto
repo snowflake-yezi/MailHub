@@ -1,0 +1,298 @@
+syntax = "proto3";
+
+package mailhub.node.v1;
+
+option go_package = "github.com/ticket/email-node-contract/gen/mailhub/node/v1;nodev1";
+
+import "google/protobuf/timestamp.proto";
+
+service NodeGateway {
+  rpc Control(stream NodeControlFrame) returns (stream SystemControlFrame);
+  rpc Data(stream NodeDataFrame) returns (stream SystemDataFrame);
+}
+
+enum EnrollmentState {
+  ENROLLMENT_STATE_UNSPECIFIED = 0;
+  ENROLLMENT_STATE_PENDING = 1;
+  ENROLLMENT_STATE_APPROVED = 2;
+  ENROLLMENT_STATE_REVOKED = 3;
+  ENROLLMENT_STATE_LEGACY_APPROVED = 4;
+}
+
+enum ConnectionState {
+  CONNECTION_STATE_UNSPECIFIED = 0;
+  CONNECTION_STATE_CONNECTED = 1;
+  CONNECTION_STATE_DISCONNECTED = 2;
+  CONNECTION_STATE_UNKNOWN = 3;
+}
+
+enum ReadinessState {
+  READINESS_STATE_UNSPECIFIED = 0;
+  READINESS_STATE_READY = 1;
+  READINESS_STATE_DEGRADED = 2;
+  READINESS_STATE_FAILED = 3;
+  READINESS_STATE_UNKNOWN = 4;
+}
+
+enum AllocationState {
+  ALLOCATION_STATE_UNSPECIFIED = 0;
+  ALLOCATION_STATE_ACTIVE = 1;
+  ALLOCATION_STATE_DRAINING = 2;
+  ALLOCATION_STATE_DISABLED = 3;
+}
+
+enum TransportMode {
+  TRANSPORT_MODE_UNSPECIFIED = 0;
+  TRANSPORT_MODE_LEGACY_HTTP = 1;
+  TRANSPORT_MODE_DUAL = 2;
+  TRANSPORT_MODE_CONTROL_STREAM = 3;
+}
+
+enum CommandState {
+  COMMAND_STATE_UNSPECIFIED = 0;
+  COMMAND_STATE_QUEUED = 1;
+  COMMAND_STATE_DELIVERED = 2;
+  COMMAND_STATE_RECEIVED = 3;
+  COMMAND_STATE_RUNNING = 4;
+  COMMAND_STATE_SUCCEEDED = 5;
+  COMMAND_STATE_SUCCEEDED_WITH_WARNING = 6;
+  COMMAND_STATE_FAILED = 7;
+  COMMAND_STATE_REJECTED = 8;
+  COMMAND_STATE_EXPIRED = 9;
+}
+
+message NodeControlFrame {
+  string frame_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+
+  oneof payload {
+    Hello hello = 10;
+    Heartbeat heartbeat = 11;
+    CommandReceived command_received = 12;
+    CommandStarted command_started = 13;
+    CommandResult command_result = 14;
+    ConfigApplied config_applied = 15;
+    NodeEvent node_event = 16;
+    Ping ping = 17;
+    Pong pong = 18;
+  }
+}
+
+message SystemControlFrame {
+  string frame_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+
+  oneof payload {
+    Welcome welcome = 10;
+    Command command = 11;
+    ConfigRevisionChanged config_revision_changed = 12;
+    FilterRevisionChanged filter_revision_changed = 13;
+    CancelCommand cancel_command = 14;
+    Ping ping = 15;
+    Pong pong = 16;
+    DrainNotice drain_notice = 17;
+  }
+}
+
+message Hello {
+  string node_uuid = 1;
+  string boot_id = 2;
+  google.protobuf.Timestamp started_at = 3;
+  string agent_version = 4;
+  repeated uint32 supported_protocol_versions = 5;
+  repeated string capabilities = 6;
+  uint64 last_acked_sequence = 7;
+  uint64 desired_revision = 8;
+  uint64 applied_revision = 9;
+}
+
+message Welcome {
+  string session_id = 1;
+  uint32 protocol_version = 2;
+  uint32 heartbeat_interval_seconds = 3;
+  google.protobuf.Timestamp server_time = 4;
+  uint64 desired_revision = 5;
+  uint64 next_command_sequence = 6;
+}
+
+message ComponentHealth {
+  string component = 1;
+  ReadinessState state = 2;
+  string detail = 3;
+  google.protobuf.Timestamp checked_at = 4;
+}
+
+message Heartbeat {
+  string node_uuid = 1;
+  string boot_id = 2;
+  string session_id = 3;
+  uint64 mailbox_count = 4;
+  uint64 disk_total_bytes = 5;
+  uint64 disk_available_bytes = 6;
+  uint64 desired_revision = 7;
+  uint64 applied_revision = 8;
+  string last_apply_error = 9;
+  uint64 last_completed_sequence = 10;
+  ReadinessState readiness = 11;
+  repeated ComponentHealth components = 12;
+}
+
+message Command {
+  string command_id = 1;
+  uint64 sequence = 2;
+  string type = 3;
+  uint32 schema_version = 4;
+  string idempotency_key = 5;
+  bytes payload_json = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp deadline_at = 8;
+  string trace_id = 9;
+}
+
+message CommandReceived {
+  string command_id = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp received_at = 3;
+}
+
+message CommandStarted {
+  string command_id = 1;
+  uint64 sequence = 2;
+  google.protobuf.Timestamp started_at = 3;
+}
+
+message CommandResult {
+  string command_id = 1;
+  uint64 sequence = 2;
+  CommandState state = 3;
+  string result_code = 4;
+  bytes result_json = 5;
+  string error_message = 6;
+  google.protobuf.Timestamp completed_at = 7;
+}
+
+message ConfigApplied {
+  uint64 revision = 1;
+  bool succeeded = 2;
+  string error_message = 3;
+  google.protobuf.Timestamp applied_at = 4;
+}
+
+message NodeEvent {
+  string event_id = 1;
+  string type = 2;
+  string severity = 3;
+  bytes details_json = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+}
+
+message ConfigRevisionChanged {
+  uint64 revision = 1;
+}
+
+message FilterRevisionChanged {
+  uint64 revision = 1;
+}
+
+message CancelCommand {
+  string command_id = 1;
+  string reason = 2;
+}
+
+message DrainNotice {
+  AllocationState allocation = 1;
+  string reason = 2;
+}
+
+message Ping {
+  string nonce = 1;
+}
+
+message Pong {
+  string nonce = 1;
+}
+
+message NodeDataFrame {
+  oneof payload {
+    DataStreamHello hello = 10;
+    NodeDataHeader header = 11;
+    NodeDataChunk chunk = 12;
+    NodeDataEnd end = 13;
+    NodeDataError error = 14;
+    Ping ping = 15;
+    Pong pong = 16;
+  }
+}
+
+message SystemDataFrame {
+  oneof payload {
+    DataStreamWelcome welcome = 10;
+    SystemDataRequest request = 11;
+    CancelDataRequest cancel = 12;
+    Ping ping = 13;
+    Pong pong = 14;
+  }
+}
+
+message DataStreamHello {
+  string node_uuid = 1;
+  string boot_id = 2;
+  string control_session_id = 3;
+  uint32 protocol_version = 4;
+}
+
+message DataStreamWelcome {
+  string data_session_id = 1;
+  uint32 max_concurrency = 2;
+  uint32 max_chunk_size = 3;
+  google.protobuf.Timestamp server_time = 4;
+}
+
+message DataLocator {
+  string mailbox = 1;
+  string message_id = 2;
+  uint32 attachment_index = 3;
+  string quarantine_key = 4;
+  bytes options_json = 5;
+}
+
+message SystemDataRequest {
+  string request_id = 1;
+  string type = 2;
+  DataLocator locator = 3;
+  google.protobuf.Timestamp deadline_at = 4;
+}
+
+message NodeDataHeader {
+  string request_id = 1;
+  int32 status = 2;
+  string content_type = 3;
+  int64 content_length = 4;
+  string content_disposition = 5;
+  map<string, string> headers = 6;
+}
+
+message NodeDataChunk {
+  string request_id = 1;
+  uint64 sequence = 2;
+  bytes data = 3;
+}
+
+message NodeDataEnd {
+  string request_id = 1;
+  string checksum_algorithm = 2;
+  bytes checksum = 3;
+  uint64 total_bytes = 4;
+}
+
+message NodeDataError {
+  string request_id = 1;
+  int32 status = 2;
+  string code = 3;
+  string message = 4;
+}
+
+message CancelDataRequest {
+  string request_id = 1;
+  string reason = 2;
+}

@@ -1,0 +1,5 @@
+{
+  "protoc": "28.3",
+  "protoc_gen_go": "1.35.2",
+  "protoc_gen_go_grpc": "1.5.1"
+}

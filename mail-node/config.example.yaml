@@ -10,8 +10,16 @@ maildir:
 
 management:
   api_url: "http://127.0.0.1:8080"
+  # NR-P0 keeps the new outbound transport disabled by selecting legacy HTTP.
+  control_url: ""
+  transport_mode: "legacy_http"
+  credential_file: "/var/lib/mail-node/identity/credential"
+  ca_file: "/etc/mail-node/management-ca.pem"
   heartbeat_interval: 30
   filter_sync_interval: 3600
+
+identity:
+  directory: "/var/lib/mail-node/identity"
 
 shared_secret: "CHANGE-ME-SAME-AS-MGMT"
 
