@@ -29,6 +29,7 @@ type FilterQuarantineRecord struct {
 	AdScoreMilli  int64     `gorm:"column:ad_score_milli" json:"ad_score_milli"`
 	EvaluatedAt   time.Time `gorm:"column:evaluated_at" json:"evaluated_at"`
 	ServerAPIHost string    `gorm:"column:server_api_host" json:"-"`
+	TransportMode string    `gorm:"column:transport_mode" json:"-"`
 }
 
 const maxFilterJSONPayloadBytes = 4 << 20
@@ -188,7 +189,7 @@ func (s *Store) ListFilterQuarantines(page, size int, status string) ([]FilterQu
 		return nil, 0, err
 	}
 	var records []FilterQuarantineRecord
-	err := query.Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host").
+	err := query.Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host, mail_servers.transport_mode AS transport_mode").
 		Joins("JOIN filter_decisions ON filter_decisions.id = filter_quarantines.decision_id").
 		Joins("JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
 		Joins("JOIN mail_servers ON mail_servers.id = filter_decisions.node_id").
@@ -200,7 +201,7 @@ func (s *Store) ListFilterQuarantines(page, size int, status string) ([]FilterQu
 func (s *Store) GetFilterQuarantine(key string) (*FilterQuarantineRecord, error) {
 	var record FilterQuarantineRecord
 	err := s.db.Table("filter_quarantines").
-		Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host").
+		Select("filter_quarantines.*, filter_decisions.decision_key, filter_decisions.message_key, filter_decisions.message_id, filter_decisions.node_id, filter_decisions.ad_score_milli, filter_decisions.evaluated_at, mailbox_accounts.email_address AS mailbox, mail_servers.api_host AS server_api_host, mail_servers.transport_mode AS transport_mode").
 		Joins("JOIN filter_decisions ON filter_decisions.id = filter_quarantines.decision_id").
 		Joins("JOIN mailbox_accounts ON mailbox_accounts.id = filter_decisions.mailbox_account_id").
 		Joins("JOIN mail_servers ON mail_servers.id = filter_decisions.node_id").

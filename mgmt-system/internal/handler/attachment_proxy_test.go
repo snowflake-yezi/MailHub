@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 )
 
 // TestProxyAttachmentToServerPassesBinary 验证附件代理透传：上游字节、Content-Type、
@@ -29,8 +30,9 @@ func TestProxyAttachmentToServerPassesBinary(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/anything", nil)
-	proxyAttachmentToServer(c, strings.TrimPrefix(upstream.URL, "http://"), "GET",
-		"/internal/messages/m/attachments/0?mailbox=a@b.com", "secret")
+	transport := newTestNodeTransport("secret", upstream.Client())
+	proxyNodeData(c, transport, nodetransport.Target{APIHost: strings.TrimPrefix(upstream.URL, "http://")},
+		nodetransport.MessageAttachment("m", "a@b.com", "0"), "attachment")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -64,8 +66,9 @@ func TestProxyAttachmentToServerPassesUpstreamError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/anything", nil)
-	proxyAttachmentToServer(c, strings.TrimPrefix(upstream.URL, "http://"), "GET",
-		"/internal/messages/m/attachments/9?mailbox=a@b.com", "secret")
+	transport := newTestNodeTransport("secret", upstream.Client())
+	proxyNodeData(c, transport, nodetransport.Target{APIHost: strings.TrimPrefix(upstream.URL, "http://")},
+		nodetransport.MessageAttachment("m", "a@b.com", "9"), "attachment")
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
@@ -86,7 +89,9 @@ func TestProxyAttachmentToServerFallsBackOnConnError(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/anything", nil)
-	proxyAttachmentToServer(c, addr, "GET", "/internal/messages/m/attachments/0?mailbox=a@b.com", "secret")
+	transport := newTestNodeTransport("secret", http.DefaultClient)
+	proxyNodeData(c, transport, nodetransport.Target{APIHost: addr},
+		nodetransport.MessageAttachment("m", "a@b.com", "0"), "attachment")
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())

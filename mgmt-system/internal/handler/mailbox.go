@@ -1,9 +1,8 @@
 package handler
 
 import (
-	"bytes"
+	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,25 +14,24 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
 type MailboxHandler struct {
-	store        *store.Store
-	allocator    *service.Allocator
-	creator      *service.MailboxCreator
-	sharedSecret string
-	client       *http.Client
+	store     *store.Store
+	allocator *service.Allocator
+	creator   *service.MailboxCreator
+	transport nodetransport.NodeTransport
 }
 
-func NewMailboxHandler(s *store.Store, alloc *service.Allocator, sharedSecret string) *MailboxHandler {
+func NewMailboxHandler(s *store.Store, alloc *service.Allocator, transport nodetransport.NodeTransport) *MailboxHandler {
 	return &MailboxHandler{
-		store:        s,
-		allocator:    alloc,
-		creator:      alloc.Creator(),
-		sharedSecret: sharedSecret,
-		client:       &http.Client{Timeout: 10 * time.Second},
+		store:     s,
+		allocator: alloc,
+		creator:   alloc.Creator(),
+		transport: transport,
 	}
 }
 
@@ -52,6 +50,9 @@ func (h *MailboxHandler) CreateMailbox(c *gin.Context) {
 
 	result, err := h.allocator.Allocate(req.OrderID, req.DomainID, req.RetentionDays)
 	if err != nil {
+		if acceptedOperation(c, err, "mailbox creation accepted") {
+			return
+		}
 		serverError(c, ErrCodeInternal, "failed to allocate mailbox: "+err.Error())
 		return
 	}
@@ -343,8 +344,11 @@ func (h *MailboxHandler) executeDeletion(c *gin.Context, mb *model.MailboxAccoun
 		serverError(c, ErrCodeExternalFail, "mail server not found")
 		return
 	}
-	if err := h.callNodeDeleteMailbox(srv.APIHost, mb.EmailAddress); err != nil {
+	if err := h.callNodeDeleteMailbox(c.Request.Context(), srv, mb.EmailAddress); err != nil {
 		// 保持 deleting 状态，Watchdog 会重试
+		if acceptedOperation(c, err, "mailbox deletion accepted") {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, "failed to delete on mail node (will retry): "+err.Error())
 		return
 	}
@@ -363,23 +367,14 @@ func (h *MailboxHandler) executeDeletion(c *gin.Context, mb *model.MailboxAccoun
 }
 
 // callNodeDeleteMailbox 向 mail-node 发送 DELETE 请求，触发 MoveToTrash。
-func (h *MailboxHandler) callNodeDeleteMailbox(apiHost, email string) error {
-	url := fmt.Sprintf("http://%s/internal/mailboxes/%s", apiHost, email)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-
-	resp, err := h.client.Do(req)
+func (h *MailboxHandler) callNodeDeleteMailbox(ctx context.Context, server *model.MailServer, email string) error {
+	resp, err := h.transport.Execute(ctx, nodeTarget(server), nodetransport.MailboxDelete(email, 10*time.Second))
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		body := string(data)
+		body := string(resp.Body)
 		// 防御：maildir 已在节点上不存在时，视为已删除（幂等）。
 		// 正常路径由 mail-node MoveToTrash 幂等返回 200，此分支兜底旧版节点返回 500。
 		if strings.Contains(body, "mailbox not found") || strings.Contains(body, "already deleted") {
@@ -431,9 +426,12 @@ func (h *MailboxHandler) RestoreMailbox(c *gin.Context) {
 		generated = true
 	}
 
-	if err := h.callNodeRestoreMailbox(srv.APIHost, mb.EmailAddress, password); err != nil {
+	if err := h.callNodeRestoreMailbox(c.Request.Context(), srv, mb.EmailAddress, password); err != nil {
 		if errors.Is(err, errRestoreWindowExpired) {
 			badRequest(c, ErrCodeBusiness, "restore window expired (already purged on mail node)")
+			return
+		}
+		if acceptedOperation(c, err, "mailbox restore accepted") {
 			return
 		}
 		serverError(c, ErrCodeExternalFail, "failed to restore on mail node: "+err.Error())
@@ -472,31 +470,17 @@ func (h *MailboxHandler) RestoreMailbox(c *gin.Context) {
 
 // callNodeRestoreMailbox 向 mail-node 发送 restore 请求，从 .trash 回迁邮箱并重建配置。
 // mail-node 返回 409（.trash 无可恢复目录）时返回 errRestoreWindowExpired。
-func (h *MailboxHandler) callNodeRestoreMailbox(apiHost, email, password string) error {
-	body, _ := json.Marshal(map[string]string{
-		"email_address": email,
-		"password":      password,
-	})
-	url := fmt.Sprintf("http://%s/internal/mailboxes/%s/restore", apiHost, email)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-
-	resp, err := h.client.Do(req)
+func (h *MailboxHandler) callNodeRestoreMailbox(ctx context.Context, server *model.MailServer, email, password string) error {
+	resp, err := h.transport.Execute(ctx, nodeTarget(server), nodetransport.MailboxRestore(email, password))
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
 		return errRestoreWindowExpired
 	}
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	return nil
 }
@@ -635,7 +619,10 @@ func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
 		serverError(c, ErrCodeInternal, "failed to load mailbox server: "+err.Error())
 		return
 	}
-	if err := h.callNodeUpdatePassword(srv.APIHost, existing.EmailAddress, req.Password); err != nil {
+	if err := h.callNodeUpdatePassword(c.Request.Context(), srv, existing.EmailAddress, req.Password); err != nil {
+		if acceptedOperation(c, err, "password update accepted") {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, "failed to update password on mail node: "+err.Error())
 		return
 	}
@@ -653,28 +640,14 @@ func (h *MailboxHandler) UpdateMailboxPassword(c *gin.Context) {
 }
 
 // callNodeUpdatePassword sends a password update request to the mail-node.
-func (h *MailboxHandler) callNodeUpdatePassword(apiHost, email, newPassword string) error {
-	body, _ := json.Marshal(map[string]string{
-		"email_address": email,
-		"password":      newPassword,
-	})
-	url := fmt.Sprintf("http://%s/internal/mailboxes/%s/password", apiHost, email)
-	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-
-	resp, err := h.client.Do(req)
+func (h *MailboxHandler) callNodeUpdatePassword(ctx context.Context, server *model.MailServer, email, newPassword string) error {
+	resp, err := h.transport.Execute(ctx, nodeTarget(server), nodetransport.MailboxPassword(email, newPassword))
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	return nil
 }

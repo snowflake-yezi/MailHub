@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -47,6 +48,23 @@ func serverError(c *gin.Context, code int, msg string) {
 		Message:   msg,
 		RequestID: uuid.New().String()[:8],
 	})
+}
+
+type operationIdentifier interface {
+	OperationID() string
+}
+
+func acceptedOperation(c *gin.Context, err error, message string) bool {
+	var operation operationIdentifier
+	if !errors.As(err, &operation) || operation.OperationID() == "" {
+		return false
+	}
+	c.JSON(http.StatusAccepted, Response{
+		Code: 0, Message: message,
+		Data:      gin.H{"operation_id": operation.OperationID(), "state": "pending"},
+		RequestID: uuid.New().String()[:8],
+	})
+	return true
 }
 
 func notFound(c *gin.Context, msg string) {

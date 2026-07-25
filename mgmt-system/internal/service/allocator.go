@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/config"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -16,8 +17,8 @@ type Allocator struct {
 	creator *MailboxCreator
 }
 
-func NewAllocator(s *store.Store, cfg *config.Config, sharedSecret string) *Allocator {
-	return &Allocator{creator: NewMailboxCreator(s, cfg, sharedSecret)}
+func NewAllocator(s *store.Store, cfg *config.Config, transport nodetransport.NodeTransport) *Allocator {
+	return &Allocator{creator: NewMailboxCreator(s, cfg, transport)}
 }
 
 func (a *Allocator) Creator() *MailboxCreator {

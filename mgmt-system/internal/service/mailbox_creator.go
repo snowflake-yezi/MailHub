@@ -1,11 +1,8 @@
 package service
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -13,6 +10,7 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/config"
 	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -49,18 +47,16 @@ type MailboxCreateResult struct {
 }
 
 type MailboxCreator struct {
-	store        *store.Store
-	config       *config.Config
-	client       *http.Client
-	sharedSecret string
+	store     *store.Store
+	config    *config.Config
+	transport nodetransport.NodeTransport
 }
 
-func NewMailboxCreator(s *store.Store, cfg *config.Config, sharedSecret string) *MailboxCreator {
+func NewMailboxCreator(s *store.Store, cfg *config.Config, transport nodetransport.NodeTransport) *MailboxCreator {
 	return &MailboxCreator{
-		store:        s,
-		config:       cfg,
-		client:       &http.Client{Timeout: 10 * time.Second},
-		sharedSecret: sharedSecret,
+		store:     s,
+		config:    cfg,
+		transport: transport,
 	}
 }
 
@@ -120,7 +116,7 @@ func (m *MailboxCreator) Create(input MailboxCreateInput) (*MailboxCreateResult,
 		return nil, err
 	}
 
-	if err := m.createRemote(srv.APIHost, emailAddress, password); err != nil {
+	if err := m.createRemote(srv, emailAddress, password); err != nil {
 		return nil, fmt.Errorf("create remote mailbox: %w", err)
 	}
 
@@ -177,8 +173,8 @@ func (m *MailboxCreator) selectServer(serverID, domainID uint64) (*model.MailSer
 		if err != nil {
 			return nil, fmt.Errorf("server not found")
 		}
-		if srv.Status != "healthy" {
-			return nil, fmt.Errorf("server is not healthy")
+		if !srv.IsAllocatableState(time.Now()) {
+			return nil, fmt.Errorf("server is not allocatable")
 		}
 		if domainID > 0 {
 			sd, err := m.store.GetServerDomain(serverID, domainID)
@@ -208,35 +204,15 @@ func (m *MailboxCreator) selectServer(serverID, domainID uint64) (*model.MailSer
 	return srv, nil
 }
 
-func (m *MailboxCreator) createRemote(apiHost, email, password string) error {
-	body, err := json.Marshal(map[string]string{
-		"email_address": email,
-		"password":      password,
-	})
-	if err != nil {
-		return err
-	}
-
-	url := fmt.Sprintf("http://%s/internal/mailboxes", apiHost)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", m.sharedSecret)
-
-	resp, err := m.client.Do(req)
+func (m *MailboxCreator) createRemote(server *model.MailServer, email, password string) error {
+	resp, err := m.transport.Execute(context.Background(), nodetransport.Target{
+		NodeID: server.ID, APIHost: server.APIHost, TransportMode: server.TransportMode,
+	}, nodetransport.MailboxCreate(email, password))
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
-	data, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return fmt.Errorf("read response: %w", readErr)
-	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	return nil
 }

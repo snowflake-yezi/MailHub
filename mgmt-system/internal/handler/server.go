@@ -1,32 +1,30 @@
 package handler
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 	"gorm.io/gorm"
 )
 
 type ServerHandler struct {
-	store        *store.Store
-	client       *http.Client
-	sharedSecret string
+	store     *store.Store
+	transport nodetransport.NodeTransport
 }
 
-func NewServerHandler(s *store.Store, sharedSecret string) *ServerHandler {
-	return &ServerHandler{store: s, client: &http.Client{Timeout: 15 * time.Second}, sharedSecret: sharedSecret}
+func NewServerHandler(s *store.Store, transport nodetransport.NodeTransport) *ServerHandler {
+	return &ServerHandler{store: s, transport: transport}
 }
 
 type DNSRecord struct {
@@ -248,8 +246,11 @@ func (h *ServerHandler) AddServerDomain(c *gin.Context) {
 		return
 	}
 
-	setup, err := h.callNodeAddDomain(srv.APIHost, name)
+	setup, err := h.callNodeAddDomain(c.Request.Context(), srv, name)
 	if err != nil {
+		if acceptedOperation(c, err, "domain setup accepted") {
+			return
+		}
 		_ = h.store.UpdateServerDomainSync(srv.ID, domain.ID, map[string]interface{}{
 			"status":         "active",
 			"sync_status":    "sync_failed",
@@ -334,7 +335,10 @@ func (h *ServerHandler) RemoveServerDomain(c *gin.Context) {
 		badRequest(c, ErrCodeBusiness, fmt.Sprintf("domain has %d mailboxes on this server", count))
 		return
 	}
-	if err := h.callNodeRemoveDomain(srv.APIHost, domain.Name); err != nil {
+	if err := h.callNodeRemoveDomain(c.Request.Context(), srv, domain.Name); err != nil {
+		if acceptedOperation(c, err, "domain removal accepted") {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, "failed to remove remote domain: "+err.Error())
 		return
 	}
@@ -619,25 +623,16 @@ func normalizeMXHost(input, domain string) (string, error) {
 	return host + "." + domain, nil
 }
 
-func (h *ServerHandler) callNodeAddDomain(apiHost, domain string) (*RemoteDomainSetup, error) {
-	body, _ := json.Marshal(map[string]string{"domain": domain})
-	req, err := http.NewRequest(http.MethodPost, "http://"+apiHost+"/internal/domains", bytes.NewReader(body))
+func (h *ServerHandler) callNodeAddDomain(ctx context.Context, server *model.MailServer, domain string) (*RemoteDomainSetup, error) {
+	resp, err := h.transport.Execute(ctx, nodeTarget(server), nodetransport.DomainApply(domain))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	var nr nodeResponse
-	if err := json.Unmarshal(data, &nr); err != nil {
+	if err := json.Unmarshal(resp.Body, &nr); err != nil {
 		return nil, err
 	}
 	if nr.Code != 0 {
@@ -646,20 +641,13 @@ func (h *ServerHandler) callNodeAddDomain(apiHost, domain string) (*RemoteDomain
 	return &nr.Data, nil
 }
 
-func (h *ServerHandler) callNodeRemoveDomain(apiHost, domain string) error {
-	req, err := http.NewRequest(http.MethodDelete, "http://"+apiHost+"/internal/domains/"+domain, nil)
+func (h *ServerHandler) callNodeRemoveDomain(ctx context.Context, server *model.MailServer, domain string) error {
+	resp, err := h.transport.Execute(ctx, nodeTarget(server), nodetransport.DomainRemove(domain))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	return nil
 }

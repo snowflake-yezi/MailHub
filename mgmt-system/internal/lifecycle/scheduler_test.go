@@ -6,6 +6,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 )
 
 func TestCallNodePurgeExpiredMessagesBatch(t *testing.T) {
@@ -24,12 +28,11 @@ func TestCallNodePurgeExpiredMessagesBatch(t *testing.T) {
 		_, _ = w.Write([]byte(`{"code":0,"data":{"deleted":2}}`))
 	}))
 	defer server.Close()
-	scheduler := &Scheduler{client: server.Client(), sharedSecret: "secret"}
-	items := []struct {
-		EmailAddress  string `json:"email_address"`
-		RetentionDays int    `json:"retention_days"`
-	}{{"a@example.com", 30}, {"b@example.com", 7}}
-	deleted, err := scheduler.callNodePurgeExpiredMessagesBatch(strings.TrimPrefix(server.URL, "http://"), items)
+	transport := nodetransport.NewLegacyHTTPTransportWithOptions("secret", nodetransport.LegacyHTTPOptions{Client: server.Client()})
+	scheduler := &Scheduler{transport: transport, operationTimeout: time.Second}
+	items := []nodetransport.RetentionItem{{EmailAddress: "a@example.com", RetentionDays: 30}, {EmailAddress: "b@example.com", RetentionDays: 7}}
+	node := &model.MailServer{APIHost: strings.TrimPrefix(server.URL, "http://")}
+	deleted, err := scheduler.callNodePurgeExpiredMessagesBatch(node, items)
 	if err != nil || deleted != 2 || itemCount != 2 {
 		t.Fatalf("deleted=%d items=%d err=%v", deleted, itemCount, err)
 	}

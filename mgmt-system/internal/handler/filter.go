@@ -1,16 +1,17 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -33,16 +34,14 @@ var legacyFilterActions = map[string]struct{}{
 }
 
 type FilterHandler struct {
-	store        *store.Store
-	sharedSecret string
-	client       *http.Client
+	store     *store.Store
+	transport nodetransport.NodeTransport
 }
 
-func NewFilterHandler(s *store.Store, sharedSecret string) *FilterHandler {
+func NewFilterHandler(s *store.Store, transport nodetransport.NodeTransport) *FilterHandler {
 	return &FilterHandler{
-		store:        s,
-		sharedSecret: sharedSecret,
-		client:       &http.Client{Timeout: 10 * time.Second},
+		store:     s,
+		transport: transport,
 	}
 }
 
@@ -55,24 +54,16 @@ func (h *FilterHandler) notifyFilterReload() {
 		return
 	}
 	for _, s := range servers {
-		if s.Status != "healthy" && s.Status != "degraded" {
+		if !nodeCanReceiveNotification(&s) {
 			continue
 		}
-		url := fmt.Sprintf("http://%s/internal/filters/reload", s.APIHost)
-		req, err := http.NewRequest(http.MethodPost, url, nil)
+		resp, err := h.transport.Notify(context.Background(), nodeTarget(&s), nodetransport.FilterRevisionChanged())
 		if err != nil {
-			log.Printf("[filter] notify: bad url for server %d (%s): %v", s.ID, s.APIHost, err)
+			log.Printf("[filter] notify: server %d (%s) failed: %v", s.ID, s.APIHost, err)
 			continue
 		}
-		req.Header.Set("X-Internal-Token", h.sharedSecret)
-		resp, err := h.client.Do(req)
-		if err != nil {
-			log.Printf("[filter] notify: POST %s failed: %v", url, err)
-			continue
-		}
-		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			log.Printf("[filter] notify: POST %s returned %d", url, resp.StatusCode)
+			log.Printf("[filter] notify: server %d (%s) returned %d", s.ID, s.APIHost, resp.StatusCode)
 		}
 	}
 }

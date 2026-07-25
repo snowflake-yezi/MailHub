@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,11 +22,10 @@ func TestNotifyNodeReload(t *testing.T) {
 	defer server.Close()
 
 	h := &ConfigHandler{
-		sharedSecret: "secret",
-		httpClient:   &http.Client{Timeout: time.Second},
+		transport: newTestNodeTransport("secret", server.Client()),
 	}
-	apiHost := strings.TrimPrefix(server.URL, "http://")
-	if err := h.notifyNodeReload(apiHost); err != nil {
+	node := &model.MailServer{APIHost: strings.TrimPrefix(server.URL, "http://")}
+	if err := h.notifyNodeReload(context.Background(), node); err != nil {
 		t.Fatalf("notifyNodeReload() error: %v", err)
 	}
 	if gotPath != "/internal/configs/reload" {
@@ -55,8 +55,9 @@ func TestNotifyNodeReloadRejectsFailureStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	h := &ConfigHandler{httpClient: &http.Client{Timeout: time.Second}}
-	err := h.notifyNodeReload(strings.TrimPrefix(server.URL, "http://"))
+	h := &ConfigHandler{transport: newTestNodeTransport("", &http.Client{Timeout: time.Second})}
+	node := &model.MailServer{APIHost: strings.TrimPrefix(server.URL, "http://")}
+	err := h.notifyNodeReload(context.Background(), node)
 	if err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("error = %v, want status 503", err)
 	}

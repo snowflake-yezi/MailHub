@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -25,12 +24,12 @@ const (
 
 type Scheduler struct {
 	store        *store.Store
-	client       *http.Client
-	sharedSecret string
+	transport    nodetransport.NodeTransport
 	interval     time.Duration
+	probeTimeout time.Duration
 }
 
-func NewScheduler(s *store.Store, sharedSecret string, interval, probeTimeout time.Duration) *Scheduler {
+func NewScheduler(s *store.Store, transport nodetransport.NodeTransport, interval, probeTimeout time.Duration) *Scheduler {
 	if interval <= 0 {
 		interval = time.Duration(s.GetConfigInt(cfgProbeInterval, 30)) * time.Second
 	}
@@ -39,9 +38,9 @@ func NewScheduler(s *store.Store, sharedSecret string, interval, probeTimeout ti
 	}
 	return &Scheduler{
 		store:        s,
-		client:       &http.Client{Timeout: probeTimeout},
-		sharedSecret: sharedSecret,
+		transport:    transport,
 		interval:     interval,
+		probeTimeout: probeTimeout,
 	}
 }
 
@@ -74,7 +73,13 @@ func (s *Scheduler) ProbeAll() {
 }
 
 func (s *Scheduler) probeOne(srv *model.MailServer) error {
-	ok, err := s.probeHTTP(srv.APIHost)
+	// Control-only nodes are healthy through their active session, lease, and
+	// self-reported readiness. Dialing their legacy API would reintroduce the
+	// reverse network dependency that the control channel removes.
+	if srv.TransportMode == model.TransportControlStream {
+		return nil
+	}
+	ok, err := s.probeHTTP(srv)
 	now := time.Now()
 	failCount := srv.ProbeFailCount
 	status := srv.Status
@@ -117,32 +122,25 @@ func (s *Scheduler) probeOne(srv *model.MailServer) error {
 	return fmt.Errorf("unhealthy response")
 }
 
-func (s *Scheduler) probeHTTP(apiHost string) (bool, error) {
-	url := "http://" + strings.TrimRight(apiHost, "/") + "/internal/health"
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func (s *Scheduler) probeHTTP(server *model.MailServer) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.probeTimeout)
+	defer cancel()
+	resp, err := s.transport.Probe(ctx, nodetransport.Target{NodeID: server.ID, APIHost: server.APIHost})
 	if err != nil {
 		return false, err
 	}
-	req.Header.Set("X-Internal-Token", s.sharedSecret)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("status=%d body=%s", resp.StatusCode, string(data))
+		return false, fmt.Errorf("status=%d body=%s", resp.StatusCode, string(resp.Body))
 	}
 
 	var parsed struct {
 		Code int `json:"code"`
 	}
-	if err := json.Unmarshal(data, &parsed); err != nil {
+	if err := json.Unmarshal(resp.Body, &parsed); err != nil {
 		return false, err
 	}
 	if parsed.Code != 0 {
-		return false, fmt.Errorf("code=%d body=%s", parsed.Code, string(data))
+		return false, fmt.Errorf("code=%d body=%s", parsed.Code, string(resp.Body))
 	}
 	return true, nil
 }

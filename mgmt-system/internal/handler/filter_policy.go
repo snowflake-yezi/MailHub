@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,18 +15,19 @@ import (
 	"github.com/ticket/email-filter-contract"
 	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
 	"gorm.io/gorm"
 )
 
 type FilterPolicyHandler struct {
-	service      *service.FilterPolicyService
-	sharedSecret string
+	service   *service.FilterPolicyService
+	transport nodetransport.NodeTransport
 }
 
-func (h *FilterPolicyHandler) ConfigureQuarantineProxy(sharedSecret string) {
-	h.sharedSecret = sharedSecret
+func (h *FilterPolicyHandler) ConfigureNodeTransport(transport nodetransport.NodeTransport) {
+	h.transport = transport
 }
 
 func NewFilterPolicyHandler(policyService *service.FilterPolicyService) *FilterPolicyHandler {
@@ -174,7 +175,8 @@ func (h *FilterPolicyHandler) GetQuarantineMessage(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/message", nil, h.sharedSecret)
+	target := nodetransport.Target{NodeID: value.NodeID, APIHost: value.ServerAPIHost, TransportMode: value.TransportMode}
+	data, err := queryNode(c.Request.Context(), h.transport, target, nodetransport.QuarantineMessage(value.QuarantineKey))
 	if err != nil {
 		if !writeUpstreamJSONError(c, err) {
 			serverError(c, ErrCodeExternalFail, "fetch quarantined message failed: "+err.Error())
@@ -190,8 +192,8 @@ func (h *FilterPolicyHandler) GetQuarantineAttachment(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	path := "/internal/filter-quarantines/" + value.QuarantineKey + "/attachments/" + c.Param("index")
-	proxyAttachmentToServer(c, value.ServerAPIHost, http.MethodGet, path, h.sharedSecret)
+	target := nodetransport.Target{NodeID: value.NodeID, APIHost: value.ServerAPIHost, TransportMode: value.TransportMode}
+	proxyNodeData(c, h.transport, target, nodetransport.QuarantineAttachment(value.QuarantineKey, c.Param("index")), "attachment")
 }
 
 func (h *FilterPolicyHandler) ReleaseQuarantine(c *gin.Context) {
@@ -208,6 +210,9 @@ func (h *FilterPolicyHandler) ReleaseQuarantine(c *gin.Context) {
 	}
 	updated, err := h.executeQuarantineRelease(c.Param("quarantine_key"), policyRequestID(c), request.FeedbackLabel, policyActor(c))
 	if err != nil {
+		if acceptedOperation(c, err, "quarantine release accepted") {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, err.Error())
 		return
 	}
@@ -224,12 +229,11 @@ func (h *FilterPolicyHandler) executeQuarantineRelease(key, operationID, feedbac
 		return nil, err
 	}
 	operationID = value.ReleaseOperationID
-	body, _ := json.Marshal(map[string]string{"operation_id": operationID})
-	path := "/internal/filter-quarantines/" + value.QuarantineKey + "/release"
-	data, callErr := proxyToServer(value.ServerAPIHost, http.MethodPost, path, bytes.NewReader(body), h.sharedSecret)
+	target := nodetransport.Target{NodeID: value.NodeID, APIHost: value.ServerAPIHost, TransportMode: value.TransportMode}
+	data, callErr := executeNode(context.Background(), h.transport, target, nodetransport.QuarantineRelease(value.QuarantineKey, operationID))
 	receipt, receiptErr := receiptFromProxy(data, callErr)
-	if receiptErr != nil {
-		statusData, statusErr := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/release-status", nil, h.sharedSecret)
+	if receiptErr != nil && value.TransportMode == model.TransportLegacyHTTP {
+		statusData, statusErr := queryNode(context.Background(), h.transport, target, nodetransport.QuarantineReleaseStatus(value.QuarantineKey))
 		if statusErr == nil {
 			receipt, receiptErr = receiptFromProxy(statusData, nil)
 		}
@@ -262,7 +266,8 @@ func (h *FilterPolicyHandler) AllowAndReleaseQuarantine(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/message", nil, h.sharedSecret)
+	target := nodetransport.Target{NodeID: value.NodeID, APIHost: value.ServerAPIHost, TransportMode: value.TransportMode}
+	data, err := queryNode(c.Request.Context(), h.transport, target, nodetransport.QuarantineMessage(value.QuarantineKey))
 	if err != nil {
 		if !writeUpstreamJSONError(c, err) {
 			serverError(c, ErrCodeExternalFail, "read quarantined sender failed: "+err.Error())
@@ -301,7 +306,8 @@ func (h *FilterPolicyHandler) GetQuarantineReleaseStatus(c *gin.Context) {
 		h.writeError(c, err)
 		return
 	}
-	data, err := proxyToServer(value.ServerAPIHost, http.MethodGet, "/internal/filter-quarantines/"+value.QuarantineKey+"/release-status", nil, h.sharedSecret)
+	target := nodetransport.Target{NodeID: value.NodeID, APIHost: value.ServerAPIHost, TransportMode: value.TransportMode}
+	data, err := queryNode(c.Request.Context(), h.transport, target, nodetransport.QuarantineReleaseStatus(value.QuarantineKey))
 	if err != nil {
 		if !writeUpstreamJSONError(c, err) {
 			serverError(c, ErrCodeExternalFail, "release status failed: "+err.Error())

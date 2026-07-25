@@ -121,7 +121,7 @@ func (h *ConfigHandler) PutServerConfig(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, 5000, "failed to save node config")
 		return
 	}
-	reloadErr := h.notifyNodeReload(server.APIHost)
+	reloadErr := h.notifyNodeReload(c.Request.Context(), server)
 	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config saved", reloadDispatchResult(definition, desiredRevision, reloadErr))
 }
@@ -191,7 +191,7 @@ func (h *ConfigHandler) DeleteServerConfig(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, 5000, "failed to reset node config")
 		return
 	}
-	reloadErr := h.notifyNodeReload(server.APIHost)
+	reloadErr := h.notifyNodeReload(c.Request.Context(), server)
 	_ = h.store.RecordServerReloadResult(serverID, reloadErr)
 	success(c, "node config reset", reloadDispatchResult(definition, desiredRevision, reloadErr))
 }

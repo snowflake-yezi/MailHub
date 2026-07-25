@@ -1,24 +1,25 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
 // IntegratedMailboxHandler 集成邮箱（转发目标池）管理
 type IntegratedMailboxHandler struct {
-	store        *store.Store
-	sharedSecret string
+	store     *store.Store
+	transport nodetransport.NodeTransport
 }
 
 // NewIntegratedMailboxHandler 创建 handler
-func NewIntegratedMailboxHandler(s *store.Store, sharedSecret string) *IntegratedMailboxHandler {
-	return &IntegratedMailboxHandler{store: s, sharedSecret: sharedSecret}
+func NewIntegratedMailboxHandler(s *store.Store, transport nodetransport.NodeTransport) *IntegratedMailboxHandler {
+	return &IntegratedMailboxHandler{store: s, transport: transport}
 }
 
 // RegisterAdminRoutes 注册 Session 鉴权的 admin API 路由
@@ -140,22 +141,14 @@ func (h *IntegratedMailboxHandler) notifyNodesReload() (int, int) {
 	}
 	reloaded, failed := 0, 0
 	for _, srv := range servers {
-		if srv.Status != "healthy" && srv.Status != "degraded" {
+		if !nodeCanReceiveNotification(&srv) {
 			continue
 		}
-		url := "http://" + strings.TrimRight(srv.APIHost, "/") + "/internal/configs/reload"
-		req, err := http.NewRequest(http.MethodPost, url, nil)
+		resp, err := h.transport.Notify(context.Background(), nodeTarget(&srv), nodetransport.ConfigRevisionChanged(0))
 		if err != nil {
 			failed++
 			continue
 		}
-		req.Header.Set("X-Internal-Token", h.sharedSecret)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			failed++
-			continue
-		}
-		resp.Body.Close()
 		if resp.StatusCode >= 400 {
 			failed++
 			continue

@@ -3,11 +3,11 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/apiregistry"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 )
 
 type emailStore interface {
@@ -18,12 +18,12 @@ type emailStore interface {
 }
 
 type EmailHandler struct {
-	store        emailStore
-	sharedSecret string
+	store     emailStore
+	transport nodetransport.NodeTransport
 }
 
-func NewEmailHandler(s emailStore, sharedSecret string) *EmailHandler {
-	return &EmailHandler{store: s, sharedSecret: sharedSecret}
+func NewEmailHandler(s emailStore, transport nodetransport.NodeTransport) *EmailHandler {
+	return &EmailHandler{store: s, transport: transport}
 }
 
 // GetMailboxMessages 按邮箱查询邮件列表（T8 主线，大模型系统调用）
@@ -65,12 +65,8 @@ func (h *EmailHandler) proxyMailboxMessages(c *gin.Context, mb *model.MailboxAcc
 		return
 	}
 
-	query := url.Values{}
-	query.Set("page", c.DefaultQuery("page", "1"))
-	query.Set("size", c.DefaultQuery("size", "20"))
-	path := "/internal/mailboxes/" + url.PathEscape(mb.EmailAddress) + "/messages?" + query.Encode()
-
-	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
+	request := nodetransport.MessageList(mb.EmailAddress, c.DefaultQuery("page", "1"), c.DefaultQuery("size", "20"))
+	data, err := queryNode(c.Request.Context(), h.transport, nodeTarget(srv), request)
 	if err != nil {
 		serverError(c, ErrCodeExternalFail, "failed to fetch emails: "+err.Error())
 		return
@@ -281,11 +277,11 @@ func (h *EmailHandler) AdminDeleteEmail(c *gin.Context) {
 }
 
 func (h *EmailHandler) proxyDeleteEmailDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
-	query := url.Values{}
-	query.Set("mailbox", emailAddr)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "?" + query.Encode()
-	data, err := proxyToServer(srv.APIHost, http.MethodDelete, path, nil, h.sharedSecret)
+	data, err := executeNode(c.Request.Context(), h.transport, nodeTarget(srv), nodetransport.MessageDelete(messageID, emailAddr))
 	if err != nil {
+		if acceptedOperation(c, err, "email deletion accepted") {
+			return
+		}
 		serverError(c, ErrCodeExternalFail, "failed to delete email: "+err.Error())
 		return
 	}
@@ -300,12 +296,8 @@ func (h *EmailHandler) proxyDeleteEmailDirect(c *gin.Context, srv *model.MailSer
 
 // proxyMailboxMessagesDirect 直接向指定服务器代理邮件列表请求（跳过 mailbox_accounts 查找）。
 func (h *EmailHandler) proxyMailboxMessagesDirect(c *gin.Context, srv *model.MailServer, emailAddr, orderID string) {
-	query := url.Values{}
-	query.Set("page", c.DefaultQuery("page", "1"))
-	query.Set("size", c.DefaultQuery("size", "20"))
-	path := "/internal/mailboxes/" + url.PathEscape(emailAddr) + "/messages?" + query.Encode()
-
-	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
+	request := nodetransport.MessageList(emailAddr, c.DefaultQuery("page", "1"), c.DefaultQuery("size", "20"))
+	data, err := queryNode(c.Request.Context(), h.transport, nodeTarget(srv), request)
 	if err != nil {
 		serverError(c, ErrCodeExternalFail, "failed to fetch emails: "+err.Error())
 		return
@@ -316,10 +308,7 @@ func (h *EmailHandler) proxyMailboxMessagesDirect(c *gin.Context, srv *model.Mai
 
 // proxyEmailBodyDirect 直接向指定服务器代理邮件正文请求（跳过 mailbox_accounts 查找）。
 func (h *EmailHandler) proxyEmailBodyDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
-	query := url.Values{}
-	query.Set("mailbox", emailAddr)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "?" + query.Encode()
-	data, err := proxyToServer(srv.APIHost, "GET", path, nil, h.sharedSecret)
+	data, err := queryNode(c.Request.Context(), h.transport, nodeTarget(srv), nodetransport.MessageBody(messageID, emailAddr))
 	if err != nil {
 		if writeUpstreamJSONError(c, err) {
 			return
@@ -365,25 +354,16 @@ func (h *EmailHandler) proxyEmailAttachment(c *gin.Context, messageID, emailAddr
 // proxyEmailAttachmentDirect 直接向指定服务器代理附件下载（透传字节流）。
 func (h *EmailHandler) proxyEmailAttachmentDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
 	index := c.Param("index")
-	query := url.Values{}
-	query.Set("mailbox", emailAddr)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(index) + "?" + query.Encode()
-	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
+	proxyNodeData(c, h.transport, nodeTarget(srv), nodetransport.MessageAttachment(messageID, emailAddr, index), "attachment")
 }
 
 func (h *EmailHandler) proxyRawEmailDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
-	query := url.Values{}
-	query.Set("mailbox", emailAddr)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "/raw?" + query.Encode()
-	proxyRawEmailToServer(c, srv.APIHost, http.MethodGet, path, h.sharedSecret)
+	proxyNodeData(c, h.transport, nodeTarget(srv), nodetransport.MessageRaw(messageID, emailAddr), "raw email")
 }
 
 func (h *EmailHandler) proxyEmailAttachmentPreviewDirect(c *gin.Context, srv *model.MailServer, messageID, emailAddr string) {
 	index := c.Param("index")
-	query := url.Values{}
-	query.Set("mailbox", emailAddr)
-	path := "/internal/messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(index) + "/preview?" + query.Encode()
-	proxyAttachmentToServer(c, srv.APIHost, "GET", path, h.sharedSecret)
+	proxyNodeData(c, h.transport, nodeTarget(srv), nodetransport.MessageAttachmentPreview(messageID, emailAddr, index), "attachment")
 }
 
 // AdminGetEmailAttachment 管理后台附件下载（含域名级服务器降级查找，与 AdminGetEmailBody 同模式）。

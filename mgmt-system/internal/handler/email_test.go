@@ -62,7 +62,7 @@ func newEmailHandlerForUpstream(apiHost string) *EmailHandler {
 			9: {ID: 9, APIHost: apiHost},
 		},
 	}
-	return NewEmailHandler(store, "shared-secret")
+	return NewEmailHandler(store, newTestNodeTransport("shared-secret", http.DefaultClient))
 }
 
 func TestEmailListRoutesProxyByOrderOrMailbox(t *testing.T) {
@@ -94,7 +94,7 @@ func TestEmailListRoutesProxyByOrderOrMailbox(t *testing.T) {
 			9: {ID: 9, APIHost: strings.TrimPrefix(upstream.URL, "http://")},
 		},
 	}
-	handler := NewEmailHandler(store, "shared-secret")
+	handler := NewEmailHandler(store, newTestNodeTransport("shared-secret", upstream.Client()))
 	router := gin.New()
 	router.GET("/orders/:order_id/emails", handler.GetOrderEmails)
 	router.GET("/mailboxes/:mailbox_ref/messages", handler.GetMailboxMessages)
@@ -160,7 +160,7 @@ func TestGetOrderEmailsReturnsNotFoundForUnknownOrder(t *testing.T) {
 		mailboxByOrder: map[string]*model.MailboxAccount{},
 		servers:        map[uint64]*model.MailServer{},
 	}
-	handler := NewEmailHandler(store, "shared-secret")
+	handler := NewEmailHandler(store, newTestNodeTransport("shared-secret", http.DefaultClient))
 	router := gin.New()
 	router.GET("/orders/:order_id/emails", handler.GetOrderEmails)
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,23 +10,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/configschema"
+	"github.com/ticket/email-mgmt-system/internal/middleware"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
 // ConfigHandler 系统动态配置管理
 type ConfigHandler struct {
-	store        *store.Store
-	sharedSecret string
-	httpClient   *http.Client
+	store     *store.Store
+	transport nodetransport.NodeTransport
 }
 
 // NewConfigHandler 创建配置 handler
-func NewConfigHandler(s *store.Store, sharedSecret string) *ConfigHandler {
+func NewConfigHandler(s *store.Store, transport nodetransport.NodeTransport) *ConfigHandler {
 	return &ConfigHandler{
-		store:        s,
-		sharedSecret: sharedSecret,
-		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		store:     s,
+		transport: transport,
 	}
 }
 
@@ -257,13 +258,13 @@ func (h *ConfigHandler) ReloadNode(c *gin.Context) {
 	reloaded := 0
 	failed := 0
 	for _, srv := range servers {
-		if srv.Status != "healthy" && srv.Status != "degraded" {
-			_ = h.store.RecordServerReloadResult(srv.ID, fmt.Errorf("node status %s", srv.Status))
+		if !nodeCanReceiveNotification(&srv) {
+			_ = h.store.RecordServerReloadResult(srv.ID, fmt.Errorf("node has no healthy legacy path or connected control session"))
 			failed++
 			continue
 		}
 		// 调用 mail-node 的 reload 端点
-		if err := h.notifyNodeReload(srv.APIHost); err != nil {
+		if err := h.notifyNodeReload(c.Request.Context(), &srv); err != nil {
 			_ = h.store.RecordServerReloadResult(srv.ID, err)
 			failed++
 		} else {
@@ -280,23 +281,11 @@ func (h *ConfigHandler) ReloadNode(c *gin.Context) {
 }
 
 // notifyNodeReload 通知单个 mail-node 重载配置
-func (h *ConfigHandler) notifyNodeReload(apiHost string) error {
-	url := "http://" + strings.TrimRight(apiHost, "/") + "/internal/configs/reload"
-	req, err := http.NewRequest(http.MethodPost, url, nil)
+func (h *ConfigHandler) notifyNodeReload(ctx context.Context, server *model.MailServer) error {
+	resp, err := h.transport.Notify(ctx, nodeTarget(server), nodetransport.ConfigRevisionChanged(5*time.Second))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Internal-Token", h.sharedSecret)
-
-	client := h.httpClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
@@ -323,7 +312,13 @@ func (h *ConfigHandler) ListConfigsInternal(c *gin.Context) {
 		result[cfg.ConfigKey] = cfg.ConfigValue
 		sources[cfg.ConfigKey] = "global"
 	}
-	if rawServerID := strings.TrimSpace(c.Query("server_id")); rawServerID != "" {
+	rawServerID := strings.TrimSpace(c.Query("server_id"))
+	if rawServerID == "" {
+		if authenticatedServerID, ok := c.Get(middleware.NodeServerIDContextKey); ok {
+			rawServerID = fmt.Sprint(authenticatedServerID)
+		}
+	}
+	if rawServerID != "" {
 		serverID, parseErr := strconv.ParseUint(rawServerID, 10, 64)
 		if parseErr != nil || serverID == 0 {
 			fail(c, http.StatusBadRequest, 1001, "invalid server_id")

@@ -18,6 +18,7 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/healthcheck"
 	"github.com/ticket/email-mgmt-system/internal/lifecycle"
 	"github.com/ticket/email-mgmt-system/internal/middleware"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
@@ -79,24 +80,26 @@ func main() {
 	}
 
 	// Init services
-	allocator := service.NewAllocator(db, cfg, cfg.Auth.SharedSecret)
+	legacyNodeTransport := nodetransport.NewLegacyHTTPTransport(cfg.Auth.SharedSecret)
+	var nodeTransport nodetransport.NodeTransport = legacyNodeTransport
+	allocator := service.NewAllocator(db, cfg, nodeTransport)
 	importRealAccounts(db, cfg)
 	if err := db.SeedServerDomainsFromAccounts(); err != nil {
 		log.Printf("[WARN] seed server_domains failed: %v", err)
 	}
 
 	// Init handlers
-	mailboxH := handler.NewMailboxHandler(db, allocator, cfg.Auth.SharedSecret)
-	emailH := handler.NewEmailHandler(db, cfg.Auth.SharedSecret)
-	serverH := handler.NewServerHandler(db, cfg.Auth.SharedSecret)
-	filterH := handler.NewFilterHandler(db, cfg.Auth.SharedSecret)
+	mailboxH := handler.NewMailboxHandler(db, allocator, nodeTransport)
+	emailH := handler.NewEmailHandler(db, nodeTransport)
+	serverH := handler.NewServerHandler(db, nodeTransport)
+	filterH := handler.NewFilterHandler(db, nodeTransport)
 	filterPolicyService := service.NewFilterPolicyService(db)
 	filterPolicyH := handler.NewFilterPolicyHandler(filterPolicyService)
-	filterPolicyH.ConfigureQuarantineProxy(cfg.Auth.SharedSecret)
+	filterPolicyH.ConfigureNodeTransport(nodeTransport)
 	adminH := handler.NewAdminHandler(db)
 	healthH := handler.NewHealthHandler(db)
-	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)
-	integratedH := handler.NewIntegratedMailboxHandler(db, cfg.Auth.SharedSecret)
+	configH := handler.NewConfigHandler(db, nodeTransport)
+	integratedH := handler.NewIntegratedMailboxHandler(db, nodeTransport)
 	externalAccessH := handler.NewExternalAccessHandler(db)
 	nodeEnrollmentService := service.NewNodeEnrollmentService(db)
 	nodeEnrollmentH := handler.NewNodeEnrollmentHandler(nodeEnrollmentService)
@@ -209,10 +212,10 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	healthScheduler := healthcheck.NewScheduler(db, cfg.Auth.SharedSecret, 0, 0)
+	healthScheduler := healthcheck.NewScheduler(db, nodeTransport, 0, 0)
 	go healthScheduler.Start(ctx)
 
-	lifecycleScheduler := lifecycle.NewScheduler(db, cfg.Auth.SharedSecret, 0)
+	lifecycleScheduler := lifecycle.NewScheduler(db, nodeTransport, 0)
 	go lifecycleScheduler.Start(ctx)
 
 	// Graceful shutdown

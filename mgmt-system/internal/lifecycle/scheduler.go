@@ -1,17 +1,15 @@
 package lifecycle
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
 
@@ -28,23 +26,23 @@ const (
 // ① Watchdog: 扫描超时的 deleting 任务并重新下发 mail-node DELETE
 // ② Purge: 扫描过期的 soft_deleted 邮箱并标记为 purged
 type Scheduler struct {
-	store        *store.Store
-	client       *http.Client
-	sharedSecret string
-	interval     time.Duration
+	store            *store.Store
+	transport        nodetransport.NodeTransport
+	interval         time.Duration
+	operationTimeout time.Duration
 }
 
 // NewScheduler 创建生命周期调度器。interval 为 0 时从 DB 配置读取（默认 5 分钟）。
-func NewScheduler(s *store.Store, sharedSecret string, interval time.Duration) *Scheduler {
+func NewScheduler(s *store.Store, transport nodetransport.NodeTransport, interval time.Duration) *Scheduler {
 	if interval <= 0 {
 		interval = time.Duration(s.GetConfigInt(cfgLifecycleInterval, 5)) * time.Minute
 	}
 	probeTimeout := time.Duration(s.GetConfigInt(cfgLifecycleDeleteProbeSec, 10)) * time.Second
 	return &Scheduler{
-		store:        s,
-		client:       &http.Client{Timeout: probeTimeout},
-		sharedSecret: sharedSecret,
-		interval:     interval,
+		store:            s,
+		transport:        transport,
+		interval:         interval,
+		operationTimeout: probeTimeout,
 	}
 }
 
@@ -78,17 +76,13 @@ func (s *Scheduler) purgeExpiredMessages() {
 		log.Printf("[lifecycle] message retention: list active mailboxes failed: %v", err)
 		return
 	}
-	type retentionItem struct {
-		EmailAddress  string `json:"email_address"`
-		RetentionDays int    `json:"retention_days"`
-	}
-	groups := make(map[uint64][]retentionItem)
+	groups := make(map[uint64][]nodetransport.RetentionItem)
 	retentionDays := s.store.GetConfigInt(cfgGlobalRetentionDays, 30)
 	if retentionDays <= 0 {
 		retentionDays = 30
 	}
 	for _, mb := range mailboxes {
-		groups[mb.ServerID] = append(groups[mb.ServerID], retentionItem{EmailAddress: mb.EmailAddress, RetentionDays: retentionDays})
+		groups[mb.ServerID] = append(groups[mb.ServerID], nodetransport.RetentionItem{EmailAddress: mb.EmailAddress, RetentionDays: retentionDays})
 	}
 	for serverID, items := range groups {
 		srv, getErr := s.store.GetServer(serverID)
@@ -96,7 +90,7 @@ func (s *Scheduler) purgeExpiredMessages() {
 			log.Printf("[lifecycle] message retention: get server %d failed: %v", serverID, getErr)
 			continue
 		}
-		deleted, callErr := s.callNodePurgeExpiredMessagesBatch(srv.APIHost, items)
+		deleted, callErr := s.callNodePurgeExpiredMessagesBatch(srv, items)
 		if callErr != nil {
 			log.Printf("[lifecycle] message retention: purge server %d failed: %v", serverID, callErr)
 			continue
@@ -111,7 +105,7 @@ func (s *Scheduler) purgeExpiredMessages() {
 		return
 	}
 	for _, server := range servers {
-		expiredKeys, gcErr := s.callNodePurgeExpiredQuarantines(server.APIHost, retentionDays)
+		expiredKeys, gcErr := s.callNodePurgeExpiredQuarantines(&server, retentionDays)
 		if gcErr != nil {
 			log.Printf("[lifecycle] quarantine retention: purge server %d failed: %v", server.ID, gcErr)
 			continue
@@ -122,29 +116,13 @@ func (s *Scheduler) purgeExpiredMessages() {
 	}
 }
 
-func (s *Scheduler) callNodePurgeExpiredQuarantines(apiHost string, retentionDays int) ([]string, error) {
-	body, err := json.Marshal(map[string]int{"retention_days": retentionDays})
-	if err != nil {
-		return nil, err
-	}
-	endpoint := fmt.Sprintf("http://%s/internal/filter-quarantines/gc", apiHost)
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", s.sharedSecret)
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+func (s *Scheduler) callNodePurgeExpiredQuarantines(server *model.MailServer, retentionDays int) ([]string, error) {
+	resp, err := s.transport.Execute(context.Background(), nodeTarget(server), nodetransport.QuarantineGC(retentionDays, s.operationTimeout))
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return nil, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	var result struct {
 		Code int `json:"code"`
@@ -152,7 +130,7 @@ func (s *Scheduler) callNodePurgeExpiredQuarantines(apiHost string, retentionDay
 			ExpiredKeys []string `json:"expired_keys"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil || result.Code != 0 {
+	if err := json.Unmarshal(resp.Body, &result); err != nil || result.Code != 0 {
 		return nil, fmt.Errorf("invalid quarantine gc response")
 	}
 	return result.Data.ExpiredKeys, nil
@@ -177,7 +155,7 @@ func (s *Scheduler) watchdog() {
 			continue
 		}
 
-		if err := s.callNodeDelete(srv.APIHost, mb.EmailAddress); err != nil {
+		if err := s.callNodeDelete(srv, mb.EmailAddress); err != nil {
 			log.Printf("[lifecycle] watchdog: retry delete %s failed: %v", mb.EmailAddress, err)
 			continue
 		}
@@ -209,29 +187,13 @@ func (s *Scheduler) purgeExpired() {
 	}
 }
 
-func (s *Scheduler) callNodePurgeExpiredMessagesBatch(apiHost string, items interface{}) (int, error) {
-	body, err := json.Marshal(map[string]interface{}{"items": items})
-	if err != nil {
-		return 0, fmt.Errorf("encode request: %w", err)
-	}
-	endpoint := fmt.Sprintf("http://%s/internal/messages/retention/purge", apiHost)
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", s.sharedSecret)
-	resp, err := s.client.Do(req)
+func (s *Scheduler) callNodePurgeExpiredMessagesBatch(server *model.MailServer, items []nodetransport.RetentionItem) (int, error) {
+	resp, err := s.transport.Execute(context.Background(), nodeTarget(server), nodetransport.MessageRetentionPurge(items, s.operationTimeout))
 	if err != nil {
 		return 0, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read response: %w", err)
-	}
 	if resp.StatusCode >= 400 {
-		return 0, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(data))
+		return 0, fmt.Errorf("upstream error: %d - %s", resp.StatusCode, string(resp.Body))
 	}
 	var result struct {
 		Code int `json:"code"`
@@ -239,7 +201,7 @@ func (s *Scheduler) callNodePurgeExpiredMessagesBatch(apiHost string, items inte
 			Deleted int `json:"deleted"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(data, &result); err != nil {
+	if err := json.Unmarshal(resp.Body, &result); err != nil {
 		return 0, fmt.Errorf("decode response: %w", err)
 	}
 	if result.Code != 0 {
@@ -249,23 +211,14 @@ func (s *Scheduler) callNodePurgeExpiredMessagesBatch(apiHost string, items inte
 }
 
 // callNodeDelete 向 mail-node 发送 DELETE 请求触发 MoveToTrash。
-func (s *Scheduler) callNodeDelete(apiHost, email string) error {
-	url := fmt.Sprintf("http://%s/internal/mailboxes/%s", apiHost, email)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("X-Internal-Token", s.sharedSecret)
-
-	resp, err := s.client.Do(req)
+func (s *Scheduler) callNodeDelete(server *model.MailServer, email string) error {
+	resp, err := s.transport.Execute(context.Background(), nodeTarget(server), nodetransport.MailboxDelete(email, s.operationTimeout))
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(resp.Body)
-		body := string(data)
+		body := string(resp.Body)
 		// 防御：maildir 已在节点上不存在时，视为已删除（幂等）。
 		// 正常路径由 mail-node MoveToTrash 幂等返回 200，此分支兜底旧版节点返回 500。
 		if strings.Contains(body, "mailbox not found") || strings.Contains(body, "already deleted") {
@@ -274,6 +227,10 @@ func (s *Scheduler) callNodeDelete(apiHost, email string) error {
 		return fmt.Errorf("upstream error: %d - %s", resp.StatusCode, body)
 	}
 	return nil
+}
+
+func nodeTarget(server *model.MailServer) nodetransport.Target {
+	return nodetransport.Target{NodeID: server.ID, APIHost: server.APIHost, TransportMode: server.TransportMode}
 }
 
 // Ensure model is used (for future reference to MailboxAccount fields).

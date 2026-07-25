@@ -1,31 +1,20 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/nodetransport"
 )
-
-var rawEmailProxyHTTPClient = &http.Client{
-	Transport: &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-	},
-}
 
 type upstreamHTTPError struct {
 	StatusCode int
@@ -52,35 +41,35 @@ func parseUint64(s string) uint64 {
 	return v
 }
 
-// proxyToServer 代理请求到邮箱服务器的内部 API
-func proxyToServer(serverAPIHost string, method string, path string, body io.Reader, sharedSecret string) ([]byte, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+func nodeTarget(server *model.MailServer) nodetransport.Target {
+	return nodetransport.Target{NodeID: server.ID, APIHost: server.APIHost, TransportMode: server.TransportMode}
+}
 
-	url := fmt.Sprintf("http://%s%s", serverAPIHost, path)
-
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+func nodeCanReceiveNotification(server *model.MailServer) bool {
+	if server == nil {
+		return false
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", sharedSecret)
+	return server.ConnectionState == model.ConnectionConnected || server.Status == "healthy" || server.Status == "degraded"
+}
 
-	resp, err := client.Do(req)
+func queryNode(ctx context.Context, transport nodetransport.NodeTransport, target nodetransport.Target, request nodetransport.DataRequest) ([]byte, error) {
+	resp, err := transport.Query(ctx, target, request)
+	return bufferedNodeResponse(resp, err)
+}
+
+func executeNode(ctx context.Context, transport nodetransport.NodeTransport, target nodetransport.Target, command nodetransport.Command) ([]byte, error) {
+	resp, err := transport.Execute(ctx, target, command)
+	return bufferedNodeResponse(resp, err)
+}
+
+func bufferedNodeResponse(resp *nodetransport.Response, err error) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proxy request failed: %w", err)
 	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
 	if resp.StatusCode >= 400 {
-		return nil, &upstreamHTTPError{StatusCode: resp.StatusCode, Body: data}
+		return nil, &upstreamHTTPError{StatusCode: resp.StatusCode, Body: resp.Body}
 	}
-
-	return data, nil
+	return resp.Body, nil
 }
 
 // writeUpstreamJSONError preserves a mail-node JSON error response while
@@ -123,35 +112,16 @@ func unmarshalProxyResp(data []byte) (map[string]interface{}, error) {
 	return result, nil
 }
 
-// proxyAttachmentToServer 透传邮件服务器的二进制响应（附件下载专用）。
+// proxyNodeData 透传邮件服务器的二进制响应。
 //
-// 与 proxyToServer 的关键差异：附件下载例外于统一 JSON 信封——
+// 与普通 JSON 请求的关键差异：附件和 raw EML 例外于统一 JSON 信封——
 //   - 保留上游 Content-Type / Content-Disposition 响应头（直接复用给前端/调用方）
 //   - 流式 io.Copy 写出 body，避免把整个附件读进内存再封信封
 //   - 上游 4xx/5xx 时透传状态码与原始 body（JSON 错误信封），不吞不重封
 //
 // 仅本函数自身的请求失败（建连/请求异常）才回落到 serverError 统一信封。
-// 超时取 60s（大于 proxyToServer 的 10s），适配附件下载体积。
-func proxyAttachmentToServer(c *gin.Context, serverAPIHost, method, path, sharedSecret string) {
-	proxyBinaryToServer(c, serverAPIHost, method, path, sharedSecret, &http.Client{Timeout: 60 * time.Second}, "attachment")
-}
-
-// proxyRawEmailToServer waits at most 60 seconds for upstream headers, then
-// lets the HTTP server write timeout govern the streamed response body.
-func proxyRawEmailToServer(c *gin.Context, serverAPIHost, method, path, sharedSecret string) {
-	proxyBinaryToServer(c, serverAPIHost, method, path, sharedSecret, rawEmailProxyHTTPClient, "raw email")
-}
-
-func proxyBinaryToServer(c *gin.Context, serverAPIHost, method, path, sharedSecret string, client *http.Client, resource string) {
-	url := fmt.Sprintf("http://%s%s", serverAPIHost, path)
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil {
-		serverError(c, ErrCodeExternalFail, "create "+resource+" request: "+err.Error())
-		return
-	}
-	req.Header.Set("X-Internal-Token", sharedSecret)
-
-	resp, err := client.Do(req)
+func proxyNodeData(c *gin.Context, transport nodetransport.NodeTransport, target nodetransport.Target, request nodetransport.DataRequest, resource string) {
+	resp, err := transport.OpenData(c.Request.Context(), target, request)
 	if err != nil {
 		serverError(c, ErrCodeExternalFail, "fetch "+resource+" failed: "+err.Error())
 		return
