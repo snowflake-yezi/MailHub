@@ -37,11 +37,16 @@ type Queue struct {
 }
 
 type Uploader struct {
-	queue   *Queue
-	url     string
-	secret  string
-	client  *http.Client
-	backoff time.Duration
+	queue     *Queue
+	url       string
+	secret    string
+	client    *http.Client
+	backoff   time.Duration
+	authorize func(*http.Request)
+}
+
+func (uploader *Uploader) ConfigureAuthorizer(authorize func(*http.Request)) {
+	uploader.authorize = authorize
 }
 
 func New(root string, maxEvents int, maxBytes int64) (*Queue, error) {
@@ -260,7 +265,11 @@ func (uploader *Uploader) UploadOnce(ctx context.Context) (int, error) {
 			return uploaded, err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Internal-Token", uploader.secret)
+		if uploader.authorize != nil {
+			uploader.authorize(req)
+		} else {
+			req.Header.Set("X-Internal-Token", uploader.secret)
+		}
 		resp, err := uploader.client.Do(req)
 		if err != nil {
 			return uploaded, err

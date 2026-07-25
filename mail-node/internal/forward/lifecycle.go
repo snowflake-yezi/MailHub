@@ -413,7 +413,11 @@ func (l *Lifecycle) PullDeletingTasks(mgmtURL string, nodeID uint64, sharedSecre
 		log.Printf("[lifecycle] pull sync build request failed: %v", err)
 		return
 	}
-	req.Header.Set("X-Internal-Token", sharedSecret)
+	if l.remoteCfg != nil {
+		l.remoteCfg.Authorize(req)
+	} else {
+		req.Header.Set("X-Internal-Token", sharedSecret)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -76,6 +76,15 @@ type Engine struct {
 	syncMu        sync.Mutex
 	syncInterval  time.Duration
 	syncReset     chan time.Duration
+	authorize     func(*http.Request)
+}
+
+// ConfigureAuthorizer sets the outbound management request authenticator.
+// A nil authorizer keeps the legacy X-Internal-Token behavior.
+func (e *Engine) ConfigureAuthorizer(authorize func(*http.Request)) {
+	e.mu.Lock()
+	e.authorize = authorize
+	e.mu.Unlock()
 }
 
 // New 创建过滤引擎
@@ -214,7 +223,14 @@ func (e *Engine) SyncFromManager(managerURL, sharedSecret string) error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("X-Internal-Token", sharedSecret)
+	e.mu.RLock()
+	authorize := e.authorize
+	e.mu.RUnlock()
+	if authorize != nil {
+		authorize(req)
+	} else {
+		req.Header.Set("X-Internal-Token", sharedSecret)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

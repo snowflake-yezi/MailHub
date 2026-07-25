@@ -105,13 +105,21 @@ func main() {
 
 	// 初始化过滤引擎（default action 优先用远程配置，fallback YAML）
 	engine := newFilterEngine(remoteCfg, cfg.Filter.DefaultAction, cfg.Filter.FlagSubjectPrefix)
+	if controlEnabled {
+		engine.ConfigureAuthorizer(remoteCfg.Authorize)
+	}
 	registerFilterConfigAfterApply(remoteCfg, engine)
 
 	// 启动定时同步规则
 	engine.StartAutoSync(
 		cfg.Management.APIURL,
 		configuredFilterSyncInterval(remoteCfg, cfg.Management.FilterSyncInterval),
-		cfg.SharedSecret,
+		func() string {
+			if controlEnabled {
+				return ""
+			}
+			return cfg.SharedSecret
+		}(),
 	)
 	decisionEngine := filterdecision.New()
 	outbox, err := filteroutbox.New(cfg.Filter.OutboxPath, filteroutbox.DefaultMaxEvents, filteroutbox.DefaultMaxBytes)
@@ -229,7 +237,16 @@ func main() {
 	}, func(err error) {
 		log.Printf("[filter] periodic policy sync failed: %v", err)
 	})
-	go filteroutbox.NewUploader(outbox, cfg.Management.APIURL, cfg.SharedSecret).Start(ctx)
+	uploader := filteroutbox.NewUploader(outbox, cfg.Management.APIURL, func() string {
+		if controlEnabled {
+			return ""
+		}
+		return cfg.SharedSecret
+	}())
+	if controlEnabled {
+		uploader.ConfigureAuthorizer(remoteCfg.Authorize)
+	}
+	go uploader.Start(ctx)
 	go fwdSvc.Start(ctx)
 	if controlEnabled {
 		commandJournal, journalErr := nodecommand.OpenJournal(cfg.Identity.Directory, nodecommand.JournalConfig{})
@@ -261,7 +278,7 @@ func main() {
 				return appliedRevision, reloadErr
 			},
 			OnFilterRevision: func(reloadContext context.Context, _ uint64) error {
-				legacyErr := engine.SyncFromManager(cfg.Management.APIURL, cfg.SharedSecret)
+				legacyErr := engine.SyncFromManager(cfg.Management.APIURL, "")
 				policyErr := policyClient.SyncOnce(reloadContext)
 				return errors.Join(legacyErr, policyErr)
 			},
@@ -296,7 +313,9 @@ func main() {
 
 	r := gin.Default()
 	r.Use(requestBodyLimit(maxNodeRequestBodyBytes))
-	registerNodeRoutes(r, nodeH, cfg.SharedSecret)
+	if cfg.Management.TransportMode != "control_stream" {
+		registerNodeRoutes(r, nodeH, cfg.SharedSecret, func() (string, string) { return remoteCfg.NodeCredential() })
+	}
 
 	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
 	if cfg.Management.TransportMode != "control_stream" {
@@ -312,11 +331,16 @@ func main() {
 		os.Exit(0)
 	}()
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
-	log.Printf("Starting mail node '%s' on %s", cfg.Node.Name, addr)
-	server := newNodeHTTPServer(addr, r)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Failed to start: %v", err)
+	if cfg.Management.TransportMode == "control_stream" {
+		log.Printf("Mail node '%s' running in control_stream mode; local HTTP listener disabled", cfg.Node.Name)
+		select {}
+	} else {
+		addr := fmt.Sprintf(":%d", cfg.Server.Port)
+		log.Printf("Starting mail node '%s' on %s", cfg.Node.Name, addr)
+		server := newNodeHTTPServer(addr, r)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Failed to start: %v", err)
+		}
 	}
 }
 
@@ -358,9 +382,13 @@ func requestBodyLimit(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-func registerNodeRoutes(r *gin.Engine, nodeH *handler.NodeHandler, sharedSecret string) {
+func registerNodeRoutes(r *gin.Engine, nodeH *handler.NodeHandler, sharedSecret string, credentialProviders ...func() (string, string)) {
 	internalGroup := r.Group("/internal")
-	internalGroup.Use(middleware.InternalAuthRequired(sharedSecret))
+	var credentialProvider func() (string, string)
+	if len(credentialProviders) > 0 {
+		credentialProvider = credentialProviders[0]
+	}
+	internalGroup.Use(middleware.NodeAuthRequired(sharedSecret, credentialProvider))
 	nodeH.RegisterInternalRoutes(internalGroup)
 }
 
@@ -627,7 +655,7 @@ func startHeartbeat(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *
 			return 0
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Internal-Token", cfg.SharedSecret)
+		remoteCfg.Authorize(req)
 
 		resp, err := client.Do(req)
 		if err != nil {

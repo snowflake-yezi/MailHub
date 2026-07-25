@@ -167,6 +167,34 @@ func (rc *RemoteConfig) authorize(request *http.Request) {
 	request.Header.Set("X-Internal-Token", secret)
 }
 
+// Authorize applies the currently active node credential to an outbound request.
+// It is exported so auxiliary clients (filter sync, lifecycle, outbox) use the
+// same credential rotation state as the primary config client.
+func (rc *RemoteConfig) Authorize(request *http.Request) {
+	if rc == nil || request == nil {
+		return
+	}
+	rc.authorize(request)
+}
+
+func (rc *RemoteConfig) HasNodeCredential() bool {
+	if rc == nil {
+		return false
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.nodeUUID != "" && rc.credential != ""
+}
+
+func (rc *RemoteConfig) NodeCredential() (string, string) {
+	if rc == nil {
+		return "", ""
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return rc.nodeUUID, rc.credential
+}
+
 func (rc *RemoteConfig) SetBootIdentity(bootID string, startedAt time.Time) {
 	rc.mu.Lock()
 	rc.bootID = bootID
