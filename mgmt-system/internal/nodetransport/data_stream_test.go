@@ -89,6 +89,25 @@ func TestMigrationTransportDataRoutingAndDualFallback(t *testing.T) {
 	}
 }
 
+func TestMigrationTransportDualQueryReportsShadowDifference(t *testing.T) {
+	legacy := &routingTransport{queryResponse: &Response{StatusCode: 200, Body: []byte("legacy")}}
+	data := &routingTransport{queryResponse: &Response{StatusCode: 200, Body: []byte("data")}}
+	transport := NewMigrationTransport(legacy, nil, data)
+	comparisons := make(chan ShadowComparison, 1)
+	transport.SetShadowObserver(func(comparison ShadowComparison) { comparisons <- comparison })
+	if _, err := transport.Query(context.Background(), Target{NodeID: 9, TransportMode: model.TransportDual}, MessageBody("m-1", "a@example.com")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case comparison := <-comparisons:
+		if comparison.NodeID != 9 || !comparison.PrimaryOK || !comparison.LegacyOK || !comparison.StatusMatch || comparison.BodyHashMatch {
+			t.Fatalf("comparison = %#v", comparison)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shadow comparison was not reported")
+	}
+}
+
 func TestDataStreamTransportEnforcesLocalDeadline(t *testing.T) {
 	registry := nodedata.NewRegistry(nodedata.Config{MaxConcurrency: 1, MaxChunkSize: 8})
 	session := registry.Register(context.Background(), nodedata.RegisterInput{ServerID: 11})

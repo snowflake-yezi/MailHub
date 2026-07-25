@@ -81,6 +81,62 @@ type transportSwitchRequest struct {
 	TransportMode string `json:"transport_mode"`
 }
 
+type transportPreflightResult struct {
+	Ready          bool                 `json:"ready"`
+	LegacyEnabled  bool                 `json:"legacy_http_enabled"`
+	TotalNodes     int                  `json:"total_nodes"`
+	ControlNodes   int                  `json:"control_stream_nodes"`
+	BlockingIssues []string             `json:"blocking_issues,omitempty"`
+	Nodes          []transportNodeCheck `json:"nodes"`
+}
+
+type transportNodeCheck struct {
+	ServerID uint64   `json:"server_id"`
+	Name     string   `json:"name"`
+	Mode     string   `json:"transport_mode"`
+	Ready    bool     `json:"ready"`
+	Issues   []string `json:"issues,omitempty"`
+}
+
+// TransportPreflight reports whether the fleet satisfies the P7 final cutover
+// gate. It is intentionally read-only; operators must still switch nodes one
+// at a time and retain rollback evidence before changing the global flag.
+func (h *ServerHandler) TransportPreflight(c *gin.Context) {
+	servers, err := h.store.ListServers()
+	if err != nil {
+		serverError(c, ErrCodeInternal, "failed to list servers")
+		return
+	}
+	result := transportPreflightResult{LegacyEnabled: h.legacyHTTPEnabled, TotalNodes: len(servers)}
+	for _, server := range servers {
+		server.ApplyLegacyNodeDefaults()
+		check := transportNodeCheck{ServerID: server.ID, Name: server.Name, Mode: server.TransportMode}
+		var issues []string
+		if server.TransportMode != model.TransportControlStream {
+			issues = append(issues, "node is not control_stream")
+		} else {
+			result.ControlNodes++
+		}
+		if server.ConnectionState != model.ConnectionConnected {
+			issues = append(issues, "control connection is not connected")
+		}
+		if server.LeaseExpiresAt == nil || !server.LeaseExpiresAt.After(time.Now().UTC()) {
+			issues = append(issues, "control lease is expired")
+		}
+		if server.ReadinessState != model.ReadinessReady {
+			issues = append(issues, "readiness is not ready")
+		}
+		check.Issues = issues
+		check.Ready = len(issues) == 0
+		if !check.Ready {
+			result.BlockingIssues = append(result.BlockingIssues, fmt.Sprintf("server %d: %s", server.ID, strings.Join(issues, "; ")))
+		}
+		result.Nodes = append(result.Nodes, check)
+	}
+	result.Ready = len(result.BlockingIssues) == 0 && result.TotalNodes > 0
+	success(c, "transport preflight completed", result)
+}
+
 // RegisterServer 注册新邮箱服务器
 // POST /api/v1/admin/servers
 func (h *ServerHandler) RegisterServer(c *gin.Context) {
@@ -645,6 +701,7 @@ func (h *ServerHandler) Heartbeat(c *gin.Context) {
 func (h *ServerHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.POST("/servers", h.RegisterServer)
 	r.GET("/servers", h.ListServers)
+	r.GET("/servers/transport-preflight", h.TransportPreflight)
 	r.GET("/servers/:id", h.GetServer)
 	r.PUT("/servers/:id", h.UpdateServer)
 	r.POST("/servers/:id/transport", h.SwitchTransport)

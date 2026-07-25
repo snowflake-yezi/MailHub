@@ -1,6 +1,6 @@
 # NR-P7 Canary and Legacy Rollback
 
-Status: in progress (first control-plane slice)
+Status: code complete (remote canary and firewall acceptance pending)
 
 ## Scope
 
@@ -18,8 +18,11 @@ its enrolled identity has an active control lease and reports `ready`.
   OpenData, and Probe path, including migration fallback.
 - `dual` is rejected when legacy fallback is disabled; `control_stream` remains
   available for the final migrated state.
+- `GET /api/v1/admin/servers/transport-preflight` reports fleet cutover blockers.
+- `dual` query reads run a bounded legacy shadow read and compare status/body hashes without changing the primary result.
+- Control-stream nodes use their node credential for management HTTP calls and do not bind the local legacy HTTP listener.
 
-## Still required for P7 completion
+## Remote acceptance still required
 
 - Run the endpoint one node at a time with a recorded canary and rollback
   result; no automatic fleet-wide switch is provided.

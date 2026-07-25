@@ -116,7 +116,13 @@ func main() {
 			return server.DesiredRevision, nil
 		}, commandManager)
 		dataTransport := nodetransport.NewDataStreamTransport(dataSessionRegistry)
-		nodeTransport = nodetransport.NewMigrationTransportWithLegacy(legacyNodeTransport, controlTransport, cfg.NodeControl.LegacyHTTPEnabled, dataTransport)
+		migrationTransport := nodetransport.NewMigrationTransportWithLegacy(legacyNodeTransport, controlTransport, cfg.NodeControl.LegacyHTTPEnabled, dataTransport)
+		migrationTransport.SetShadowObserver(func(comparison nodetransport.ShadowComparison) {
+			if comparison.Error != "" || !comparison.StatusMatch || !comparison.BodyHashMatch {
+				log.Printf("[node-transport-shadow] node=%d request=%s primary_ok=%t legacy_ok=%t status_match=%t body_match=%t error=%q", comparison.NodeID, comparison.RequestType, comparison.PrimaryOK, comparison.LegacyOK, comparison.StatusMatch, comparison.BodyHashMatch, comparison.Error)
+			}
+		})
+		nodeTransport = migrationTransport
 		controlGateway, err = nodegateway.New(db, sessionRegistry, func(rawCredential, nodeUUID string, usedAt time.Time) (nodegateway.Principal, error) {
 			principal, authErr := nodeEnrollmentService.AuthenticateCredential(rawCredential, nodeUUID, usedAt)
 			if authErr != nil {

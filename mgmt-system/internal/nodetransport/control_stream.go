@@ -2,6 +2,7 @@ package nodetransport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,10 +129,25 @@ func (transport *ControlStreamTransport) Probe(context.Context, Target) (*Respon
 }
 
 type MigrationTransport struct {
-	legacy        NodeTransport
-	control       NodeTransport
-	data          NodeTransport
-	legacyEnabled bool
+	legacy         NodeTransport
+	control        NodeTransport
+	data           NodeTransport
+	legacyEnabled  bool
+	shadowObserver func(ShadowComparison)
+}
+
+type ShadowComparison struct {
+	NodeID        uint64
+	RequestType   string
+	PrimaryOK     bool
+	LegacyOK      bool
+	StatusMatch   bool
+	BodyHashMatch bool
+	Error         string
+}
+
+func (transport *MigrationTransport) SetShadowObserver(observer func(ShadowComparison)) {
+	transport.shadowObserver = observer
 }
 
 func NewMigrationTransport(legacy, control NodeTransport, data ...NodeTransport) *MigrationTransport {
@@ -191,6 +207,7 @@ func (transport *MigrationTransport) Query(ctx context.Context, target Target, r
 	if target.TransportMode == model.TransportDual {
 		response, err := transport.data.Query(ctx, target, request)
 		if err == nil {
+			transport.shadowQuery(target, request, response)
 			return response, nil
 		}
 	}
@@ -199,6 +216,29 @@ func (transport *MigrationTransport) Query(ctx context.Context, target Target, r
 		return nil, err
 	}
 	return legacy.Query(ctx, target, request)
+}
+
+func (transport *MigrationTransport) shadowQuery(target Target, request DataRequest, primary *Response) {
+	if transport.shadowObserver == nil || !transport.legacyEnabled || transport.legacy == nil || primary == nil {
+		return
+	}
+	go func() {
+		shadowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		legacyResponse, err := transport.legacy.Query(shadowCtx, target, request)
+		comparison := ShadowComparison{NodeID: target.NodeID, RequestType: string(request.Type), PrimaryOK: true}
+		if err != nil {
+			comparison.Error = err.Error()
+			transport.shadowObserver(comparison)
+			return
+		}
+		comparison.LegacyOK = legacyResponse != nil
+		if legacyResponse != nil {
+			comparison.StatusMatch = primary.StatusCode == legacyResponse.StatusCode
+			comparison.BodyHashMatch = sha256.Sum256(primary.Body) == sha256.Sum256(legacyResponse.Body)
+		}
+		transport.shadowObserver(comparison)
+	}()
 }
 
 func (transport *MigrationTransport) OpenData(ctx context.Context, target Target, request DataRequest) (*DataResponse, error) {

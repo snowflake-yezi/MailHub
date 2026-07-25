@@ -706,12 +706,15 @@ public_host + mail_public_ips
 
 ### NR-P7：dual 灰度与关闭 8081
 
-状态：进行中（已完成第一切片：节点级切换门禁、审计和 legacy 传输硬禁用）。
+状态：代码完成（节点切换、fleet preflight、dual 影子读取、凭证解耦和 control_stream HTTP 关闭已实现；真实远程验收待执行）。
 
 交付：
 
-- 每节点 `legacy_http / dual / control_stream` 切换。
-- dual 模式读影子对比，变更命令单主通道，禁止双写。
+- 每节点 `legacy_http / dual / control_stream` 切换，事务内写审计。
+- `GET /api/v1/admin/servers/transport-preflight` 提供 fleet 级切换前检查。
+- dual 模式查询执行有界 legacy 影子读取并比较状态码和正文哈希，变更命令单主通道，禁止双写。
+- control_stream 节点的配置、过滤、生命周期、outbox、heartbeat 请求统一使用节点凭证。
+- control_stream 节点不启动本地 `8081` HTTP listener。
 - 逐节点 canary、回滚演练和运维文档转正。
 - 所有节点切换后关闭 system -> node `8081` 网络访问。
 - shared secret 只为未迁移 legacy 节点保留，最终删除。
