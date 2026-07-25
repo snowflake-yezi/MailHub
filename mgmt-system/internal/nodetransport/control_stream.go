@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -248,6 +251,11 @@ func (transport *MigrationTransport) OpenData(ctx context.Context, target Target
 	if target.TransportMode == model.TransportDual {
 		response, err := transport.data.OpenData(ctx, target, request)
 		if err == nil {
+			if transport.shadowObserver != nil && transport.legacyEnabled && transport.legacy != nil {
+				response.Body = &shadowDataReader{ReadCloser: response.Body, hash: sha256.New(), onEOF: func(primaryHash [32]byte) {
+					transport.shadowOpenData(target, request, response.StatusCode, primaryHash)
+				}}
+			}
 			return response, nil
 		}
 	}
@@ -256,6 +264,58 @@ func (transport *MigrationTransport) OpenData(ctx context.Context, target Target
 		return nil, err
 	}
 	return legacy.OpenData(ctx, target, request)
+}
+
+type shadowDataReader struct {
+	io.ReadCloser
+	hash  hash.Hash
+	onEOF func([32]byte)
+	once  sync.Once
+}
+
+func (reader *shadowDataReader) Read(p []byte) (int, error) {
+	n, err := reader.ReadCloser.Read(p)
+	if n > 0 {
+		_, _ = reader.hash.Write(p[:n])
+	}
+	if err == io.EOF {
+		reader.once.Do(func() {
+			var digest [32]byte
+			copy(digest[:], reader.hash.Sum(nil))
+			if reader.onEOF != nil {
+				reader.onEOF(digest)
+			}
+		})
+	}
+	return n, err
+}
+
+func (reader *shadowDataReader) Close() error { return reader.ReadCloser.Close() }
+
+func (transport *MigrationTransport) shadowOpenData(target Target, request DataRequest, primaryStatus int, primaryHash [32]byte) {
+	go func() {
+		shadowCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		legacyResponse, err := transport.legacy.OpenData(shadowCtx, target, request)
+		comparison := ShadowComparison{NodeID: target.NodeID, RequestType: string(request.Type), PrimaryOK: true, StatusMatch: false}
+		if err != nil {
+			comparison.Error = err.Error()
+			transport.shadowObserver(comparison)
+			return
+		}
+		defer legacyResponse.Body.Close()
+		legacyHash := sha256.New()
+		_, readErr := io.Copy(legacyHash, legacyResponse.Body)
+		comparison.LegacyOK = readErr == nil
+		comparison.StatusMatch = primaryStatus == legacyResponse.StatusCode
+		var digest [32]byte
+		copy(digest[:], legacyHash.Sum(nil))
+		comparison.BodyHashMatch = primaryHash == digest
+		if readErr != nil {
+			comparison.Error = readErr.Error()
+		}
+		transport.shadowObserver(comparison)
+	}()
 }
 
 func (transport *MigrationTransport) Probe(ctx context.Context, target Target) (*Response, error) {

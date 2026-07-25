@@ -108,6 +108,28 @@ func TestMigrationTransportDualQueryReportsShadowDifference(t *testing.T) {
 	}
 }
 
+func TestMigrationTransportDualOpenDataReportsShadowDifference(t *testing.T) {
+	legacy := &routingTransport{dataResponse: &DataResponse{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("legacy"))}}
+	data := &routingTransport{dataResponse: &DataResponse{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("data"))}}
+	transport := NewMigrationTransport(legacy, nil, data)
+	comparisons := make(chan ShadowComparison, 1)
+	transport.SetShadowObserver(func(comparison ShadowComparison) { comparisons <- comparison })
+	response, err := transport.OpenData(context.Background(), Target{NodeID: 9, TransportMode: model.TransportDual}, MessageRaw("m-1", "a@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	select {
+	case comparison := <-comparisons:
+		if comparison.RequestType != string(MessageRaw("m-1", "a@example.com").Type) || !comparison.PrimaryOK || !comparison.LegacyOK || !comparison.StatusMatch || comparison.BodyHashMatch {
+			t.Fatalf("comparison = %#v", comparison)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shadow comparison was not reported")
+	}
+}
+
 func TestDataStreamTransportEnforcesLocalDeadline(t *testing.T) {
 	registry := nodedata.NewRegistry(nodedata.Config{MaxConcurrency: 1, MaxChunkSize: 8})
 	session := registry.Register(context.Background(), nodedata.RegisterInput{ServerID: 11})
