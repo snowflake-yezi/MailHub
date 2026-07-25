@@ -78,3 +78,35 @@ func TestLoadAcceptsExplicitNodeControlFlags(t *testing.T) {
 		t.Fatalf("node control flags not loaded: %+v", cfg.NodeControl)
 	}
 }
+
+func TestValidateRequiresTLSForEnabledNodeControl(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{DSN: "dsn"}, Domains: []DomainConfig{{Name: "example.com"}},
+		DefaultRetentionDays: 30,
+		NodeControl: NodeControlConfig{Enabled: true, Listen: ":8443", HeartbeatIntervalSeconds: 30,
+			LeaseTimeoutSeconds: 90, CommandTimeoutSeconds: 15,
+			DataMaxConcurrencyPerNode: 4, DataChunkSize: 256 * 1024},
+	}
+	if err := base.Validate(); err == nil {
+		t.Fatal("enabled node control without TLS files was accepted")
+	}
+	base.NodeControl.TLSCertFile = "control.crt"
+	base.NodeControl.TLSKeyFile = "control.key"
+	if err := base.Validate(); err != nil {
+		t.Fatalf("valid node control config rejected: %v", err)
+	}
+	base.NodeControl.CommandTimeoutSeconds = 0
+	if err := base.Validate(); err == nil {
+		t.Fatal("non-positive command timeout was accepted")
+	}
+	base.NodeControl.CommandTimeoutSeconds = 15
+	base.NodeControl.DataChunkSize = 256*1024 + 1
+	if err := base.Validate(); err == nil {
+		t.Fatal("oversized data chunk was accepted")
+	}
+	base.NodeControl.DataChunkSize = 256 * 1024
+	base.NodeControl.LeaseTimeoutSeconds = 30
+	if err := base.Validate(); err == nil {
+		t.Fatal("lease timeout equal to heartbeat interval was accepted")
+	}
+}

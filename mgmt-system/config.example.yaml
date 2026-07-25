@@ -28,16 +28,16 @@ filter:
   default_action: "pass"
   default_flag_subject_prefix: "[疑似]"
 
-# NR-P0 feature flags. Keep node control disabled until its gateway is implemented.
+# NR-P6 outbound ControlStream/DataStream gateway. Enable only after installing a TLS key pair.
 node_control:
   enabled: false
   listen: ":8443"
-  public_url: ""
-  tls_cert_file: ""
-  tls_key_file: ""
+  public_url: "https://node-control.example.com:443"
+  tls_cert_file: "/etc/mailhub/node-control.crt"
+  tls_key_file: "/etc/mailhub/node-control.key"
   heartbeat_interval_seconds: 30
   lease_timeout_seconds: 90
-  command_timeout_seconds: 15
-  data_max_concurrency_per_node: 4
-  data_chunk_size: 262144
+  command_timeout_seconds: 15  # synchronous wait; durable commands have a separate 24h deadline
+  data_max_concurrency_per_node: 4  # shared per-node DataStream request limit
+  data_chunk_size: 262144            # 1..262144 bytes; raw/attachments are chunked
   legacy_http_enabled: true

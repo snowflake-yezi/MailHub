@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mail-node/internal/agent"
+	nodecommand "github.com/ticket/email-mail-node/internal/command"
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
@@ -27,8 +30,11 @@ import (
 	"github.com/ticket/email-mail-node/internal/filterquarantine"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/handler"
+	"github.com/ticket/email-mail-node/internal/identity"
 	"github.com/ticket/email-mail-node/internal/mailbox"
 	"github.com/ticket/email-mail-node/internal/middleware"
+	"github.com/ticket/email-mail-node/internal/nodedata"
+	nodev1 "github.com/ticket/email-node-contract/gen/mailhub/node/v1"
 )
 
 const (
@@ -58,7 +64,7 @@ func main() {
 	}
 
 	// 自动发现/注册 server_id：若未配置 node.id，向 mgmt 查询或自动注册。
-	if cfg.Node.ID == 0 {
+	if cfg.Node.ID == 0 && cfg.Management.TransportMode != "control_stream" {
 		discoveredID, err := discoverServerID(cfg)
 		if err != nil {
 			log.Printf("[discovery] WARNING: failed to discover server_id: %v — heartbeats & PullDeletingTasks will be skipped", err)
@@ -72,6 +78,21 @@ func main() {
 	remoteCfg := config.NewRemoteConfig(cfg.Management.APIURL, cfg.SharedSecret, cfg.Node.ID)
 	bootID, startedAt := newBootIdentity()
 	remoteCfg.SetBootIdentity(bootID, startedAt)
+	controlEnabled := cfg.Management.TransportMode == "dual" || cfg.Management.TransportMode == "control_stream"
+	var controlIdentity identity.Record
+	var controlCredential string
+	if controlEnabled {
+		identityStore := identity.New(cfg.Identity.Directory)
+		controlIdentity, err = identityStore.Load()
+		if err != nil {
+			log.Fatalf("Failed to load enrolled node identity for control channel: %v", err)
+		}
+		controlCredential, err = identityStore.LoadCredentialFile(cfg.Management.CredentialFile)
+		if err != nil {
+			log.Fatalf("Failed to load node credential for control channel: %v", err)
+		}
+		remoteCfg.ConfigureNodeCredential(controlIdentity.NodeUUID, controlCredential)
+	}
 	remoteCfg.RegisterApplyHook(forward.ValidateForwardConfig)
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
 	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
@@ -101,6 +122,9 @@ func main() {
 		boot, _ := remoteCfg.BootIdentity()
 		return remoteCfg.NodeID(), boot
 	})
+	if controlEnabled {
+		policyClient.ConfigureNodeCredential(controlIdentity.NodeUUID, controlCredential)
+	}
 	if err := policyClient.SyncOnce(context.Background()); err != nil {
 		log.Printf("[filter] WARNING: initial policy sync failed: %v", err)
 	}
@@ -159,6 +183,22 @@ func main() {
 	remoteCfg.RegisterAfterApplyHook(fwdSvc.AfterApplyConfig)
 	remoteCfg.RegisterAfterApplyHook(lifecycle.AfterApplyConfig)
 
+	// Both legacy HTTP and ControlStream commands reuse this application-level
+	// handler so Postfix, Dovecot, Maildir, DKIM, and quarantine behavior remain
+	// owned by the existing managers.
+	nodeH := handler.NewNodeHandler(
+		mailboxMgr,
+		domainMgr,
+		engine,
+		lifecycle,
+		cfg.Node.ID,
+		cfg.Node.Name,
+		cfg.Management.APIURL,
+		cfg.SharedSecret,
+		remoteCfg,
+	)
+	nodeH.ConfigureQuarantine(quarantineStore, fwdSvc.ForwardQuarantined)
+
 	// 启动后台转发扫描
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -167,7 +207,7 @@ func main() {
 			log.Printf("[config] post-apply snapshot failed: %v", err)
 		}
 	})
-	if cfg.Node.ID == 0 {
+	if cfg.Node.ID == 0 && cfg.Management.TransportMode != "control_stream" {
 		go startDiscoveryRetry(ctx, 5*time.Second, func() (uint64, error) {
 			return discoverServerID(cfg)
 		}, func(nodeID uint64) {
@@ -191,6 +231,49 @@ func main() {
 	})
 	go filteroutbox.NewUploader(outbox, cfg.Management.APIURL, cfg.SharedSecret).Start(ctx)
 	go fwdSvc.Start(ctx)
+	if controlEnabled {
+		commandJournal, journalErr := nodecommand.OpenJournal(cfg.Identity.Directory, nodecommand.JournalConfig{})
+		if journalErr != nil {
+			log.Fatalf("Failed to initialize durable command journal: %v", journalErr)
+		}
+		commandDispatcher, dispatcherErr := nodecommand.NewDispatcher(commandJournal, nodeH.ExecuteControlCommand, 64)
+		if dispatcherErr != nil {
+			log.Fatalf("Failed to initialize command dispatcher: %v", dispatcherErr)
+		}
+		go commandDispatcher.Run(ctx)
+		dataDispatcher, dataDispatcherErr := nodedata.NewDispatcher(nodeH.OpenControlData)
+		if dataDispatcherErr != nil {
+			log.Fatalf("Failed to initialize data stream dispatcher: %v", dataDispatcherErr)
+		}
+		controlAgent, agentErr := agent.New(agent.Config{
+			Address: cfg.Management.ControlURL, CAFile: cfg.Management.CAFile,
+			NodeUUID: controlIdentity.NodeUUID, Credential: controlCredential,
+			BootID: bootID, StartedAt: startedAt, AgentVersion: nodeAgentVersion(),
+			SupportedProtocolVersions: []uint32{1},
+			Capabilities:              []string{"heartbeat.v1", "config.revision.v1", "filter.revision.v1", "command.v1", "data.v1"},
+			Revisions:                 remoteCfg.Revisions,
+			Snapshot: func() agent.HealthSnapshot {
+				return controlHealthSnapshot(cfg, mailboxMgr, remoteCfg)
+			},
+			OnConfigRevision: func(_ context.Context, _ uint64) (uint64, error) {
+				reloadErr := remoteCfg.Reload()
+				_, appliedRevision := remoteCfg.Revisions()
+				return appliedRevision, reloadErr
+			},
+			OnFilterRevision: func(reloadContext context.Context, _ uint64) error {
+				legacyErr := engine.SyncFromManager(cfg.Management.APIURL, cfg.SharedSecret)
+				policyErr := policyClient.SyncOnce(reloadContext)
+				return errors.Join(legacyErr, policyErr)
+			},
+			Commands: commandDispatcher,
+			Data:     dataDispatcher,
+			Logf:     log.Printf,
+		})
+		if agentErr != nil {
+			log.Fatalf("Failed to initialize node control agent: %v", agentErr)
+		}
+		go controlAgent.Run(ctx)
+	}
 
 	// 启动 .trash/ 垃圾回收（24h 后物理清除）
 	lifecycle.StartGC(ctx)
@@ -206,20 +289,6 @@ func main() {
 		go lifecycle.PullDeletingTasks(cfg.Management.APIURL, cfg.Node.ID, cfg.SharedSecret)
 	}
 
-	// 初始化 handler（注入 lifecycle 以支持安全删除协议）
-	nodeH := handler.NewNodeHandler(
-		mailboxMgr,
-		domainMgr,
-		engine,
-		lifecycle,
-		cfg.Node.ID,
-		cfg.Node.Name,
-		cfg.Management.APIURL,
-		cfg.SharedSecret,
-		remoteCfg,
-	)
-	nodeH.ConfigureQuarantine(quarantineStore, fwdSvc.ForwardQuarantined)
-
 	// 设置 Gin
 	if cfg.Server.Mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
@@ -230,7 +299,9 @@ func main() {
 	registerNodeRoutes(r, nodeH, cfg.SharedSecret)
 
 	// 启动心跳上报（被动心跳：刷新 mgmt last_heartbeat + current_load；status 由 mgmt 主动探测决定）
-	go startHeartbeat(cfg, mailboxMgr, remoteCfg)
+	if cfg.Management.TransportMode != "control_stream" {
+		go startHeartbeat(cfg, mailboxMgr, remoteCfg)
+	}
 
 	// 优雅退出
 	go func() {
@@ -434,6 +505,69 @@ func startDiscoveryRetry(ctx context.Context, interval time.Duration, discover f
 		}
 		onDiscovered(nodeID)
 		return
+	}
+}
+
+func controlHealthSnapshot(cfg *config.Config, mailboxMgr *mailbox.Manager, remoteCfg *config.RemoteConfig) agent.HealthSnapshot {
+	now := time.Now().UTC()
+	readiness := nodev1.ReadinessState_READINESS_STATE_READY
+	components := []agent.ComponentHealth{
+		inspectControlComponent("maildir", now, mailboxMgr.MaildirBase()),
+		inspectControlComponent("postfix", now, cfg.Postfix.VirtualDomainsFile, cfg.Postfix.VmailboxFile),
+		inspectControlComponent("dovecot", now, "/etc/dovecot/users.conf"),
+		inspectControlComponent("opendkim", now, cfg.DKIM.KeyDir, cfg.DKIM.SigningTable, cfg.DKIM.KeyTable),
+	}
+	lastApplyError := remoteCfg.LastApplyError()
+	configState, configDetail := nodev1.ReadinessState_READINESS_STATE_READY, "applied"
+	if lastApplyError != "" {
+		configState, configDetail = nodev1.ReadinessState_READINESS_STATE_DEGRADED, lastApplyError
+		readiness = nodev1.ReadinessState_READINESS_STATE_DEGRADED
+	}
+	components = append(components, agent.ComponentHealth{Component: "config", State: configState, Detail: configDetail, CheckedAt: now})
+	for _, component := range components {
+		if component.State == nodev1.ReadinessState_READINESS_STATE_FAILED {
+			readiness = nodev1.ReadinessState_READINESS_STATE_FAILED
+			break
+		}
+		if component.State == nodev1.ReadinessState_READINESS_STATE_DEGRADED && readiness == nodev1.ReadinessState_READINESS_STATE_READY {
+			readiness = nodev1.ReadinessState_READINESS_STATE_DEGRADED
+		}
+	}
+	totalBytes, availableBytes := agent.DiskUsage(mailboxMgr.MaildirBase())
+	mailboxCount := uint64(0)
+	if active := mailboxMgr.ActiveCount(); active > 0 {
+		mailboxCount = uint64(active)
+	}
+	return agent.HealthSnapshot{
+		MailboxCount: mailboxCount, DiskTotalBytes: totalBytes, DiskAvailableBytes: availableBytes,
+		Readiness: readiness, Components: components, LastApplyError: lastApplyError,
+	}
+}
+
+func inspectControlComponent(name string, checkedAt time.Time, paths ...string) agent.ComponentHealth {
+	configured := 0
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		configured++
+		if _, err := os.Stat(path); err != nil {
+			return agent.ComponentHealth{
+				Component: name, State: nodev1.ReadinessState_READINESS_STATE_FAILED,
+				Detail: err.Error(), CheckedAt: checkedAt,
+			}
+		}
+	}
+	if configured == 0 {
+		return agent.ComponentHealth{
+			Component: name, State: nodev1.ReadinessState_READINESS_STATE_UNKNOWN,
+			Detail: "not configured", CheckedAt: checkedAt,
+		}
+	}
+	return agent.ComponentHealth{
+		Component: name, State: nodev1.ReadinessState_READINESS_STATE_READY,
+		Detail: "available", CheckedAt: checkedAt,
 	}
 }
 

@@ -1,6 +1,9 @@
 package nodecontract
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+)
 
 const (
 	ProtocolVersionV1 uint32 = 1
@@ -40,6 +43,14 @@ var CommandTypesV1 = []CommandType{
 	CommandMessageRetentionPurge,
 	CommandQuarantineRelease,
 	CommandQuarantineGC,
+}
+
+// CommandResponse preserves the legacy HTTP-shaped command result while the
+// command itself is delivered over ControlStream.
+type CommandResponse struct {
+	StatusCode int                 `json:"status_code"`
+	Header     map[string][]string `json:"header,omitempty"`
+	Body       json.RawMessage     `json:"body,omitempty"`
 }
 
 type NotificationType string

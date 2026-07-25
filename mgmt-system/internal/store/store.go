@@ -246,8 +246,7 @@ func (s *Store) ListServers() ([]model.MailServer, error) {
 }
 func (s *Store) GetHealthyServerWithMinLoad() (*model.MailServer, error) {
 	var srv model.MailServer
-	err := s.db.Where("status = ?", "healthy").
-		Where("current_load < capacity").
+	err := allocatableServerQuery(s.db, time.Now()).
 		Order("current_load ASC").
 		First(&srv).Error
 	if err != nil {
@@ -452,13 +451,12 @@ func (s *Store) ListServersByDomain(domainID uint64) ([]model.ServerDomain, erro
 // 选一台 healthy 且有空余容量的最闲服务器。查询条件见设计文档 §4.2。
 func (s *Store) GetHealthyServerForDomain(domainID uint64) (*model.MailServer, error) {
 	var srv model.MailServer
-	err := s.db.Joins("JOIN server_domains ON server_domains.server_id = mail_servers.id").
+	err := allocatableServerQuery(s.db, time.Now()).
+		Joins("JOIN server_domains ON server_domains.server_id = mail_servers.id").
 		Where("server_domains.domain_id = ?", domainID).
 		Where("server_domains.status = ?", "active").
 		Where("server_domains.sync_status IN ?", []string{"synced", "partial"}).
 		Where("server_domains.postfix_status = ?", "synced").
-		Where("mail_servers.status = ?", "healthy").
-		Where("mail_servers.current_load < mail_servers.capacity").
 		Order("mail_servers.current_load ASC").
 		First(&srv).Error
 	if err != nil {
@@ -479,8 +477,17 @@ func (s *Store) GetAllocatableDomain() (*model.Domain, error) {
 		Where("server_domains.status = ?", "active").
 		Where("server_domains.sync_status IN ?", []string{"synced", "partial"}).
 		Where("server_domains.postfix_status = ?", "synced").
-		Where("mail_servers.status = ?", "healthy").
+		Where("mail_servers.enrollment_state IN ?", []string{model.EnrollmentApproved, model.EnrollmentLegacyApproved}).
+		Where("mail_servers.readiness_state = ?", model.ReadinessReady).
+		Where("mail_servers.allocation_state = ?", model.AllocationActive).
 		Where("mail_servers.current_load < mail_servers.capacity").
+		Where(`(
+			(mail_servers.transport_mode = ? AND mail_servers.status = ?) OR
+			(mail_servers.transport_mode = ? AND mail_servers.connection_state = ? AND mail_servers.lease_expires_at > ?) OR
+			(mail_servers.transport_mode = ? AND mail_servers.status = ? AND mail_servers.connection_state = ? AND mail_servers.lease_expires_at > ?)
+		)`, model.TransportLegacyHTTP, "healthy",
+			model.TransportControlStream, model.ConnectionConnected, time.Now(),
+			model.TransportDual, "healthy", model.ConnectionConnected, time.Now()).
 		Group("domains.id").
 		Order("MIN(mail_servers.current_load) ASC, domains.id ASC").
 		First(&domain).Error
@@ -488,6 +495,20 @@ func (s *Store) GetAllocatableDomain() (*model.Domain, error) {
 		return nil, err
 	}
 	return &domain, nil
+}
+
+func allocatableServerQuery(db *gorm.DB, now time.Time) *gorm.DB {
+	return db.Where("mail_servers.enrollment_state IN ?", []string{model.EnrollmentApproved, model.EnrollmentLegacyApproved}).
+		Where("mail_servers.readiness_state = ?", model.ReadinessReady).
+		Where("mail_servers.allocation_state = ?", model.AllocationActive).
+		Where("mail_servers.current_load < mail_servers.capacity").
+		Where(`(
+			(mail_servers.transport_mode = ? AND mail_servers.status = ?) OR
+			(mail_servers.transport_mode = ? AND mail_servers.connection_state = ? AND mail_servers.lease_expires_at > ?) OR
+			(mail_servers.transport_mode = ? AND mail_servers.status = ? AND mail_servers.connection_state = ? AND mail_servers.lease_expires_at > ?)
+		)`, model.TransportLegacyHTTP, "healthy",
+			model.TransportControlStream, model.ConnectionConnected, now,
+			model.TransportDual, "healthy", model.ConnectionConnected, now)
 }
 
 // CountMailboxesOnServerDomain 统计仍占用服务器域名绑定的邮箱数。

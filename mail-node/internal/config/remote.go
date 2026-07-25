@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +21,8 @@ type RemoteConfig struct {
 	configs         map[string]string
 	mgmtURL         string
 	secret          string
+	nodeUUID        string
+	credential      string
 	nodeID          uint64
 	sources         map[string]string
 	desiredRevision uint64
@@ -61,7 +64,7 @@ func (rc *RemoteConfig) PullAll() error {
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("X-Internal-Token", rc.secret)
+	rc.authorize(req)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -143,6 +146,25 @@ func (rc *RemoteConfig) SetNodeID(nodeID uint64) {
 	rc.mu.Lock()
 	rc.nodeID = nodeID
 	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) ConfigureNodeCredential(nodeUUID, credential string) {
+	rc.mu.Lock()
+	rc.nodeUUID = strings.TrimSpace(nodeUUID)
+	rc.credential = strings.TrimSpace(credential)
+	rc.mu.Unlock()
+}
+
+func (rc *RemoteConfig) authorize(request *http.Request) {
+	rc.mu.RLock()
+	nodeUUID, credential, secret := rc.nodeUUID, rc.credential, rc.secret
+	rc.mu.RUnlock()
+	if nodeUUID != "" && credential != "" {
+		request.Header.Set("Authorization", "Node "+credential)
+		request.Header.Set("X-MailHub-Node-UUID", nodeUUID)
+		return
+	}
+	request.Header.Set("X-Internal-Token", secret)
 }
 
 func (rc *RemoteConfig) SetBootIdentity(bootID string, startedAt time.Time) {
@@ -301,7 +323,7 @@ func (rc *RemoteConfig) ReportSnapshots(values map[string]string, appliedAt time
 		return fmt.Errorf("build snapshot request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", rc.secret)
+	rc.authorize(req)
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		return fmt.Errorf("report config snapshot: %w", err)

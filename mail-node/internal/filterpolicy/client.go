@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	filtercontract "github.com/ticket/email-filter-contract"
@@ -18,11 +19,28 @@ import (
 type IdentityFunc func() (nodeID uint64, bootID string)
 
 type Client struct {
-	baseURL  string
-	secret   string
-	engine   *filterdecision.Engine
-	identity IdentityFunc
-	http     *http.Client
+	baseURL    string
+	secret     string
+	engine     *filterdecision.Engine
+	identity   IdentityFunc
+	nodeUUID   string
+	credential string
+	http       *http.Client
+	syncMu     sync.Mutex
+}
+
+func (client *Client) ConfigureNodeCredential(nodeUUID, credential string) {
+	client.nodeUUID = strings.TrimSpace(nodeUUID)
+	client.credential = strings.TrimSpace(credential)
+}
+
+func (client *Client) authorize(request *http.Request) {
+	if client.nodeUUID != "" && client.credential != "" {
+		request.Header.Set("Authorization", "Node "+client.credential)
+		request.Header.Set("X-MailHub-Node-UUID", client.nodeUUID)
+		return
+	}
+	request.Header.Set("X-Internal-Token", client.secret)
 }
 
 type nodeState struct {
@@ -65,6 +83,8 @@ func (client *Client) Start(ctx context.Context, interval func() time.Duration, 
 }
 
 func (client *Client) SyncOnce(ctx context.Context) error {
+	client.syncMu.Lock()
+	defer client.syncMu.Unlock()
 	var results []error
 	for _, policyKind := range []string{filtercontract.PolicyManual, filtercontract.PolicyAd} {
 		if err := client.syncKind(ctx, policyKind); err != nil {
@@ -123,7 +143,7 @@ func (client *Client) getBundle(ctx context.Context, policyKind string) ([]byte,
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("X-Internal-Token", client.secret)
+	client.authorize(req)
 	resp, err := client.http.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -176,7 +196,7 @@ func (client *Client) report(ctx context.Context, policyKind, lastError string) 
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Internal-Token", client.secret)
+	client.authorize(req)
 	resp, err := client.http.Do(req)
 	if err != nil {
 		return err

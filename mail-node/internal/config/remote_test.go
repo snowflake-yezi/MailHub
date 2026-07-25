@@ -63,6 +63,26 @@ func TestPullAllUsesServerIDAndTracksSource(t *testing.T) {
 	}
 }
 
+func TestPullAllPrefersNodeCredentialAuthentication(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Node node-secret" || request.Header.Get("X-MailHub-Node-UUID") != "node-uuid" {
+			t.Errorf("node auth headers = %q / %q", request.Header.Get("Authorization"), request.Header.Get("X-MailHub-Node-UUID"))
+		}
+		if request.Header.Get("X-Internal-Token") != "" {
+			t.Error("shared secret was sent with node credential")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]any{
+			"configs": map[string]string{}, "sources": map[string]string{}, "desired_revision": 0,
+		}})
+	}))
+	defer server.Close()
+	rc := NewRemoteConfig(server.URL, "legacy-secret")
+	rc.ConfigureNodeCredential("node-uuid", "node-secret")
+	if err := rc.PullAll(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSetNodeIDSwitchesPollingToNodeScope(t *testing.T) {
 	queries := make(chan string, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +232,7 @@ func TestReportSnapshotsSendsAllAppliedValues(t *testing.T) {
 		var body struct {
 			BootID    string    `json:"boot_id"`
 			StartedAt time.Time `json:"started_at"`
-			Items  []struct {
+			Items     []struct {
 				ConfigKey string `json:"config_key"`
 			} `json:"items"`
 		}

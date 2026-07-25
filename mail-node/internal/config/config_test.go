@@ -91,3 +91,14 @@ func TestLoadAcceptsExplicitNodeTransportSettings(t *testing.T) {
 		t.Fatalf("identity directory = %q", cfg.Identity.Directory)
 	}
 }
+
+func TestLoadRejectsControlTransportWithoutGatewayAddress(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("management:\n  transport_mode: control_stream\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("control_stream without management.control_url was accepted")
+	}
+}

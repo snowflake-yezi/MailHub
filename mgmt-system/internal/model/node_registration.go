@@ -43,7 +43,26 @@ const (
 	NodeCredentialRotating = "rotating"
 	NodeCredentialRevoked  = "revoked"
 	NodeCredentialExpired  = "expired"
+
+	NodeCommandQueued               = "queued"
+	NodeCommandDelivered            = "delivered"
+	NodeCommandReceived             = "received"
+	NodeCommandRunning              = "running"
+	NodeCommandSucceeded            = "succeeded"
+	NodeCommandSucceededWithWarning = "succeeded_with_warning"
+	NodeCommandFailed               = "failed"
+	NodeCommandRejected             = "rejected"
+	NodeCommandExpired              = "expired"
 )
+
+func IsTerminalNodeCommandState(state string) bool {
+	switch state {
+	case NodeCommandSucceeded, NodeCommandSucceededWithWarning, NodeCommandFailed, NodeCommandRejected, NodeCommandExpired:
+		return true
+	default:
+		return false
+	}
+}
 
 // ApplyLegacyNodeDefaults maps the former combined status into the new state
 // dimensions without requiring a UUID or changing legacy transport behavior.

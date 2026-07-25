@@ -23,6 +23,9 @@ func TestRejectsQuarantineInsideMaildir(t *testing.T) {
 }
 
 func TestConfiguredSymlinkParentUsesPhysicalPaths(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("physical symlink resolution is enforced by the production Unix implementation")
+	}
 	root := t.TempDir()
 	physicalParent := filepath.Join(root, "spool", "mail")
 	physicalMaildir := filepath.Join(physicalParent, "vhosts")

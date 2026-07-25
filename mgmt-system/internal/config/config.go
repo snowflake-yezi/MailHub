@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ticket/email-mgmt-system/internal/mailboxaddr"
+	nodecontract "github.com/ticket/email-node-contract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -133,6 +134,26 @@ func (c *Config) Validate() error {
 	}
 	if c.DefaultRetentionDays <= 0 {
 		return fmt.Errorf("default_retention_days must be positive")
+	}
+	if c.NodeControl.Enabled {
+		if strings.TrimSpace(c.NodeControl.Listen) == "" {
+			return fmt.Errorf("node_control.listen is required when node control is enabled")
+		}
+		if strings.TrimSpace(c.NodeControl.TLSCertFile) == "" || strings.TrimSpace(c.NodeControl.TLSKeyFile) == "" {
+			return fmt.Errorf("node_control TLS certificate and key files are required when node control is enabled")
+		}
+		if c.NodeControl.HeartbeatIntervalSeconds <= 0 || c.NodeControl.LeaseTimeoutSeconds <= c.NodeControl.HeartbeatIntervalSeconds {
+			return fmt.Errorf("node_control lease timeout must be greater than its positive heartbeat interval")
+		}
+		if c.NodeControl.CommandTimeoutSeconds <= 0 {
+			return fmt.Errorf("node_control.command_timeout_seconds must be positive")
+		}
+		if c.NodeControl.DataMaxConcurrencyPerNode <= 0 {
+			return fmt.Errorf("node_control.data_max_concurrency_per_node must be positive")
+		}
+		if c.NodeControl.DataChunkSize <= 0 || c.NodeControl.DataChunkSize > nodecontract.MaxDataChunkSize {
+			return fmt.Errorf("node_control.data_chunk_size must be between 1 and %d", nodecontract.MaxDataChunkSize)
+		}
 	}
 	return nil
 }

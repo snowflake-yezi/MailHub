@@ -149,6 +149,15 @@ func Load(path string) (*Config, error) {
 	if strings.TrimSpace(cfg.Filter.QuarantineBase) == "" {
 		cfg.Filter.QuarantineBase = "/var/mail/mailhub-quarantine"
 	}
+	switch cfg.Management.TransportMode {
+	case "legacy_http":
+	case "dual", "control_stream":
+		if strings.TrimSpace(cfg.Management.ControlURL) == "" {
+			return nil, fmt.Errorf("management.control_url is required for %s transport", cfg.Management.TransportMode)
+		}
+	default:
+		return nil, fmt.Errorf("management.transport_mode must be legacy_http, dual, or control_stream")
+	}
 
 	return cfg, nil
 }

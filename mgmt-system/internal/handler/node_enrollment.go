@@ -13,11 +13,20 @@ import (
 )
 
 type NodeEnrollmentHandler struct {
-	service *service.NodeEnrollmentService
+	service        *service.NodeEnrollmentService
+	sessionRevoker interface {
+		DisconnectServer(uint64, error) bool
+	}
 }
 
 func NewNodeEnrollmentHandler(enrollmentService *service.NodeEnrollmentService) *NodeEnrollmentHandler {
 	return &NodeEnrollmentHandler{service: enrollmentService}
+}
+
+func (handler *NodeEnrollmentHandler) ConfigureSessionRevoker(revoker interface {
+	DisconnectServer(uint64, error) bool
+}) {
+	handler.sessionRevoker = revoker
 }
 
 func (handler *NodeEnrollmentHandler) RegisterAdminRoutes(group *gin.RouterGroup) {
@@ -175,6 +184,9 @@ func (handler *NodeEnrollmentHandler) RevokeCredentials(c *gin.Context) {
 	if err := handler.service.RevokeCredentials(serverID, adminActor(c), c.ClientIP()); err != nil {
 		handleEnrollmentError(c, err)
 		return
+	}
+	if handler.sessionRevoker != nil {
+		handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential revoked"))
 	}
 	success(c, "node credentials revoked", nil)
 }
