@@ -1,10 +1,10 @@
 # Mail-node 节点注册与加入集群指南
 
-> 文档类型：当前运维指南（NR-P2）
+> 文档类型：当前运维指南（NR-P6）
 >
 > 适用方案：[Mail-node 注册、身份与出站控制通道设计](design/node-enrollment-control-channel-design.md)
 >
-> 实现状态：NR-P2 注册、审批和每节点 Token 已实现。本文的 `identity`、`enroll`、`enroll resume`、后台邀请/审批和凭证操作可直接使用；ControlStream/DataStream 属于 NR-P4/NR-P6，当前业务数据面仍使用 `api_host + shared_secret + 双向 HTTP`，不得提前关闭 node `8081`。
+> 实现状态：NR-P6 已实现独立 DataStream、分块读取、取消、并发/大小限制以及全部邮件与隔离区读取迁移。当前可进入远程 staging，生产关闭 node `8081`、移除 shared secret 和 canary/回滚验收仍属于 NR-P7。
 
 ---
 
@@ -191,7 +191,35 @@ mail-node enroll resume \
 2. 校验响应绑定的 UUID 与本地 UUID 一致。
 3. 将运行 Token 原子写入 root-only 身份目录。
 4. 删除 request secret 和临时 Enrollment Token。
-5. 后续 NR-P4 使用该凭证建立出站控制通道；NR-P2 不会自动切换 transport。
+5. 使用该凭证建立出站控制通道；transport 不会因注册完成而自动切换。
+
+管理端先配置专用 TLS listener：
+
+```yaml
+node_control:
+  enabled: true
+  listen: ":8443"
+  public_url: "https://node-control.example.com:443"
+  tls_cert_file: "/etc/mailhub/node-control.crt"
+  tls_key_file: "/etc/mailhub/node-control.key"
+  heartbeat_interval_seconds: 30
+  lease_timeout_seconds: 90
+  command_timeout_seconds: 15
+  data_max_concurrency_per_node: 4
+  data_chunk_size: 262144
+```
+
+已有节点 P6 canary 使用 `dual`：变更命令以 ControlStream 为单一主通道，读取优先 DataStream，并在数据会话尚未建立或请求建立失败时安全回退 legacy：
+
+```yaml
+management:
+  control_url: "node-control.example.com:443"
+  transport_mode: "dual"
+  credential_file: "/var/lib/mail-node/identity/credential"
+  ca_file: "/etc/mail-node/management-ca.pem"
+```
+
+`control_stream` 已覆盖域名、邮箱、消息删除、生命周期、隔离区命令，以及邮件列表/正文、raw EML、附件/预览、隔离区原件/附件读取。同步命令等待超过 `command_timeout_seconds` 时返回 `202` 和 `operation_id`，不能据此判断业务失败。P7 前生产节点仍建议保持 `dual`、shared secret 和 node `8081`，完成 canary 与回滚演练后再关闭兼容入口。
 
 注册完成后删除临时文件：
 
@@ -217,16 +245,21 @@ NR-P2 输出为机器可读 JSON，必须确认：
 {"credential_present":true,"node_uuid":"b542fd12-..."}
 ```
 
-新节点注册后默认处于 `allocation=disabled`。NR-P4 建立连接和 lease、完成以下检查后再启用分配：
+新节点注册后默认处于 `allocation=disabled`。建立连接和 lease 后验证：
 
 - Postfix、Dovecot、OpenDKIM 自检通过；
 - Maildir 路径、UID/GID 和磁盘容量正确；
 - node 与 system 时间偏差在允许范围；
-- 测试命令可以成功下发并返回；
 - desired/applied revision 一致；
-- 测试域名和测试邮箱流程通过。
+- 断线后 connection 变为 disconnected 且停止新分配，重连后 lease 恢复。
+- `identity.directory/command-journal.json` 由 root-only 权限保护；重复投递返回已持久化结果。
+- 域名、邮箱和隔离区变更命令能完成 `received -> running -> succeeded/failed` 状态闭环。
+- 命令等待超时响应包含 `operation_id`，重试或状态查询能取得相同命令的最终结果。
+- DataStream Hello 绑定当前 Control session，数据流断开不会中断控制心跳和命令。
+- raw EML 和附件按不超过 `data_chunk_size` 的分块传输，结束帧总字节数和 SHA-256 校验通过。
+- 下载客户端取消后 node 读取器及时关闭；超时和慢消费者只取消对应请求。
 
-最后在 system 节点详情页执行“启用分配”，将 allocation 状态切换为 `active`。
+P6 canary 通过后，可为 `dual` 节点启用分配，并在远程 staging 中验证纯 `control_stream` 节点不配置可达 `api_host` 仍能完成全部业务。生产启用纯 `control_stream`、关闭 `8081` 和清理 shared secret 必须等 NR-P7 验收。
 
 ---
 
@@ -398,6 +431,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 - [ ] Enrollment Token 单次使用、短期有效且只保存哈希。
 - [ ] Token 通过文件传入，不出现在命令行和日志。
 - [ ] request secret 和节点运行 Token 使用 root-only 文件保存。
+- [ ] command journal 位于 identity 目录并使用 root-only 文件权限。
 - [ ] 管理员审批时核对 UUID、Request ID 和机器信息。
 - [ ] 每台 node 使用独立凭证。
 - [ ] 新节点默认 allocation=disabled，通过后续连接与业务验收后才参与分配。
@@ -407,7 +441,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 ---
 
-## 11. NR-P2 验收
+## 11. 当前阶段验收
 
 当前实现提供不泄露敏感信息的机器可读输出：
 
@@ -425,4 +459,4 @@ system 侧应能核对：
 新节点保持 allocation=disabled
 ```
 
-NR-P2 已覆盖标准审批、严格预绑定、Token 过期/撤销/重复使用、拒绝、凭证轮换/撤销和重装恢复。当前发现机制与 shared secret 仍作为 legacy 兼容路径保留，只有 NR-P7 完成 canary 和关闭 `8081` 验收后才能移除。
+NR-P2 已覆盖标准审批、严格预绑定、Token 过期/撤销/重复使用、拒绝、凭证轮换/撤销和重装恢复。NR-P4-P6 已覆盖出站连接、lease、revision、持久命令、节点幂等日志、DataStream 读取、取消和 Control/Data 隔离。当前发现机制与 shared secret 仍作为 legacy 兼容路径保留，只有 NR-P7 完成 canary、回滚和关闭 `8081` 验收后才能移除。

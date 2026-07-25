@@ -171,7 +171,7 @@ cp mail-node/config.example.yaml mail-node/config.yaml
 - `auth.shared_secret`：mgmt-system 与 mail-node 必须一致。
 - 外部 API Token：控制面启动后在管理端“外部访问”页面创建；新部署不要配置 `auth.tokens`。
 - `management.api_url`：mail-node 访问 mgmt-system 的地址。
-- NR-P0 兼容开关：保持 `node_control.enabled: false` 和 `management.transport_mode: legacy_http`；后续灰度阶段再逐节点启用新通道。
+- 兼容开关默认保持 `node_control.enabled: false` 和 `management.transport_mode: legacy_http`；P6 canary 按[节点注册指南](docs/node-registration-guide.md)逐节点切换为 `dual`，读取优先走 DataStream、建立失败时可安全回退 legacy。生产关闭 node `8081` 仍需完成 P7 灰度验收。
 - `forward.smtp_*`：转发用 SMTP 连接参数；转发目标地址由后台“集成邮箱”管理，并同步到动态配置。
 - `dkim.*`、`postfix.*`、`maildir.*`：数据面落地 Postfix / Dovecot / OpenDKIM 所需路径。
 
@@ -248,14 +248,15 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [健康检查设计](docs/design/t7-healthcheck-design.md) | 主动探测、被动心跳、状态升降级 |
 | [管理账号 Bootstrap 与恢复设计](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) | 管理员首次初始化、数据库登录、后台改密、CLI 恢复与登录页 UI |
 
-### 规划中的架构演进
+### 节点架构演进
 
-以下文档描述尚未实现的目标方案，不作为当前部署操作依据。
+以下文档同时记录已完成的 NR-P0–NR-P6 和尚未实现的 NR-P7。当前操作以节点注册指南为准；计划中未标记完成的阶段不作为现有能力。
 
 | 文档 | 用途 |
 |------|------|
 | [节点注册、身份与出站控制通道设计](docs/design/node-enrollment-control-channel-design.md) | 永久 UUID、一次性注册、节点独立凭证、出站控制通道和迁移方案 |
 | [节点注册发现与出站控制通道实施计划](docs/design/node-registration-control-channel-implementation-plan.md) | 当前 P0 主线的范围、协议、数据模型、阶段、测试和完成定义 |
+| [NR-P6 DataStream 迁移验收记录](docs/design/node-registration-p6-data-stream.md) | DataStream 会话、流式读取、取消、限流和 Control/Data 隔离验证 |
 | [节点注册与加入集群指南](docs/node-registration-guide.md) | 标准审批、严格预绑定 UUID、注册验证、异常恢复和安全检查 |
 
 ### 历史/规划记录
@@ -280,7 +281,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | 多服务器、域名池、DKIM、DNS 清单 | 已完成 |
 | React 管理后台（简体中文 / English / 日本語） | 已完成 |
 | 三层鉴权 | 已完成 |
-| 现有健康检查、心跳、`api_host` 节点发现 | 已完成；待升级为 UUID 注册和出站控制通道 |
+| UUID 注册、节点独立凭证、出站 ControlStream/DataStream、lease 与持久化命令 | NR-P0–NR-P6 已完成；P7 dual 灰度与关闭 `8081` 待执行 |
 | 过滤规则、主动重载、Maildir 转发 | 已完成 |
 | 集成邮箱管理和 SMTP 凭据热加载 | 已完成 |
 | MIME 结构化解析、正文查询、附件下载 | 已完成 |
@@ -293,7 +294,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 
 | 优先级 | 事项 | 状态 |
 |--------|------|------|
-| P0 | 节点注册发现与出站控制通道 | NR-P0/NR-P1/NR-P2 已完成，下一步 NR-P3 `NodeTransport` 收口；NR-P7 后关闭 system -> node `8081` |
+| P0 | 节点注册发现与出站控制通道 | NR-P0–NR-P6 已完成，下一步 NR-P7 dual 灰度、回滚演练与关闭 system -> node `8081` |
 | P1 | 节点配置可观测与通用覆盖 | 设计草案；先完成 NC-P0 的保留期语义、所有权和真实键名核对 |
 | 暂停 | 广告邮件过滤重构 S11/S12 | 保留当前 `dual_shadow/false`，节点注册主线完成前不继续策略、样本和自动隔离开发 |
 | 候选 | 外部创建邮箱 API 支持指定 `server_id` | 尚未排期，需先确认调用方权限与节点分配策略 |

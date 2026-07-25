@@ -1,6 +1,6 @@
 # 系统架构概览
 
-> 版本: v1.3 | 日期: 2026-07-15 | 状态: 与当前代码实现对齐。本文是架构、数据模型和接口流向的事实源。
+> 版本: v1.4 | 日期: 2026-07-25 | 状态: 与当前代码实现对齐。本文是架构、数据模型和接口流向的事实源。
 
 ---
 
@@ -15,11 +15,12 @@ flowchart TB
     end
 
     subgraph mgmt["mgmt-system 控制面"]
-        auth["鉴权层<br/>Session / Bearer permission / Shared-Secret"]
+        auth["鉴权层<br/>Session / Bearer permission<br/>Node Token / Shared-Secret 兼容"]
         web["React 管理后台<br/>邮箱 / 邮件 / 服务器 / 过滤 / 配置 / 外部访问"]
         api["外部 API<br/>邮箱创建 / 邮件查询 / 附件下载 / 过滤规则"]
-        control["控制层<br/>分配 / 健康检查 / 生命周期 / 规则配置热加载"]
-        db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / domains<br/>system_configs / admin_users<br/>api applications / credentials<br/>permissions / resources / access logs")]
+        control["控制层<br/>注册 / 会话 lease / 持久命令<br/>分配 / 生命周期 / 规则配置"]
+        gateway["Node Gateway<br/>TLS gRPC ControlStream / DataStream"]
+        db[("MySQL / MariaDB<br/>mailbox_accounts / mappings<br/>mail_servers / node_commands<br/>node credentials / domains<br/>system_configs / admin_users<br/>api applications / access logs")]
     end
 
     subgraph nodes["mail-node 数据面集群"]
@@ -41,11 +42,15 @@ flowchart TB
     web --> control
     api --> control
     control --> db
+    gateway --> control
 
-    control -->|"X-Internal-Token<br/>创建邮箱 / 域名同步 / 邮件查询 / 健康探测 / 热加载"| node1
-    control -->|"X-Internal-Token"| nodeN
-    node1 -->|"X-Internal-Token<br/>心跳 / 拉规则 / 拉配置 / 拉删除任务"| control
-    nodeN -->|"X-Internal-Token"| control
+    node1 -->|"Node Token + TLS<br/>主动建立独立 ControlStream / DataStream"| gateway
+    nodeN -->|"Node Token + TLS<br/>主动建立独立 ControlStream / DataStream"| gateway
+    control <-->|"命令 / revision / ACK / 结果<br/>数据请求 / header / chunk / end / cancel"| gateway
+    control -.->|"P7 前 dual/legacy 回退<br/>邮件 / raw / 附件 / 预览"| node1
+    control -.->|"P7 前 dual/legacy 回退"| nodeN
+    node1 -->|"Node Token 或迁移期 Shared-Secret<br/>拉规则 / 拉配置 / 状态上报"| control
+    nodeN -->|"Node Token 或迁移期 Shared-Secret"| control
 
     node1 -->|"SMTP 转发"| union
     nodeN -->|"SMTP 转发"| union
@@ -58,9 +63,10 @@ flowchart TB
 |---|------|------|----------|
 | 1 | 运营人员 -> mgmt-system | Session Cookie | React 后台页面和 `/api/v1/admin/*` |
 | 2 | 外部业务系统 -> mgmt-system | Bearer Token + 应用权限 | 创建/查询/禁用邮箱，读取邮件和附件 |
-| 3 | mgmt-system -> mail-node | `X-Internal-Token` | 创建邮箱、修改密码、删除/恢复、同步域名、查询邮件、下载附件、健康探测、通知重载 |
-| 4 | mail-node -> mgmt-system | `X-Internal-Token` | 心跳上报、节点发现、拉取过滤规则、拉取动态配置、拉取 deleting 任务 |
-| 5 | mail-node -> 集成邮箱 | SMTP AUTH / STARTTLS | 将通过过滤的邮件转发到 active 集成邮箱 |
+| 3 | mail-node -> mgmt-system Node Gateway | TLS + 每节点 Token | node 主动建立独立双向 ControlStream/DataStream；控制流承载 lease、revision 和命令，数据流承载邮件与附件分块读取和取消 |
+| 4 | mgmt-system -> mail-node legacy API | `X-Internal-Token` | P7 前作为 `legacy_http` 主路径和 `dual` 读取回退保留；纯 `control_stream` 业务路径不依赖 node `8081` |
+| 5 | mail-node -> mgmt-system HTTPS | 每节点 Token；legacy 可用 Shared-Secret | 拉取完整过滤规则和动态配置、状态上报；通知丢失由周期拉取收敛 |
+| 6 | mail-node -> 集成邮箱 | SMTP AUTH / STARTTLS | 将通过过滤的邮件转发到 active 集成邮箱 |
 
 ---
 
@@ -72,15 +78,16 @@ flowchart TB
 |------|----------|
 | 管理后台 | `/admin/*` React SPA；登录、Dashboard、服务器、域名、邮箱、邮件、过滤、配置页面 |
 | 邮箱账号管理 | 单个/批量/CSV 创建，密码持久化，订单映射，状态追踪，回收站、恢复、清理 |
-| 服务器池管理 | 注册、发现、编辑、删除、容量和负载、健康状态 |
+| 服务器池管理 | 邀请注册、审批、独立凭证、单活 session、lease、四维状态、容量和负载 |
 | 域名池管理 | 服务器-域名绑定，远端 Postfix 虚拟域和 DKIM 同步，DNS 清单 |
 | 分配策略 | 优先使用指定 `domain_id`；未指定时选择有 active/synced/healthy 绑定且负载最低的域名和服务器 |
 | 邮件查询代理 | 按订单或邮箱定位数据面，代理邮件列表、正文和附件下载 |
-| 过滤规则管理 | 后台 CRUD；规则保存后通知 mail-node `/internal/filters/reload` |
-| 动态配置 | `system_configs` KV 表、后台可视化配置、缓存读取、配置变更通知 mail-node |
+| 持久命令 | `node_commands` 先落库后投递；sequence、ACK、deadline、重投、同步等待和 operation ID |
+| 过滤规则管理 | 后台 CRUD；ControlStream revision 通知唤醒 node HTTPS 拉取，legacy 节点保留旧通知 |
+| 动态配置 | `system_configs` KV 表、后台可视化配置、缓存读取、ControlStream revision 通知 |
 | 集成邮箱 | 多个转发目标账号，唯一 active；激活时同步 `forward.target_address` 并通知数据面 |
 | 生命周期调度 | deleting Watchdog、soft_deleted 过期标记为 purged |
-| 鉴权 | Session、外部应用 Bearer Token 权限、内部 Shared-Secret |
+| 鉴权 | Session、外部应用 Bearer Token 权限、每节点运行 Token；Shared-Secret 仅作迁移兼容 |
 | 外部访问管理 | 应用命名与启停、功能授权、哈希凭证签发/轮换/撤销、调用日志 |
 
 ### 2.2 核心数据模型
@@ -90,7 +97,9 @@ flowchart TB
 | `mailbox_accounts` | `email_address`, `password`, `domain_id`, `server_id`, `status`, `sync_status`, `retention_days`, `delete_requested_at` | 当前邮箱账号主表。`retention_days` 为兼容字段，实际单封邮件保留期由全局配置控制；`status` 为 `active / disabled / recycled / deleting / soft_deleted / purged`。 |
 | `order_mailbox_mappings` | `order_id`, `mailbox_account_id` | 订单与邮箱绑定。当前按 1:1 使用，schema 支持后续扩展。 |
 | `order_mailboxes` | legacy 邮箱字段 | 历史兼容表；启动迁移到 `mailbox_accounts` + `order_mailbox_mappings`。 |
-| `mail_servers` | `api_host`, `status`, `heartbeat_interval`, `desired_revision`, `applied_revision`, `last_boot_id`, `config_changed_at` | 数据面节点台账、配置版本和重启可观测事实。 |
+| `mail_servers` | `node_uuid`, 四维状态, `transport_mode`, `lease_expires_at`, `desired_revision`, `applied_revision`, Agent/协议/capabilities | 数据面节点身份、连接、健康、分配意图和配置版本事实；`api_host` 仅作 legacy 兼容。 |
+| `node_enrollment_tokens` / `node_enrollment_requests` / `node_credentials` | 邀请哈希、申请状态、节点凭证哈希/版本/撤销 | 节点注册、审批和独立运行凭证；完整 secret 不落库。 |
+| `node_commands` | `command_id`, `server_id+sequence`, 幂等键, payload, state, deadline, ACK/结果 | P5 持久命令事实源；先提交数据库，再通过 active ControlStream 投递。 |
 | `domains` | `name`, `mx_server`, `status` | 邮件域名池。 |
 | `server_domains` | `server_id`, `domain_id`, `status`, `sync_status`, `postfix_status`, `dkim_status`, `dkim_selector`, `dkim_public_key` | 服务器-域名绑定和远端同步快照。 |
 | `filter_rules` | `rule_type`, `pattern`, `action`, `priority`, `enabled` | 过滤规则，action 为 `pass / block / flag`。 |
