@@ -116,3 +116,22 @@ func (s *Store) RecordNodeSessionAudit(action string, serverID uint64, nodeUUID,
 		Actor: "node:" + nodeUUID, SourceIP: sourceIP, Details: string(payload),
 	}).Error
 }
+
+func (s *Store) UpdateServerTransportWithAudit(server *model.MailServer, nodeUUID, actor, sourceIP, previous, next string) error {
+	if server == nil {
+		return fmt.Errorf("server is required")
+	}
+	details, err := json.Marshal(map[string]any{"node_uuid": nodeUUID, "previous_mode": previous, "next_mode": next})
+	if err != nil {
+		return err
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(server).Error; err != nil {
+			return err
+		}
+		return tx.Create(&model.NodeRegistrationAudit{
+			Action: "transport.mode.change", EntityType: "server", EntityID: strconv.FormatUint(server.ID, 10),
+			Actor: actor, SourceIP: sourceIP, Details: string(details),
+		}).Error
+	})
+}

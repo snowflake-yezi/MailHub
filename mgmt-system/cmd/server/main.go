@@ -116,7 +116,7 @@ func main() {
 			return server.DesiredRevision, nil
 		}, commandManager)
 		dataTransport := nodetransport.NewDataStreamTransport(dataSessionRegistry)
-		nodeTransport = nodetransport.NewMigrationTransport(legacyNodeTransport, controlTransport, dataTransport)
+		nodeTransport = nodetransport.NewMigrationTransportWithLegacy(legacyNodeTransport, controlTransport, cfg.NodeControl.LegacyHTTPEnabled, dataTransport)
 		controlGateway, err = nodegateway.New(db, sessionRegistry, func(rawCredential, nodeUUID string, usedAt time.Time) (nodegateway.Principal, error) {
 			principal, authErr := nodeEnrollmentService.AuthenticateCredential(rawCredential, nodeUUID, usedAt)
 			if authErr != nil {
@@ -142,7 +142,7 @@ func main() {
 	// Init handlers
 	mailboxH := handler.NewMailboxHandler(db, allocator, nodeTransport)
 	emailH := handler.NewEmailHandler(db, nodeTransport)
-	serverH := handler.NewServerHandler(db, nodeTransport)
+	serverH := handler.NewServerHandler(db, nodeTransport, cfg.NodeControl.LegacyHTTPEnabled)
 	filterH := handler.NewFilterHandler(db, nodeTransport)
 	filterPolicyService := service.NewFilterPolicyService(db)
 	filterPolicyH := handler.NewFilterPolicyHandler(filterPolicyService)

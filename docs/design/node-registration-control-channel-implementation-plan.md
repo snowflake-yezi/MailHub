@@ -706,6 +706,8 @@ public_host + mail_public_ips
 
 ### NR-P7：dual 灰度与关闭 8081
 
+状态：进行中（已完成第一切片：节点级切换门禁、审计和 legacy 传输硬禁用）。
+
 交付：
 
 - 每节点 `legacy_http / dual / control_stream` 切换。
@@ -715,6 +717,8 @@ public_host + mail_public_ips
 - shared secret 只为未迁移 legacy 节点保留，最终删除。
 
 验收：满足第 14 节完成定义。
+
+第一切片记录见 [NR-P7 dual 灰度与 legacy 回滚记录](node-registration-p7-canary-rollback.md)。
 
 ### 远程发布里程碑
 

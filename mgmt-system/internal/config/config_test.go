@@ -110,3 +110,14 @@ func TestValidateRequiresTLSForEnabledNodeControl(t *testing.T) {
 		t.Fatal("lease timeout equal to heartbeat interval was accepted")
 	}
 }
+
+func TestValidateRejectsDisablingLegacyWithoutNodeControl(t *testing.T) {
+	base := Config{
+		Database: DatabaseConfig{DSN: "dsn"}, Domains: []DomainConfig{{Name: "example.com"}},
+		DefaultRetentionDays: 30,
+		NodeControl:          NodeControlConfig{Listen: ":8443", LegacyHTTPEnabled: false},
+	}
+	if err := base.Validate(); err == nil {
+		t.Fatal("legacy HTTP was disabled while node control was disabled")
+	}
+}

@@ -8,6 +8,19 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/nodesession"
 )
 
+func TestMigrationTransportBlocksLegacyWhenDisabled(t *testing.T) {
+	legacy := NewLegacyHTTPTransport("secret")
+	transport := NewMigrationTransportWithLegacy(legacy, nil, false)
+	_, err := transport.Execute(context.Background(), Target{NodeID: 1, TransportMode: "legacy_http"}, MailboxDelete("a@example.com", 0))
+	if !errors.Is(err, ErrLegacyTransportDisabled) {
+		t.Fatalf("Execute() error = %v, want legacy disabled", err)
+	}
+	_, err = transport.Probe(context.Background(), Target{NodeID: 1})
+	if !errors.Is(err, ErrLegacyTransportDisabled) {
+		t.Fatalf("Probe() error = %v, want legacy disabled", err)
+	}
+}
+
 func TestControlStreamTransportSendsRevisionNotifications(t *testing.T) {
 	sessions := nodesession.NewRegistry()
 	session := sessions.Register(context.Background(), nodesession.RegisterInput{ServerID: 17, NodeUUID: "node-a"})

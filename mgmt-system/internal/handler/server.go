@@ -19,12 +19,17 @@ import (
 )
 
 type ServerHandler struct {
-	store     *store.Store
-	transport nodetransport.NodeTransport
+	store             *store.Store
+	transport         nodetransport.NodeTransport
+	legacyHTTPEnabled bool
 }
 
-func NewServerHandler(s *store.Store, transport nodetransport.NodeTransport) *ServerHandler {
-	return &ServerHandler{store: s, transport: transport}
+func NewServerHandler(s *store.Store, transport nodetransport.NodeTransport, legacyHTTPEnabled ...bool) *ServerHandler {
+	legacyEnabled := true
+	if len(legacyHTTPEnabled) > 0 {
+		legacyEnabled = legacyHTTPEnabled[0]
+	}
+	return &ServerHandler{store: s, transport: transport, legacyHTTPEnabled: legacyEnabled}
 }
 
 type DNSRecord struct {
@@ -70,6 +75,10 @@ type updateServerRequest struct {
 	Capacity          *int      `json:"capacity"`
 	Status            *string   `json:"status"`
 	HeartbeatInterval *int      `json:"heartbeat_interval"`
+}
+
+type transportSwitchRequest struct {
+	TransportMode string `json:"transport_mode"`
 }
 
 // RegisterServer 注册新邮箱服务器
@@ -434,6 +443,73 @@ func (h *ServerHandler) UpdateServer(c *gin.Context) {
 	success(c, "updated", existing)
 }
 
+// SwitchTransport performs the explicit P7 canary/rollback transition for one node.
+// It requires a live control lease before entering dual or control_stream so a
+// bad node cannot be marked allocatable merely by changing a database field.
+func (h *ServerHandler) SwitchTransport(c *gin.Context) {
+	id := parseUint64(c.Param("id"))
+	server, err := h.store.GetServer(id)
+	if err != nil {
+		notFound(c, "server not found")
+		return
+	}
+	var request transportSwitchRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		badRequest(c, ErrCodeParamInvalid, "invalid transport mode")
+		return
+	}
+	mode := strings.TrimSpace(request.TransportMode)
+	if err := validateTransportSwitch(server, mode, h.legacyHTTPEnabled, time.Now().UTC()); err != nil {
+		badRequest(c, ErrCodeBusiness, err.Error())
+		return
+	}
+	previous := server.TransportMode
+	server.TransportMode = mode
+	actor := "unknown"
+	if value, ok := c.Get("admin_user"); ok {
+		if name, ok := value.(string); ok && strings.TrimSpace(name) != "" {
+			actor = strings.TrimSpace(name)
+		}
+	}
+	nodeUUID := ""
+	if server.NodeUUID != nil {
+		nodeUUID = *server.NodeUUID
+	}
+	if err := h.store.UpdateServerTransportWithAudit(server, nodeUUID, actor, c.ClientIP(), previous, mode); err != nil {
+		serverError(c, ErrCodeInternal, "failed to update transport mode")
+		return
+	}
+	success(c, "transport mode updated", server)
+}
+
+func validateTransportSwitch(server *model.MailServer, mode string, legacyEnabled bool, now time.Time) error {
+	if server == nil {
+		return errors.New("server is required")
+	}
+	switch mode {
+	case model.TransportLegacyHTTP:
+		if !legacyEnabled {
+			return errors.New("legacy HTTP transport is disabled")
+		}
+	case model.TransportDual, model.TransportControlStream:
+		if server.NodeUUID == nil || strings.TrimSpace(*server.NodeUUID) == "" {
+			return errors.New("node must be enrolled before enabling outbound transport")
+		}
+		if server.ConnectionState != model.ConnectionConnected || server.LeaseExpiresAt == nil || !server.LeaseExpiresAt.After(now) {
+			return errors.New("node must have an active control lease before enabling outbound transport")
+		}
+		if server.ReadinessState != model.ReadinessReady {
+			return errors.New("node must be ready before enabling outbound transport")
+		}
+		if mode == model.TransportDual && !legacyEnabled {
+			return errors.New("dual transport requires legacy HTTP fallback to remain enabled")
+		}
+	default:
+		return fmt.Errorf("invalid transport mode: %s", mode)
+	}
+	return nil
+}
+
 // DeleteServer 删除服务器
 // DELETE /api/v1/admin/servers/:id
 func (h *ServerHandler) DeleteServer(c *gin.Context) {
@@ -571,6 +647,7 @@ func (h *ServerHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/servers", h.ListServers)
 	r.GET("/servers/:id", h.GetServer)
 	r.PUT("/servers/:id", h.UpdateServer)
+	r.POST("/servers/:id/transport", h.SwitchTransport)
 	r.DELETE("/servers/:id", h.DeleteServer)
 	r.GET("/servers/:id/domains", h.ListServerDomains)
 	r.POST("/servers/:id/domains", h.AddServerDomain)

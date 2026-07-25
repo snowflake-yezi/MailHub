@@ -135,6 +135,9 @@ func (c *Config) Validate() error {
 	if c.DefaultRetentionDays <= 0 {
 		return fmt.Errorf("default_retention_days must be positive")
 	}
+	if !c.NodeControl.LegacyHTTPEnabled && !c.NodeControl.Enabled && strings.TrimSpace(c.NodeControl.Listen) != "" {
+		return fmt.Errorf("node_control must be enabled before disabling legacy HTTP transport")
+	}
 	if c.NodeControl.Enabled {
 		if strings.TrimSpace(c.NodeControl.Listen) == "" {
 			return fmt.Errorf("node_control.listen is required when node control is enabled")

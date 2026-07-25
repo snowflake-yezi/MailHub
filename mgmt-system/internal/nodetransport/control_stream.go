@@ -19,6 +19,7 @@ import (
 )
 
 var ErrControlOperationUnsupported = errors.New("operation is not available on ControlStream before its migration phase")
+var ErrLegacyTransportDisabled = errors.New("legacy HTTP transport is disabled")
 
 type NotificationRevisionResolver func(context.Context, Target, Notification) (uint64, error)
 
@@ -127,24 +128,40 @@ func (transport *ControlStreamTransport) Probe(context.Context, Target) (*Respon
 }
 
 type MigrationTransport struct {
-	legacy  NodeTransport
-	control NodeTransport
-	data    NodeTransport
+	legacy        NodeTransport
+	control       NodeTransport
+	data          NodeTransport
+	legacyEnabled bool
 }
 
 func NewMigrationTransport(legacy, control NodeTransport, data ...NodeTransport) *MigrationTransport {
+	return NewMigrationTransportWithLegacy(legacy, control, true, data...)
+}
+
+func NewMigrationTransportWithLegacy(legacy, control NodeTransport, legacyEnabled bool, data ...NodeTransport) *MigrationTransport {
 	dataTransport := control
 	if len(data) > 0 && data[0] != nil {
 		dataTransport = data[0]
 	}
-	return &MigrationTransport{legacy: legacy, control: control, data: dataTransport}
+	return &MigrationTransport{legacy: legacy, control: control, data: dataTransport, legacyEnabled: legacyEnabled}
+}
+
+func (transport *MigrationTransport) legacyOrError() (NodeTransport, error) {
+	if !transport.legacyEnabled {
+		return nil, ErrLegacyTransportDisabled
+	}
+	return transport.legacy, nil
 }
 
 func (transport *MigrationTransport) Execute(ctx context.Context, target Target, command Command) (*Response, error) {
 	if target.TransportMode == model.TransportControlStream || target.TransportMode == model.TransportDual {
 		return transport.control.Execute(ctx, target, command)
 	}
-	return transport.legacy.Execute(ctx, target, command)
+	legacy, err := transport.legacyOrError()
+	if err != nil {
+		return nil, err
+	}
+	return legacy.Execute(ctx, target, command)
 }
 
 func (transport *MigrationTransport) Notify(ctx context.Context, target Target, notification Notification) (*Response, error) {
@@ -157,7 +174,11 @@ func (transport *MigrationTransport) Notify(ctx context.Context, target Target, 
 			return nil, err
 		}
 	}
-	return transport.legacy.Notify(ctx, target, notification)
+	legacy, err := transport.legacyOrError()
+	if err != nil {
+		return nil, err
+	}
+	return legacy.Notify(ctx, target, notification)
 }
 
 func (transport *MigrationTransport) Query(ctx context.Context, target Target, request DataRequest) (*Response, error) {
@@ -173,7 +194,11 @@ func (transport *MigrationTransport) Query(ctx context.Context, target Target, r
 			return response, nil
 		}
 	}
-	return transport.legacy.Query(ctx, target, request)
+	legacy, err := transport.legacyOrError()
+	if err != nil {
+		return nil, err
+	}
+	return legacy.Query(ctx, target, request)
 }
 
 func (transport *MigrationTransport) OpenData(ctx context.Context, target Target, request DataRequest) (*DataResponse, error) {
@@ -186,11 +211,19 @@ func (transport *MigrationTransport) OpenData(ctx context.Context, target Target
 			return response, nil
 		}
 	}
-	return transport.legacy.OpenData(ctx, target, request)
+	legacy, err := transport.legacyOrError()
+	if err != nil {
+		return nil, err
+	}
+	return legacy.OpenData(ctx, target, request)
 }
 
 func (transport *MigrationTransport) Probe(ctx context.Context, target Target) (*Response, error) {
-	return transport.legacy.Probe(ctx, target)
+	legacy, err := transport.legacyOrError()
+	if err != nil {
+		return nil, err
+	}
+	return legacy.Probe(ctx, target)
 }
 
 var _ NodeTransport = (*ControlStreamTransport)(nil)
