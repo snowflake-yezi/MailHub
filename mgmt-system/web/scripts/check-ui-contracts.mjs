@@ -38,6 +38,17 @@ assert.doesNotMatch(externalAccess, /group === '过滤规则' \? 'filter'/, 'ret
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
 assert.match(emails, /emails\.list\.jumpAria/, 'email direct page navigation is missing')
 
+for (const method of ['invitations', 'createInvitation', 'revokeInvitation', 'requests', 'approve', 'reject', 'credentials', 'rotateCredential', 'revokeCredentials']) {
+  assert.match(api, new RegExp(`\\b${method}\\(`), `node enrollment API is missing ${method}`)
+}
+for (const component of ['InvitationDrawer', 'RequestDialog', 'CredentialDialog', 'SecretDialog']) {
+  assert.match(servers, new RegExp(`function ${component}\\b`), `server pool is missing ${component}`)
+}
+assert.match(servers, /nodeEnrollmentAPI\.createInvitation/, 'server pool cannot create enrollment invitations')
+assert.match(servers, /nodeEnrollmentAPI\.approve/, 'server pool cannot approve enrollment requests')
+assert.match(servers, /nodeEnrollmentAPI\.rotateCredential/, 'server pool cannot rotate node credentials')
+assert.doesNotMatch(servers, /setInvitations\([^)]*\.token/, 'one-time enrollment token must not enter invitation list state')
+
 assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', 'quarantines', 'legacy'\]/, 'policy page must expose all six tabs')
 assert.match(filters, /<LegacyFiltersPage \/>/, 'legacy filter panel is missing')
 assert.match(filters, /function RevisionInsights/, 'revision diff and validation panel is missing')

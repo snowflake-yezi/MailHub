@@ -1,6 +1,6 @@
 # 节点注册发现与出站控制通道实施计划
 
-> 状态：NR-P0、NR-P1 已完成，NR-P2 待实施
+> 状态：NR-P0、NR-P1、NR-P2 已完成，下一步 NR-P3
 >
 > 优先级：P0，当前开发主线
 >
@@ -615,6 +615,8 @@ public_host + mail_public_ips
 
 ### NR-P2：注册、审批和每节点凭证
 
+状态：已完成（2026-07-24）。
+
 交付：
 
 - 管理端创建/撤销邀请、查看待审批、批准/拒绝。
@@ -624,6 +626,8 @@ public_host + mail_public_ips
 - 新的 node credential middleware，双鉴权兼容 shared secret。
 
 验收：标准注册、预绑定 UUID、过期、重复使用、拒绝、撤销、重装恢复均有测试。
+
+实现与验证记录见 [NR-P2 注册、审批与每节点凭证验收记录](node-registration-p2-enrollment.md)。
 
 ### NR-P3：NodeTransport 收口
 

@@ -1,10 +1,10 @@
 # Mail-node 节点注册与加入集群指南
 
-> 文档类型：目标运维指南
+> 文档类型：当前运维指南（NR-P2）
 >
 > 适用方案：[Mail-node 注册、身份与出站控制通道设计](design/node-enrollment-control-channel-design.md)
 >
-> 实现状态：已批准，待实施。当前版本仍使用 `api_host + shared_secret + 双向 HTTP`；在注册功能交付前，请继续使用[数据面部署指南](design/deployment-guide.md)。开发顺序见[节点注册发现与出站控制通道实施计划](design/node-registration-control-channel-implementation-plan.md)。本文中的页面和命令暂不可直接用于当前生产环境。
+> 实现状态：NR-P2 注册、审批和每节点 Token 已实现。本文的 `identity`、`enroll`、`enroll resume`、后台邀请/审批和凭证操作可直接使用；ControlStream/DataStream 属于 NR-P4/NR-P6，当前业务数据面仍使用 `api_host + shared_secret + 双向 HTTP`，不得提前关闭 node `8081`。
 
 ---
 
@@ -61,7 +61,6 @@ UUID 只是注册约束，不是密码。即使使用严格模式，也必须校
 ### 3.1 system 侧
 
 - `mgmt-system` 已通过受信任 HTTPS 地址提供服务。
-- 控制通道入口支持 TLS/443；使用 gRPC 时反向代理支持 HTTP/2 和长连接。
 - 管理员拥有节点注册、审批和凭证管理权限。
 - system 时间同步正常。
 - 已配置受信任的 TLS 服务端证书和每节点 Token 哈希存储。
@@ -91,7 +90,7 @@ UUID 只是注册约束，不是密码。即使使用严格模式，也必须校
 进入：
 
 ```text
-管理后台 -> 服务器池 -> 注册节点 -> 创建注册邀请
+管理后台 -> 服务器池 -> 创建邀请
 ```
 
 填写：
@@ -130,7 +129,7 @@ install -m 0600 /dev/null /run/mail-node/enrollment-token
 
 ### 步骤 3：执行注册
 
-目标命令：
+执行：
 
 ```bash
 mail-node enroll \
@@ -148,13 +147,10 @@ mail-node enroll \
 4. 获得只用于本次申请的 request secret，并写入 root-only 临时状态文件。
 5. 输出注册请求 ID、UUID 和 `pending_approval` 状态。
 
-示例目标输出：
+命令会先输出不含 secret 的申请状态，例如：
 
 ```text
-Registration request submitted
-Request ID: enr_01J...
-Node UUID: b542fd12-2c3d-4f02-b8d4-6dd7f61f9140
-Status: pending_approval
+{"request_id":"8f1c...","state":"pending"}
 ```
 
 命令不得在未批准时降级使用全局 shared secret，也不得忽略 TLS 校验。
@@ -181,10 +177,12 @@ Status: pending_approval
 
 ### 步骤 5：node 领取凭证并建连
 
-node 可以等待批准结果，也可以由运维人员执行目标命令：
+`enroll` 会等待批准；如果进程中断，request secret 已保存在身份目录的 root-only 状态文件中，执行：
 
 ```bash
-mail-node enroll resume --request-id enr_01J...
+mail-node enroll resume \
+  --identity-directory /var/lib/mail-node/identity \
+  --credential-file /var/lib/mail-node/identity/credential
 ```
 
 批准后 node 应：
@@ -193,8 +191,7 @@ mail-node enroll resume --request-id enr_01J...
 2. 校验响应绑定的 UUID 与本地 UUID 一致。
 3. 将运行 Token 原子写入 root-only 身份目录。
 4. 删除 request secret 和临时 Enrollment Token。
-5. 通过 TLS 建立带节点 Token 鉴权的出站控制通道。
-6. 上报版本、能力、健康和配置 revision。
+5. 后续 NR-P4 使用该凭证建立出站控制通道；NR-P2 不会自动切换 transport。
 
 注册完成后删除临时文件：
 
@@ -206,25 +203,21 @@ Token 也应在首次成功使用后立即失效。
 
 ### 步骤 6：验证节点
 
-在 node 执行目标命令：
+在 node 验证身份与凭证文件：
 
 ```bash
-mail-node status
-mail-node doctor
+mail-node identity show \
+  --directory /var/lib/mail-node/identity \
+  --credential-file /var/lib/mail-node/identity/credential
 ```
 
-目标状态：
+NR-P2 输出为机器可读 JSON，必须确认：
 
 ```text
-Enrollment: approved
-Credential: valid
-Connection: connected
-Readiness: ready
-Allocation: draining
-Config revision: desired=42 applied=42
+{"credential_present":true,"node_uuid":"b542fd12-..."}
 ```
 
-新节点注册后默认处于 `draining`。完成以下检查后再启用分配：
+新节点注册后默认处于 `allocation=disabled`。NR-P4 建立连接和 lease、完成以下检查后再启用分配：
 
 - Postfix、Dovecot、OpenDKIM 自检通过；
 - Maildir 路径、UID/GID 和磁盘容量正确；
@@ -241,20 +234,17 @@ Config revision: desired=42 applied=42
 
 ### 步骤 1：在 node 初始化并读取身份
 
-目标命令：
+执行：
 
 ```bash
 mail-node identity init
 mail-node identity show
 ```
 
-示例目标输出：
+命令输出 JSON，且不会显示凭证或 request secret：
 
 ```text
-Node UUID: b542fd12-2c3d-4f02-b8d4-6dd7f61f9140
-Identity path: /var/lib/mail-node/identity
-Enrollment: not enrolled
-Credential: absent
+{"credential_present":false,"identity_directory":"/var/lib/mail-node/identity","node_uuid":"b542fd12-..."}
 ```
 
 `identity init` 必须幂等：身份已存在时只显示现有 UUID，不能静默生成新身份。
@@ -410,21 +400,19 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 - [ ] request secret 和节点运行 Token 使用 root-only 文件保存。
 - [ ] 管理员审批时核对 UUID、Request ID 和机器信息。
 - [ ] 每台 node 使用独立凭证。
-- [ ] 新节点默认 draining，通过验收后才参与分配。
+- [ ] 新节点默认 allocation=disabled，通过后续连接与业务验收后才参与分配。
 - [ ] 镜像和快照不包含已有身份目录。
 - [ ] 节点撤销、恢复和 Token 轮换均有审计记录。
 - [ ] 完成新通道迁移后关闭 node 的反向管理端口。
 
 ---
 
-## 11. 实现完成后的验收
+## 11. NR-P2 验收
 
-目标实现应提供不泄露敏感信息的机器可读输出：
+当前实现提供不泄露敏感信息的机器可读输出：
 
 ```bash
-mail-node identity show --output json
-mail-node status --output json
-mail-node doctor --output json
+mail-node identity show
 ```
 
 system 侧应能核对：
@@ -432,11 +420,9 @@ system 侧应能核对：
 ```text
 节点 UUID 相同
 凭证状态 valid
-连接状态 connected
-节点状态 ready
-分配状态符合预期
-desired_revision == applied_revision
-最近命令无未处理失败
+节点独立凭证前缀、版本和状态正确
+撤销单节点凭证不影响其他节点
+新节点保持 allocation=disabled
 ```
 
-注册功能只有在标准审批、严格预绑定、Token 过期、重复 UUID、凭证撤销、断网重试和重装恢复场景全部通过测试后，才能替代当前发现机制。
+NR-P2 已覆盖标准审批、严格预绑定、Token 过期/撤销/重复使用、拒绝、凭证轮换/撤销和重装恢复。当前发现机制与 shared secret 仍作为 legacy 兼容路径保留，只有 NR-P7 完成 canary 和关闭 `8081` 验收后才能移除。

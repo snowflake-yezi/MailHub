@@ -40,6 +40,12 @@ const (
 )
 
 func main() {
+	if handled, err := runNodeCommand(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			log.Fatalf("Node command failed: %v", err)
+		}
+		return
+	}
 	// 加载配置
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {

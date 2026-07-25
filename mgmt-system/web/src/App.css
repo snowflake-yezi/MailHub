@@ -1247,6 +1247,135 @@ textarea {
   min-width: 1080px;
 }
 
+.enrollment-workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.enrollment-workspace .data-section {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.compact-table {
+  min-width: 620px;
+  font-size: 12px;
+}
+
+.compact-table th,
+.compact-table td {
+  padding: 9px 12px;
+}
+
+.enrollment-empty {
+  padding: 18px;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.node-uuid {
+  display: block;
+  max-width: 180px;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
+.node-state-row {
+  display: flex;
+  max-width: 220px;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.node-state-row .tag {
+  min-height: 19px;
+  padding: 1px 5px;
+  font-size: 9px;
+}
+
+.enrollment-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 4px 0 20px;
+  color: var(--color-heading-muted);
+}
+
+.enrollment-toggle strong,
+.enrollment-toggle small {
+  display: block;
+}
+
+.enrollment-toggle small {
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.enrollment-modal-heading {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 36px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.enrollment-modal-heading h3 {
+  margin: 0;
+}
+
+.enrollment-modal-heading code {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.enrollment-request-modal {
+  width: min(760px, 94vw);
+}
+
+.enrollment-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 20px;
+  margin: 0;
+}
+
+.enrollment-details > div {
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.enrollment-details dt {
+  margin-bottom: 4px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.enrollment-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+@media (max-width: 1280px) {
+  .enrollment-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 .entity-cell {
   display: flex;
   align-items: center;
@@ -1944,6 +2073,10 @@ textarea {
 }
 
 @media (max-width: 680px) {
+  .enrollment-details {
+    grid-template-columns: 1fr;
+  }
+
   .page-actions {
     width: 100%;
     justify-content: flex-start;

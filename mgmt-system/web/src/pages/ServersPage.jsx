@@ -6,18 +6,23 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleOff,
+  Clipboard,
   Database,
   Globe2,
+  KeyRound,
   Settings2,
   Pencil,
   Plus,
   Power,
   RotateCcw,
   Server,
+  ShieldCheck,
   Trash2,
+  UserCheck,
+  UserX,
   X,
 } from 'lucide-react'
-import { serverAPI } from '../api'
+import { nodeEnrollmentAPI, serverAPI } from '../api'
 import { configStatusMeta } from '../components/NodeConfigDrawer'
 import { formatDateTime } from '../i18n'
 
@@ -38,6 +43,26 @@ const EMPTY_FORM = {
   capacity: 5000,
   heartbeat_interval: 30,
   status: 'healthy',
+}
+
+const EMPTY_INVITATION_FORM = {
+  name: '',
+  environment: 'production',
+  region: '',
+  labels: '',
+  expected_node_uuid: '',
+  recovery_server_id: 0,
+  expires_in_minutes: 30,
+  max_uses: 1,
+  auto_approve: false,
+}
+
+const REQUEST_STATE_TONE = {
+  pending: 'warning', approved: 'info', rejected: 'danger', completed: 'success', expired: 'danger',
+}
+
+const INVITATION_STATE_TONE = {
+  active: 'success', used: 'info', expired: 'danger', revoked: 'danger',
 }
 
 function Toast({ message, type, onClose }) {
@@ -62,6 +87,105 @@ function ConfirmDialog({ title, message, confirmLabel, danger = true, onConfirm,
             {confirmLabel || t('actions.confirm')}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+function SecretDialog({ title, alert, secret, copyLabel, onCopy, onClose }) {
+  const { t } = useTranslation('common')
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal credential-modal" onClick={event => event.stopPropagation()}>
+        <div className="enrollment-modal-heading">
+          <span className="module-icon"><KeyRound size={18} /></span>
+          <h3>{title}</h3>
+          <button className="icon-button" type="button" title={t('actions.close')} onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="inline-message token-alert">{alert}</div>
+        <div className="token-secret"><code>{secret}</code></div>
+        <div className="modal-footer">
+          <button className="btn btn-outline" type="button" onClick={onClose}>{t('actions.close')}</button>
+          <button className="btn btn-primary" type="button" onClick={onCopy}><Clipboard size={16} /> {copyLabel}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InvitationDrawer({ form, servers, saving, onChange, onSubmit, onClose }) {
+  const { t } = useTranslation('pages')
+  const update = (field, value) => onChange(current => ({ ...current, [field]: value }))
+  return (
+    <div className="drawer-overlay" onClick={onClose}>
+      <aside className="drawer" onClick={event => event.stopPropagation()} aria-label={t('servers.enrollment.invitationAria')}>
+        <div className="drawer-header">
+          <div><div className="drawer-kicker">{t('servers.enrollment.kicker')}</div><h2>{t('servers.enrollment.createTitle')}</h2></div>
+          <button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button>
+        </div>
+        <form className="drawer-body" onSubmit={onSubmit}>
+          <div className="form-group"><label>{t('servers.enrollment.name')}</label><input required value={form.name} onChange={event => update('name', event.target.value)} placeholder={t('servers.enrollment.namePlaceholder')} /></div>
+          <div className="field-grid">
+            <div className="form-group"><label>{t('servers.enrollment.environment')}</label><input value={form.environment} onChange={event => update('environment', event.target.value)} /></div>
+            <div className="form-group"><label>{t('servers.enrollment.region')}</label><input value={form.region} onChange={event => update('region', event.target.value)} placeholder={t('servers.enrollment.regionPlaceholder')} /></div>
+          </div>
+          <div className="form-group">
+            <label>{t('servers.enrollment.recoveryServer')}</label>
+            <select value={form.recovery_server_id} onChange={event => update('recovery_server_id', Number(event.target.value))}>
+              <option value={0}>{t('servers.enrollment.newNode')}</option>
+              {servers.filter(server => server.node_uuid).map(server => <option key={server.id} value={server.id}>{server.name} · {server.node_uuid}</option>)}
+            </select>
+          </div>
+          {!form.recovery_server_id && <div className="form-group"><label>{t('servers.enrollment.expectedUUID')}</label><input value={form.expected_node_uuid} onChange={event => update('expected_node_uuid', event.target.value)} placeholder={t('servers.enrollment.expectedUUIDPlaceholder')} /><div className="form-hint">{t('servers.enrollment.expectedUUIDHint')}</div></div>}
+          <div className="form-group"><label>{t('servers.enrollment.labels')}</label><textarea rows={3} value={form.labels} onChange={event => update('labels', event.target.value)} placeholder={t('servers.enrollment.labelsPlaceholder')} /></div>
+          <div className="field-grid">
+            <div className="form-group"><label>{t('servers.enrollment.expires')}</label><input type="number" min={1} max={1440} value={form.expires_in_minutes} onChange={event => update('expires_in_minutes', Number(event.target.value))} /></div>
+            <div className="form-group"><label>{t('servers.enrollment.maxUses')}</label><input type="number" min={1} max={100} disabled={Boolean(form.recovery_server_id)} value={form.max_uses} onChange={event => update('max_uses', Number(event.target.value))} /></div>
+          </div>
+          <label className="enrollment-toggle"><span><strong>{t('servers.enrollment.autoApprove')}</strong><small>{t('servers.enrollment.autoApproveHint')}</small></span><span className="toggle"><input type="checkbox" checked={form.auto_approve} disabled={Boolean(form.recovery_server_id)} onChange={event => update('auto_approve', event.target.checked)} /><span className="toggle-slider" /></span></label>
+          <div className="drawer-footer"><button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button><button className="btn btn-primary" type="submit" disabled={saving}>{saving && <span className="spinner" />}<ShieldCheck size={16} /> {t('servers.enrollment.create')}</button></div>
+        </form>
+      </aside>
+    </div>
+  )
+}
+
+function RequestDialog({ details, busy, onApprove, onReject, onClose }) {
+  const { t } = useTranslation('pages')
+  const request = details.request
+  const invitation = details.invitation
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal enrollment-request-modal" onClick={event => event.stopPropagation()}>
+        <div className="enrollment-modal-heading"><span className="module-icon"><ShieldCheck size={18} /></span><div><h3>{request.requested_name}</h3><code>{request.id}</code></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button></div>
+        <dl className="enrollment-details">
+          <div><dt>{t('servers.enrollment.nodeUUID')}</dt><dd><code>{request.requested_node_uuid}</code></dd></div>
+          <div><dt>{t('servers.enrollment.machine')}</dt><dd>{request.hostname || '-'} · {request.os || '-'} / {request.arch || '-'}</dd></div>
+          <div><dt>{t('servers.enrollment.fingerprint')}</dt><dd><code>{request.machine_fingerprint || '-'}</code></dd></div>
+          <div><dt>{t('servers.enrollment.agent')}</dt><dd>{request.agent_version || '-'}</dd></div>
+          <div><dt>{t('servers.enrollment.source')}</dt><dd>{request.source_ip || '-'}</dd></div>
+          <div><dt>{t('servers.enrollment.invitation')}</dt><dd>{invitation.name} · <code>{invitation.token_prefix}</code></dd></div>
+          <div><dt>{t('servers.enrollment.createdBy')}</dt><dd>{invitation.created_by || '-'}</dd></div>
+          <div><dt>{t('servers.enrollment.requestedAt')}</dt><dd>{formatDateTime(request.created_at)}</dd></div>
+          {request.review_note && <div><dt>{t('servers.enrollment.reviewNote')}</dt><dd>{request.review_note}</dd></div>}
+        </dl>
+        <div className="modal-footer">
+          {request.state === 'pending' && <><button className="btn btn-danger" type="button" disabled={busy} onClick={onReject}><UserX size={16} /> {t('servers.enrollment.reject')}</button><button className="btn btn-primary" type="button" disabled={busy} onClick={onApprove}><UserCheck size={16} /> {t('servers.enrollment.approve')}</button></>}
+          {request.state !== 'pending' && <button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.close')}</button>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CredentialDialog({ server, credentials, busy, onRotate, onRevoke, onClose }) {
+  const { t } = useTranslation('pages')
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal enrollment-request-modal" onClick={event => event.stopPropagation()}>
+        <div className="enrollment-modal-heading"><span className="module-icon"><KeyRound size={18} /></span><div><h3>{t('servers.credentials.title', { name: server.name })}</h3><code>{server.node_uuid}</code></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button></div>
+        <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.credentials.version')}</th><th>{t('servers.credentials.prefix')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.credentials.lastUsed')}</th></tr></thead><tbody>{credentials.map(item => <tr key={item.id}><td>v{item.version}</td><td><code>{item.credential_prefix}</code></td><td><span className={`tag tag-${item.state === 'active' ? 'success' : item.state === 'rotating' ? 'warning' : 'danger'}`}>{t(`servers.credentials.states.${item.state}`)}</span></td><td>{formatDateTime(item.last_used_at)}</td></tr>)}{credentials.length === 0 && <tr><td colSpan={4} className="muted-text">{t('servers.credentials.empty')}</td></tr>}</tbody></table></div>
+        <div className="modal-footer"><button className="btn btn-danger" type="button" disabled={busy || credentials.every(item => item.state === 'revoked')} onClick={onRevoke}><UserX size={16} /> {t('servers.credentials.revoke')}</button><button className="btn btn-primary" type="button" disabled={busy} onClick={onRotate}><RotateCcw size={16} /> {t('servers.credentials.rotate')}</button></div>
       </div>
     </div>
   )
@@ -246,13 +370,25 @@ export default function ServersPage() {
   const [drawerMode, setDrawerMode] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
+  const [invitations, setInvitations] = useState([])
+  const [enrollmentRequests, setEnrollmentRequests] = useState([])
+  const [invitationForm, setInvitationForm] = useState(EMPTY_INVITATION_FORM)
+  const [invitationDrawer, setInvitationDrawer] = useState(false)
+  const [enrollmentBusy, setEnrollmentBusy] = useState(false)
+  const [secretDialog, setSecretDialog] = useState(null)
+  const [requestDetails, setRequestDetails] = useState(null)
+  const [credentialDialog, setCredentialDialog] = useState(null)
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true)
     else setLoading(true)
     try {
-      const data = await serverAPI.list()
-      setServers(Array.isArray(data) ? data : [])
+      const [serverData, invitationData, requestData] = await Promise.all([
+        serverAPI.list(), nodeEnrollmentAPI.invitations(), nodeEnrollmentAPI.requests(),
+      ])
+      setServers(Array.isArray(serverData) ? serverData : [])
+      setInvitations(Array.isArray(invitationData) ? invitationData : [])
+      setEnrollmentRequests(Array.isArray(requestData) ? requestData : [])
     } catch (e) {
       setToast({ type: 'error', message: t('servers.messages.loadFailed', { message: e.message }) })
     } finally {
@@ -319,6 +455,138 @@ export default function ServersPage() {
     setDrawerMode(null)
     setForm(EMPTY_FORM)
   }
+
+  const createInvitation = async (event) => {
+    event.preventDefault()
+    setEnrollmentBusy(true)
+    const labels = invitationForm.labels.split('\n').reduce((values, line) => {
+      const separator = line.indexOf('=')
+      if (separator > 0) values[line.slice(0, separator).trim()] = line.slice(separator + 1).trim()
+      return values
+    }, {})
+    try {
+      const result = await nodeEnrollmentAPI.createInvitation({
+        ...invitationForm,
+        labels,
+        recovery_server_id: Number(invitationForm.recovery_server_id) || 0,
+        max_uses: invitationForm.recovery_server_id ? 1 : Number(invitationForm.max_uses) || 1,
+        auto_approve: invitationForm.recovery_server_id ? false : invitationForm.auto_approve,
+      })
+      setInvitationDrawer(false)
+      setInvitationForm(EMPTY_INVITATION_FORM)
+      setSecretDialog({
+        title: t('servers.enrollment.tokenTitle'), alert: t('servers.enrollment.tokenAlert'),
+        secret: result.token, copyLabel: t('servers.enrollment.copyToken'),
+      })
+      load(true)
+    } catch (error) {
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setEnrollmentBusy(false)
+    }
+  }
+
+  const copySecret = async () => {
+    try {
+      await navigator.clipboard.writeText(secretDialog.secret)
+      setToast({ type: 'success', message: t('servers.enrollment.copied') })
+    } catch {
+      setToast({ type: 'error', message: t('servers.enrollment.copyFailed') })
+    }
+  }
+
+  const revokeInvitation = (invitation) => setConfirm({
+    title: t('servers.enrollment.revokeTitle'),
+    message: t('servers.enrollment.revokeMessage', { name: invitation.name }),
+    confirmLabel: t('servers.enrollment.revoke'),
+    onConfirm: async () => {
+      try {
+        await nodeEnrollmentAPI.revokeInvitation(invitation.id)
+        setToast({ type: 'success', message: t('servers.enrollment.revoked') })
+        load(true)
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      }
+      setConfirm(null)
+    },
+    onCancel: () => setConfirm(null),
+  })
+
+  const openRequest = async (requestID) => {
+    setEnrollmentBusy(true)
+    try {
+      setRequestDetails(await nodeEnrollmentAPI.request(requestID))
+    } catch (error) {
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setEnrollmentBusy(false)
+    }
+  }
+
+  const reviewRequest = async (action) => {
+    setEnrollmentBusy(true)
+    try {
+      if (action === 'approve') await nodeEnrollmentAPI.approve(requestDetails.request.id)
+      else await nodeEnrollmentAPI.reject(requestDetails.request.id)
+      setToast({ type: 'success', message: t(action === 'approve' ? 'servers.enrollment.approved' : 'servers.enrollment.rejected') })
+      setRequestDetails(null)
+      load(true)
+    } catch (error) {
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setEnrollmentBusy(false)
+    }
+  }
+
+  const openCredentials = async (server) => {
+    setEnrollmentBusy(true)
+    try {
+      const credentials = await nodeEnrollmentAPI.credentials(server.id)
+      setCredentialDialog({ server, credentials: Array.isArray(credentials) ? credentials : [] })
+    } catch (error) {
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setEnrollmentBusy(false)
+    }
+  }
+
+  const rotateCredential = async () => {
+    setEnrollmentBusy(true)
+    try {
+      const result = await nodeEnrollmentAPI.rotateCredential(credentialDialog.server.id)
+      setCredentialDialog(null)
+      setSecretDialog({
+        title: t('servers.credentials.tokenTitle'), alert: t('servers.credentials.tokenAlert'),
+        secret: result.credential, copyLabel: t('servers.credentials.copyToken'),
+      })
+      load(true)
+    } catch (error) {
+      setToast({ type: 'error', message: error.message })
+    } finally {
+      setEnrollmentBusy(false)
+    }
+  }
+
+  const revokeCredentials = () => setConfirm({
+    title: t('servers.credentials.revokeTitle'),
+    message: t('servers.credentials.revokeMessage', { name: credentialDialog.server.name }),
+    confirmLabel: t('servers.credentials.revoke'),
+    onConfirm: async () => {
+      setEnrollmentBusy(true)
+      try {
+        await nodeEnrollmentAPI.revokeCredentials(credentialDialog.server.id)
+        setCredentialDialog(null)
+        setToast({ type: 'success', message: t('servers.credentials.revoked') })
+        load(true)
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      } finally {
+        setEnrollmentBusy(false)
+        setConfirm(null)
+      }
+    },
+    onCancel: () => setConfirm(null),
+  })
 
   const handleSave = async (e) => {
     e.preventDefault()
@@ -413,6 +681,9 @@ export default function ServersPage() {
             {refreshing ? <span className="spinner" /> : <RotateCcw size={16} />}
             {t('common:actions.refresh')}
           </button>
+          <button className="btn btn-primary" type="button" onClick={() => setInvitationDrawer(true)}>
+            <ShieldCheck size={16} /> {t('servers.enrollment.create')}
+          </button>
           <button className="btn btn-primary" type="button" onClick={openCreate}>
             <Plus size={16} /> {t('servers.register')}
           </button>
@@ -425,6 +696,36 @@ export default function ServersPage() {
         <SummaryTile icon={AlertTriangle} label={t('servers.summary.degraded')} value={summary.degraded} tone="warning" />
         <SummaryTile icon={Activity} label={t('servers.summary.draining')} value={summary.draining} tone="info" />
         <SummaryTile icon={CircleOff} label={t('servers.summary.down')} value={summary.down} tone="danger" />
+      </div>
+
+      <div className="enrollment-workspace">
+        <section className="section data-section">
+          <div className="panel-header"><div><h3>{t('servers.enrollment.invitationsTitle')}</h3><div className="panel-caption">{t('servers.enrollment.invitationsCaption')}</div></div><span className="tag tag-info">{invitations.length}</span></div>
+          <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.enrollment.invitation')}</th><th>{t('servers.enrollment.scope')}</th><th>{t('servers.enrollment.usage')}</th><th>{t('servers.enrollment.expiresAt')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.list.operations')}</th></tr></thead><tbody>
+            {invitations.map(invitation => <tr key={invitation.id}>
+              <td><strong>{invitation.name}</strong><div><code>{invitation.token_prefix}</code></div></td>
+              <td>{invitation.purpose === 'recovery' ? t('servers.enrollment.recovery') : invitation.expected_node_uuid ? t('servers.enrollment.prebound') : t('servers.enrollment.standard')}<div className="muted-text">{[invitation.environment, invitation.region].filter(Boolean).join(' · ') || '-'}</div></td>
+              <td>{invitation.used_count} / {invitation.max_uses}</td><td>{formatDateTime(invitation.expires_at)}</td>
+              <td><span className={`tag tag-${INVITATION_STATE_TONE[invitation.state] || 'info'}`}>{t(`servers.enrollment.invitationState.${invitation.state}`)}</span></td>
+              <td><button className="icon-button compact danger" type="button" disabled={!['active', 'used'].includes(invitation.state)} title={t('servers.enrollment.revoke')} onClick={() => revokeInvitation(invitation)}><UserX size={15} /></button></td>
+            </tr>)}
+            {invitations.length === 0 && <tr><td colSpan={6}><div className="enrollment-empty">{t('servers.enrollment.noInvitations')}</div></td></tr>}
+          </tbody></table></div>
+        </section>
+
+        <section className="section data-section">
+          <div className="panel-header"><div><h3>{t('servers.enrollment.requestsTitle')}</h3><div className="panel-caption">{t('servers.enrollment.requestsCaption')}</div></div><span className="tag tag-warning">{enrollmentRequests.filter(item => item.request.state === 'pending').length}</span></div>
+          <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.enrollment.node')}</th><th>{t('servers.enrollment.machine')}</th><th>{t('servers.enrollment.requestedAt')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.list.operations')}</th></tr></thead><tbody>
+            {enrollmentRequests.map(item => <tr key={item.request.id}>
+              <td><strong>{item.request.requested_name}</strong><div><code>{item.request.requested_node_uuid}</code></div></td>
+              <td>{item.request.hostname || '-'}<div className="muted-text">{item.request.os || '-'} / {item.request.arch || '-'}</div></td>
+              <td>{formatDateTime(item.request.created_at)}</td>
+              <td><span className={`tag tag-${REQUEST_STATE_TONE[item.request.state] || 'info'}`}>{t(`servers.enrollment.requestState.${item.request.state}`)}</span></td>
+              <td><button className="icon-button compact" type="button" title={t('servers.enrollment.review')} onClick={() => openRequest(item.request.id)}><ShieldCheck size={15} /></button></td>
+            </tr>)}
+            {enrollmentRequests.length === 0 && <tr><td colSpan={5}><div className="enrollment-empty">{t('servers.enrollment.noRequests')}</div></td></tr>}
+          </tbody></table></div>
+        </section>
       </div>
 
       <section className="section data-section">
@@ -468,12 +769,20 @@ export default function ServersPage() {
                         <div>
                           <strong>{server.name || `server-${server.id}`}</strong>
                           <span>#{server.id}</span>
+                          {server.node_uuid && <code className="node-uuid">{server.node_uuid}</code>}
+                          {server.node_uuid && <div className="node-state-row">
+                            <span className={`tag tag-${server.enrollment_state === 'approved' ? 'success' : 'danger'}`}>{t(`servers.nodeState.enrollment.${server.enrollment_state}`)}</span>
+                            <span className={`tag tag-${server.connection_state === 'connected' ? 'success' : 'info'}`}>{t(`servers.nodeState.connection.${server.connection_state}`)}</span>
+                            <span className={`tag tag-${server.readiness_state === 'ready' ? 'success' : 'warning'}`}>{t(`servers.nodeState.readiness.${server.readiness_state}`)}</span>
+                            <span className={`tag tag-${server.allocation_state === 'active' ? 'success' : 'warning'}`}>{t(`servers.nodeState.allocation.${server.allocation_state}`)}</span>
+                          </div>}
                         </div>
                       </div>
                     </td>
                     <td>
                       <code>{server.api_host || '-'}</code>
                       {server.public_host && <div className="muted-text">{server.public_host}</div>}
+                      {server.transport_mode && <div className="muted-text">{server.transport_mode}{server.agent_version ? ` · ${server.agent_version}` : ''}</div>}
                     </td>
                     <td>
                       <div className="tag-list">
@@ -516,6 +825,7 @@ export default function ServersPage() {
                       <div className="row-actions">
                         <button className="icon-button compact" type="button" title={t('servers.list.domainPool')} onClick={() => navigate(`/servers/${server.id}/domains`)}><Globe2 size={15} /></button>
                         <button className="icon-button compact" type="button" title={t('servers.list.config')} onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
+                        {server.node_uuid && <button className="icon-button compact" type="button" title={t('servers.credentials.manage')} onClick={() => openCredentials(server)}><KeyRound size={15} /></button>}
                         <button className="icon-button compact" type="button" title={t('common:actions.edit')} onClick={() => openEdit(server)}>
                           <Pencil size={15} />
                         </button>
@@ -564,6 +874,10 @@ export default function ServersPage() {
           onDelete={() => askDelete(form)}
         />
       )}
+      {invitationDrawer && <InvitationDrawer form={invitationForm} servers={servers} saving={enrollmentBusy} onChange={setInvitationForm} onSubmit={createInvitation} onClose={() => setInvitationDrawer(false)} />}
+      {requestDetails && <RequestDialog details={requestDetails} busy={enrollmentBusy} onApprove={() => reviewRequest('approve')} onReject={() => reviewRequest('reject')} onClose={() => setRequestDetails(null)} />}
+      {credentialDialog && <CredentialDialog {...credentialDialog} busy={enrollmentBusy} onRotate={rotateCredential} onRevoke={revokeCredentials} onClose={() => setCredentialDialog(null)} />}
+      {secretDialog && <SecretDialog {...secretDialog} onCopy={copySecret} onClose={() => setSecretDialog(null)} />}
       {confirm && <ConfirmDialog {...confirm} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
     </div>

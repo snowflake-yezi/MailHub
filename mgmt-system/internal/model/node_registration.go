@@ -24,6 +24,25 @@ const (
 	TransportLegacyHTTP    = "legacy_http"
 	TransportDual          = "dual"
 	TransportControlStream = "control_stream"
+
+	EnrollmentTokenActive  = "active"
+	EnrollmentTokenUsed    = "used"
+	EnrollmentTokenExpired = "expired"
+	EnrollmentTokenRevoked = "revoked"
+
+	EnrollmentPurposeNew      = "new"
+	EnrollmentPurposeRecovery = "recovery"
+
+	EnrollmentRequestPending   = "pending"
+	EnrollmentRequestApproved  = "approved"
+	EnrollmentRequestRejected  = "rejected"
+	EnrollmentRequestCompleted = "completed"
+	EnrollmentRequestExpired   = "expired"
+
+	NodeCredentialActive   = "active"
+	NodeCredentialRotating = "rotating"
+	NodeCredentialRevoked  = "revoked"
+	NodeCredentialExpired  = "expired"
 )
 
 // ApplyLegacyNodeDefaults maps the former combined status into the new state
@@ -111,6 +130,8 @@ type NodeEnrollmentToken struct {
 	TokenPrefix      string            `gorm:"size:32;not null;index" json:"token_prefix"`
 	TokenHash        string            `gorm:"type:char(64);not null;uniqueIndex" json:"-"`
 	ExpectedNodeUUID *string           `gorm:"type:char(36);index" json:"expected_node_uuid,omitempty"`
+	Purpose          string            `gorm:"size:24;not null;default:new;index" json:"purpose"`
+	RecoveryServerID *uint64           `gorm:"index" json:"recovery_server_id,omitempty"`
 	Name             string            `gorm:"size:128;not null" json:"name"`
 	Environment      string            `gorm:"size:64;index" json:"environment,omitempty"`
 	Region           string            `gorm:"size:64;index" json:"region,omitempty"`
@@ -119,10 +140,24 @@ type NodeEnrollmentToken struct {
 	ExpiresAt        time.Time         `gorm:"not null;index" json:"expires_at"`
 	MaxUses          int               `gorm:"not null;default:1" json:"max_uses"`
 	UsedCount        int               `gorm:"not null;default:0" json:"used_count"`
+	AutoApprove      bool              `gorm:"not null;default:false" json:"auto_approve"`
 	CreatedBy        string            `gorm:"size:128;not null" json:"created_by"`
 	CreatedAt        time.Time         `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time         `gorm:"autoUpdateTime" json:"updated_at"`
 	RevokedAt        *time.Time        `json:"revoked_at,omitempty"`
+}
+
+// NodeRegistrationAudit records administrator and automatic enrollment state
+// changes without ever retaining enrollment, request, or runtime secrets.
+type NodeRegistrationAudit struct {
+	ID         uint64    `gorm:"primaryKey;autoIncrement" json:"id"`
+	Action     string    `gorm:"size:64;not null;index" json:"action"`
+	EntityType string    `gorm:"size:32;not null;index" json:"entity_type"`
+	EntityID   string    `gorm:"size:64;not null;index" json:"entity_id"`
+	Actor      string    `gorm:"size:128;not null;index" json:"actor"`
+	SourceIP   string    `gorm:"size:64" json:"source_ip,omitempty"`
+	Details    string    `gorm:"type:text;not null" json:"details"`
+	CreatedAt  time.Time `gorm:"autoCreateTime;index" json:"created_at"`
 }
 
 // NodeEnrollmentRequest is a pending or reviewed node identity claim.
@@ -189,3 +224,4 @@ func (NodeEnrollmentToken) TableName() string   { return "node_enrollment_tokens
 func (NodeEnrollmentRequest) TableName() string { return "node_enrollment_requests" }
 func (NodeCredential) TableName() string        { return "node_credentials" }
 func (NodeCommand) TableName() string           { return "node_commands" }
+func (NodeRegistrationAudit) TableName() string { return "node_registration_audits" }

@@ -1,9 +1,13 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +15,12 @@ import (
 	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
+)
+
+const (
+	NodeServerIDContextKey = "node_server_id"
+	NodeUUIDContextKey     = "node_uuid"
+	NodeAuthTypeContextKey = "node_auth_type"
 )
 
 type APIPrincipal struct {
@@ -142,4 +152,112 @@ func InternalAuthRequired(sharedSecret string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+type NodeCredentialAuthenticator interface {
+	AuthenticateCredential(rawCredential, nodeUUID string, usedAt time.Time) (*service.NodePrincipal, error)
+}
+
+// InternalNodeAuthRequired preserves the legacy shared-secret path while
+// allowing enrolled nodes to authenticate with an independently revocable
+// credential. Credential-authenticated requests are bound to their server ID
+// anywhere it appears in the URL, query, or top-level JSON body.
+func InternalNodeAuthRequired(sharedSecret string, authenticator NodeCredentialAuthenticator) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		legacyToken := c.GetHeader("X-Internal-Token")
+		if sharedSecret != "" && legacyToken != "" && subtle.ConstantTimeCompare([]byte(legacyToken), []byte(sharedSecret)) == 1 {
+			c.Set(NodeAuthTypeContextKey, "shared_secret")
+			c.Next()
+			return
+		}
+
+		header := strings.TrimSpace(c.GetHeader("Authorization"))
+		const scheme = "Node "
+		if authenticator == nil || !strings.HasPrefix(header, scheme) {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1003, "message": "valid shared secret or node credential required"})
+			return
+		}
+		rawCredential := strings.TrimSpace(strings.TrimPrefix(header, scheme))
+		nodeUUID := strings.TrimSpace(c.GetHeader("X-MailHub-Node-UUID"))
+		if rawCredential == "" || nodeUUID == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1003, "message": "node credential and X-MailHub-Node-UUID are required"})
+			return
+		}
+		principal, err := authenticator.AuthenticateCredential(rawCredential, nodeUUID, time.Now())
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1004, "message": "invalid or revoked node credential"})
+			return
+		}
+		if err := enforceNodeServerBinding(c, principal.ServerID); err != nil {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 1005, "message": err.Error()})
+			return
+		}
+		c.Set(NodeServerIDContextKey, principal.ServerID)
+		c.Set(NodeUUIDContextKey, principal.NodeUUID)
+		c.Set(NodeAuthTypeContextKey, "node_credential")
+		c.Next()
+	}
+}
+
+func enforceNodeServerBinding(c *gin.Context, authenticatedServerID uint64) error {
+	for _, raw := range []string{c.Param("id"), c.Query("server_id"), c.Query("node_id")} {
+		if raw == "" {
+			continue
+		}
+		if err := requireMatchingServerID(raw, authenticatedServerID); err != nil {
+			return err
+		}
+	}
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if c.Request.Body == nil || !strings.Contains(contentType, "application/json") {
+		return nil
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return fmt.Errorf("cannot validate node request ownership")
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil // The handler remains responsible for malformed JSON.
+	}
+	return enforceJSONNodeBinding(payload, authenticatedServerID)
+}
+
+func enforceJSONNodeBinding(value any, authenticatedServerID uint64) error {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if key == "server_id" || key == "node_id" {
+				if err := requireMatchingServerID(fmt.Sprint(child), authenticatedServerID); err != nil {
+					return err
+				}
+			}
+			if err := enforceJSONNodeBinding(child, authenticatedServerID); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if err := enforceJSONNodeBinding(child, authenticatedServerID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func requireMatchingServerID(raw string, authenticatedServerID uint64) error {
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, ".0"))
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil || value == 0 {
+		return fmt.Errorf("invalid server ID in node request")
+	}
+	if value != authenticatedServerID {
+		return fmt.Errorf("node credential cannot access server %d", value)
+	}
+	return nil
 }

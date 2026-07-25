@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestLoadOrCreateIsIdempotentAndPersistsUUIDv4(t *testing.T) {
@@ -26,6 +27,48 @@ func TestLoadOrCreateIsIdempotentAndPersistsUUIDv4(t *testing.T) {
 	}
 	if first.MachineFingerprint != fingerprint([]byte("machine-a")) {
 		t.Fatalf("fingerprint = %q", first.MachineFingerprint)
+	}
+}
+
+func TestEnrollmentStateAndCredentialAreProtectedAndRecoverable(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "identity")
+	store := New(directory)
+	store.MachineID = func() ([]byte, error) { return []byte("machine-a"), nil }
+	if _, err := store.LoadOrCreate(); err != nil {
+		t.Fatal(err)
+	}
+	pending := PendingEnrollment{
+		RequestID: "request-1", RequestSecret: "request-secret", ManagementURL: "https://mgmt.example",
+		NodeName: "node-a", CreatedAt: time.Now().UTC(),
+	}
+	if err := store.SavePendingEnrollment(pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SavePendingEnrollment(PendingEnrollment{RequestID: "request-2", RequestSecret: "other", ManagementURL: "https://mgmt.example", NodeName: "node-b"}); err == nil {
+		t.Fatal("a second pending enrollment replaced the resumable request")
+	}
+	loadedPending, err := store.LoadPendingEnrollment()
+	if err != nil || loadedPending.RequestSecret != pending.RequestSecret {
+		t.Fatalf("pending enrollment = %+v, error = %v", loadedPending, err)
+	}
+	if err := store.SaveCredential("first-credential"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveCredential("rotated-credential"); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := store.LoadCredential()
+	if err != nil || credential != "rotated-credential" {
+		t.Fatalf("credential = %q, error = %v", credential, err)
+	}
+	if err := store.ClearPendingEnrollment(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.LoadPendingEnrollment(); !errors.Is(err, ErrIdentityNotFound) {
+		t.Fatalf("cleared pending enrollment error = %v", err)
+	}
+	if err := store.SaveCredentialFile(filepath.Join(filepath.Dir(directory), "outside"), "credential"); err == nil {
+		t.Fatal("credential outside identity directory was accepted")
 	}
 }
 

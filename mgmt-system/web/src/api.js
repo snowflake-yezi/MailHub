@@ -57,6 +57,20 @@ export const serverAPI = {
   resetConfig(id, key) { return request(`/servers/${id}/configs/${encodeURIComponent(key)}`, { method: 'DELETE' }); },
 };
 
+// ─── Node enrollment and per-node credentials ──────────
+export const nodeEnrollmentAPI = {
+  invitations() { return get('/node-enrollments'); },
+  createInvitation(data) { return request('/node-enrollments', { method: 'POST', body: JSON.stringify(data) }); },
+  revokeInvitation(id) { return request(`/node-enrollments/${id}/revoke`, { method: 'POST' }); },
+  requests(state = '') { return get('/node-enrollment-requests', { state }); },
+  request(id) { return get(`/node-enrollment-requests/${id}`); },
+  approve(id, note = '') { return request(`/node-enrollment-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ note }) }); },
+  reject(id, note = '') { return request(`/node-enrollment-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) }); },
+  credentials(serverId) { return get(`/servers/${serverId}/credentials`); },
+  rotateCredential(serverId) { return request(`/servers/${serverId}/credentials/rotate`, { method: 'POST' }); },
+  revokeCredentials(serverId) { return request(`/servers/${serverId}/credentials/revoke`, { method: 'POST' }); },
+};
+
 // ─── Integrated Mailboxes (转发目标池) ───────────────────
 export const integratedMailboxAPI = {
   list() { return get('/integrated-mailboxes'); },

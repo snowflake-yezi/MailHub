@@ -4,18 +4,21 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
 	nodeIDFilename      = "node-id"
 	fingerprintFilename = "machine-fingerprint"
 	credentialFilename  = "credential"
+	pendingFilename     = "enrollment-request.json"
 )
 
 var (
@@ -30,6 +33,16 @@ type Record struct {
 	NodeUUID           string
 	Directory          string
 	MachineFingerprint string
+}
+
+type PendingEnrollment struct {
+	RequestID      string    `json:"request_id"`
+	RequestSecret  string    `json:"request_secret"`
+	ManagementURL  string    `json:"management_url"`
+	CAFile         string    `json:"ca_file,omitempty"`
+	NodeName       string    `json:"node_name"`
+	CredentialFile string    `json:"credential_file,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // Store owns the root-only node identity directory. MachineID is injectable
@@ -99,6 +112,130 @@ func (store *Store) Load() (Record, error) {
 	return Record{NodeUUID: nodeUUID, Directory: store.Directory, MachineFingerprint: fingerprint}, nil
 }
 
+func (store *Store) SavePendingEnrollment(pending PendingEnrollment) error {
+	if err := store.validateDirectory(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(pending.RequestID) == "" || strings.TrimSpace(pending.RequestSecret) == "" ||
+		strings.TrimSpace(pending.ManagementURL) == "" || strings.TrimSpace(pending.NodeName) == "" {
+		return fmt.Errorf("%w: incomplete pending enrollment", ErrCorruptIdentity)
+	}
+	if pending.CreatedAt.IsZero() {
+		pending.CreatedAt = time.Now().UTC()
+	}
+	payload, err := json.Marshal(pending)
+	if err != nil {
+		return fmt.Errorf("encode pending enrollment: %w", err)
+	}
+	payload = append(payload, '\n')
+	created, err := writeProtectedFileIfAbsent(store.pendingPath(), payload)
+	if err != nil {
+		return fmt.Errorf("persist pending enrollment: %w", err)
+	}
+	if !created {
+		return fmt.Errorf("pending enrollment already exists; resume or clear it before claiming another invitation")
+	}
+	return nil
+}
+
+func (store *Store) LoadPendingEnrollment() (PendingEnrollment, error) {
+	if err := store.validateDirectory(); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return PendingEnrollment{}, ErrIdentityNotFound
+		}
+		return PendingEnrollment{}, err
+	}
+	payload, err := readProtectedFile(store.pendingPath())
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return PendingEnrollment{}, ErrIdentityNotFound
+		}
+		return PendingEnrollment{}, err
+	}
+	var pending PendingEnrollment
+	if err := json.Unmarshal(payload, &pending); err != nil || strings.TrimSpace(pending.RequestID) == "" ||
+		strings.TrimSpace(pending.RequestSecret) == "" || strings.TrimSpace(pending.ManagementURL) == "" ||
+		strings.TrimSpace(pending.NodeName) == "" {
+		return PendingEnrollment{}, fmt.Errorf("%w: invalid pending enrollment", ErrCorruptIdentity)
+	}
+	return pending, nil
+}
+
+func (store *Store) ClearPendingEnrollment() error {
+	err := os.Remove(store.pendingPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("remove pending enrollment: %w", err)
+	}
+	return syncIdentityDirectory(store.Directory)
+}
+
+func (store *Store) SaveCredential(credential string) error {
+	return store.SaveCredentialFile(store.credentialPath(), credential)
+}
+
+func (store *Store) SaveCredentialFile(path, credential string) error {
+	if err := store.ValidateCredentialFile(path); err != nil {
+		return err
+	}
+	path = filepath.Clean(strings.TrimSpace(path))
+	credential = strings.TrimSpace(credential)
+	if credential == "" || strings.ContainsAny(credential, "\r\n\x00") {
+		return fmt.Errorf("%w: invalid node credential", ErrCorruptIdentity)
+	}
+	if err := writeProtectedFileAtomic(path, []byte(credential+"\n")); err != nil {
+		return fmt.Errorf("persist node credential: %w", err)
+	}
+	return nil
+}
+
+func (store *Store) LoadCredential() (string, error) {
+	return store.LoadCredentialFile(store.credentialPath())
+}
+
+func (store *Store) LoadCredentialFile(path string) (string, error) {
+	if err := store.validateDirectory(); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", ErrIdentityNotFound
+		}
+		return "", err
+	}
+	path, err := store.protectedPath(path)
+	if err != nil {
+		return "", err
+	}
+	payload, err := readProtectedFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", ErrIdentityNotFound
+		}
+		return "", err
+	}
+	credential := strings.TrimSpace(string(payload))
+	if credential == "" || strings.ContainsAny(credential, "\r\n\x00") {
+		return "", fmt.Errorf("%w: invalid node credential", ErrCorruptIdentity)
+	}
+	return credential, nil
+}
+
+func (store *Store) ValidateCredentialFile(path string) error {
+	if err := store.validateDirectory(); err != nil {
+		return err
+	}
+	_, err := store.protectedPath(path)
+	return err
+}
+
+func (store *Store) protectedPath(path string) (string, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "." || filepath.Clean(filepath.Dir(path)) != filepath.Clean(store.Directory) {
+		return "", fmt.Errorf("credential file must be directly inside the identity directory")
+	}
+	return path, nil
+}
+
 func (store *Store) ensureDirectory() error {
 	if strings.TrimSpace(store.Directory) == "" {
 		return fmt.Errorf("identity directory is required")
@@ -138,7 +275,7 @@ func validateIdentityDirectory(info fs.FileInfo) error {
 }
 
 func (store *Store) rejectOrphanedIdentityFiles() error {
-	for _, name := range []string{credentialFilename, fingerprintFilename} {
+	for _, name := range []string{credentialFilename, fingerprintFilename, pendingFilename} {
 		_, err := os.Lstat(filepath.Join(store.Directory, name))
 		if err == nil {
 			return fmt.Errorf("%w: %s exists without %s", ErrCorruptIdentity, name, nodeIDFilename)
@@ -194,6 +331,10 @@ func (store *Store) nodeIDPath() string { return filepath.Join(store.Directory, 
 func (store *Store) fingerprintPath() string {
 	return filepath.Join(store.Directory, fingerprintFilename)
 }
+func (store *Store) credentialPath() string {
+	return filepath.Join(store.Directory, credentialFilename)
+}
+func (store *Store) pendingPath() string { return filepath.Join(store.Directory, pendingFilename) }
 
 func readProtectedFile(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
@@ -257,6 +398,58 @@ func writeProtectedFileIfAbsent(path string, data []byte) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+func writeProtectedFileAtomic(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	tempPath := filepath.Join(directory, "."+filepath.Base(path)+".tmp-"+hex.EncodeToString(suffix))
+	temp, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	removeTemp := true
+	defer func() {
+		if removeTemp {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		// Windows cannot atomically replace an existing file. Production Unix
+		// uses the rename path above; this fallback keeps local rotation tests
+		// functional after first validating the existing target.
+		if _, readErr := readProtectedFile(path); readErr != nil {
+			return err
+		}
+		backupPath := path + ".old-" + hex.EncodeToString(suffix)
+		if backupErr := os.Rename(path, backupPath); backupErr != nil {
+			return err
+		}
+		if renameErr := os.Rename(tempPath, path); renameErr != nil {
+			_ = os.Rename(backupPath, path)
+			return renameErr
+		}
+		_ = os.Remove(backupPath)
+	}
+	removeTemp = false
+	if err := os.Chmod(path, 0o600); err != nil {
+		return err
+	}
+	return syncIdentityDirectory(directory)
 }
 
 func newUUIDv4() (string, error) {

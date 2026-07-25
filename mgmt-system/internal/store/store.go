@@ -134,6 +134,7 @@ func nodeRegistrationMigrationModels() []any {
 		&model.NodeEnrollmentRequest{},
 		&model.NodeCredential{},
 		&model.NodeCommand{},
+		&model.NodeRegistrationAudit{},
 	}
 }
 

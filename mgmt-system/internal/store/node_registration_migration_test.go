@@ -123,7 +123,7 @@ func TestNodeRegistrationSchemaMigratesLegacyServersWithoutChangingAddresses(t *
 	}
 
 	for _, table := range []any{
-		&model.NodeEnrollmentToken{}, &model.NodeEnrollmentRequest{}, &model.NodeCredential{}, &model.NodeCommand{},
+		&model.NodeEnrollmentToken{}, &model.NodeEnrollmentRequest{}, &model.NodeCredential{}, &model.NodeCommand{}, &model.NodeRegistrationAudit{},
 	} {
 		if !db.Migrator().HasTable(table) {
 			t.Errorf("missing table for %T", table)

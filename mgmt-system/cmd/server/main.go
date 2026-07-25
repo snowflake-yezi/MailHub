@@ -98,6 +98,8 @@ func main() {
 	configH := handler.NewConfigHandler(db, cfg.Auth.SharedSecret)
 	integratedH := handler.NewIntegratedMailboxHandler(db, cfg.Auth.SharedSecret)
 	externalAccessH := handler.NewExternalAccessHandler(db)
+	nodeEnrollmentService := service.NewNodeEnrollmentService(db)
+	nodeEnrollmentH := handler.NewNodeEnrollmentHandler(nodeEnrollmentService)
 
 	// Session manager
 	sessionDuration := time.Duration(db.GetConfigInt("session.duration_hours", 24)) * time.Hour
@@ -154,6 +156,7 @@ func main() {
 	emailH.RegisterAdminRoutes(apiAdmin)
 	integratedH.RegisterAdminRoutes(apiAdmin)
 	externalAccessH.RegisterAdminRoutes(apiAdmin)
+	nodeEnrollmentH.RegisterAdminRoutes(apiAdmin)
 	// Dashboard stats API
 	apiAdmin.GET("/dashboard", adminH.DashboardAPI)
 	// Domains list (for dropdown filters)
@@ -170,6 +173,10 @@ func main() {
 	apiAdmin.DELETE("/servers/:id/configs/:key", configH.DeleteServerConfig)
 	apiAdmin.GET("/account", accountH.Get)
 	apiAdmin.PUT("/account", accountH.Update)
+
+	// ---- Node enrollment bootstrap (invitation/request-secret auth) ----
+	nodeEnrollmentBootstrap := r.Group("/api/v1/node-enrollments")
+	nodeEnrollmentH.RegisterBootstrapRoutes(nodeEnrollmentBootstrap)
 
 	// ---- External API v1 (Bearer Token auth + Scope) ----
 	api := r.Group("/api/v1")
@@ -189,7 +196,7 @@ func main() {
 
 	// ---- Internal API (mail-node calls, Shared-Secret auth) ----
 	internal := r.Group("/api/v1/internal")
-	internal.Use(middleware.InternalAuthRequired(cfg.Auth.SharedSecret))
+	internal.Use(middleware.InternalNodeAuthRequired(cfg.Auth.SharedSecret, nodeEnrollmentService))
 	internal.POST("/servers/heartbeat", serverH.Heartbeat)
 	internal.POST("/servers/discover", serverH.DiscoverServer)
 	filterH.RegisterInternalRoutes(internal)

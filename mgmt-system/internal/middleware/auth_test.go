@@ -4,13 +4,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/ticket/email-mgmt-system/internal/model"
+	"github.com/ticket/email-mgmt-system/internal/service"
 	"github.com/ticket/email-mgmt-system/internal/store"
 )
+
+type stubNodeAuthenticator struct{}
+
+func (stubNodeAuthenticator) AuthenticateCredential(credential, nodeUUID string, _ time.Time) (*service.NodePrincipal, error) {
+	if credential != "node-secret" || nodeUUID != "6ba7b810-9dad-41d1-80b4-00c04fd430c8" {
+		return nil, service.ErrNodeCredentialInvalid
+	}
+	return &service.NodePrincipal{ServerID: 42, NodeUUID: nodeUUID, CredentialID: 7, CredentialVer: 1}, nil
+}
 
 type stubAPIAuthStore struct {
 	client     *store.AuthenticatedAPIClient
@@ -111,6 +122,65 @@ func TestRequirePermission(t *testing.T) {
 			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/protected", nil))
 			if response.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d, body = %s", response.Code, tt.wantStatus, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestInternalNodeAuthSupportsLegacyAndBoundNodeCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/internal/servers/:id/report", InternalNodeAuthRequired("legacy-secret", stubNodeAuthenticator{}), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"auth": c.GetString(NodeAuthTypeContextKey), "server_id": c.GetUint64(NodeServerIDContextKey)})
+	})
+
+	legacy := httptest.NewRequest(http.MethodPost, "/internal/servers/99/report", strings.NewReader(`{"server_id":99}`))
+	legacy.Header.Set("Content-Type", "application/json")
+	legacy.Header.Set("X-Internal-Token", "legacy-secret")
+	legacyResponse := httptest.NewRecorder()
+	router.ServeHTTP(legacyResponse, legacy)
+	if legacyResponse.Code != http.StatusOK || !strings.Contains(legacyResponse.Body.String(), "shared_secret") {
+		t.Fatalf("legacy status=%d body=%s", legacyResponse.Code, legacyResponse.Body.String())
+	}
+
+	node := httptest.NewRequest(http.MethodPost, "/internal/servers/42/report?node_id=42", strings.NewReader(`{"server_id":42}`))
+	node.Header.Set("Content-Type", "application/json")
+	node.Header.Set("Authorization", "Node node-secret")
+	node.Header.Set("X-MailHub-Node-UUID", "6ba7b810-9dad-41d1-80b4-00c04fd430c8")
+	nodeResponse := httptest.NewRecorder()
+	router.ServeHTTP(nodeResponse, node)
+	if nodeResponse.Code != http.StatusOK || !strings.Contains(nodeResponse.Body.String(), "node_credential") || !strings.Contains(nodeResponse.Body.String(), "42") {
+		t.Fatalf("node status=%d body=%s", nodeResponse.Code, nodeResponse.Body.String())
+	}
+}
+
+func TestInternalNodeAuthRejectsCrossNodeIdentifiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/internal/servers/:id/report", InternalNodeAuthRequired("legacy-secret", stubNodeAuthenticator{}), func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	tests := []struct {
+		name string
+		url  string
+		body string
+	}{
+		{name: "path", url: "/internal/servers/41/report", body: `{}`},
+		{name: "query", url: "/internal/servers/42/report?server_id=41", body: `{}`},
+		{name: "body", url: "/internal/servers/42/report", body: `{"node_id":41}`},
+		{name: "nested body", url: "/internal/servers/42/report", body: `{"reports":[{"server_id":41}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, tt.url, strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Node node-secret")
+			request.Header.Set("X-MailHub-Node-UUID", "6ba7b810-9dad-41d1-80b4-00c04fd430c8")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
 	}
