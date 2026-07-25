@@ -164,7 +164,7 @@ erDiagram
 | `node_enrollment_tokens` | `token_hash` UNIQUE、`expected_node_uuid`、`state`、`expires_at`、`max_uses/used_count` | 完整邀请 Token 不落库。 |
 | `node_enrollment_requests` | 字符串 `id` PK、`request_secret_hash` UNIQUE、`requested_node_uuid`、`machine_fingerprint`、`state`、`server_id` | 完整 request secret 不落库；批准前不参与节点分配。 |
 | `node_credentials` | `credential_hash` UNIQUE、`server_id+version` UNIQUE、`state`、`expires_at/revoked_at` | 完整节点运行 Token 不落库。 |
-| `node_commands` | `command_id` PK、`server_id+sequence` UNIQUE、`server_id+idempotency_key` UNIQUE、`payload_json/result_json` LONGTEXT、`state/deadline_at` | 命令 payload 不写日志；访问与保留策略由后续命令服务实施。 |
+| `node_commands` | `command_id` PK、`server_id+sequence` UNIQUE、`server_id+idempotency_key` UNIQUE、`payload_json/result_json` LONGTEXT、`state/deadline_at` | P5 持久命令事实源；payload 不写日志，状态使用条件更新，最终结果用于同步等待和重启重投。 |
 
 ### 3.7 `mailbox_accounts`
 

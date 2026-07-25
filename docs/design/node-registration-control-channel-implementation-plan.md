@@ -1,10 +1,10 @@
 # 节点注册发现与出站控制通道实施计划
 
-> 状态：NR-P0、NR-P1、NR-P2 已完成，下一步 NR-P3
+> 状态：NR-P0、NR-P1、NR-P2、NR-P3、NR-P4、NR-P5、NR-P6 已完成，下一步 NR-P7
 >
 > 优先级：P0，当前开发主线
 >
-> 日期：2026-07-24
+> 日期：2026-07-25
 >
 > 上位设计：[Mail-node 注册、身份与出站控制通道设计](node-enrollment-control-channel-design.md)
 >
@@ -631,6 +631,8 @@ public_host + mail_public_ips
 
 ### NR-P3：NodeTransport 收口
 
+状态：已完成（2026-07-25）。
+
 交付：
 
 - 定义 `NodeTransport`。
@@ -640,7 +642,11 @@ public_host + mail_public_ips
 
 验收：仍只使用 legacy HTTP 时，全量行为与改造前一致。
 
+实现与验证记录见 [NR-P3 NodeTransport 收口设计与验收记录](node-registration-p3-transport.md)。
+
 ### NR-P4：ControlStream、会话和 lease
+
+状态：已完成（2026-07-25）。
 
 交付：
 
@@ -652,7 +658,11 @@ public_host + mail_public_ips
 
 验收：NAT 后 node 仅出站即可 connected；断线后停止新分配，重连恢复。
 
+实现与验证记录见 [NR-P4 ControlStream、会话与 lease 验收记录](node-registration-p4-control-stream.md)。
+
 ### NR-P5：持久化命令迁移
+
+状态：已完成（2026-07-25）。
 
 迁移顺序：
 
@@ -671,7 +681,11 @@ public_host + mail_public_ips
 
 验收：断线、system 重启、node 重启、重复投递均不产生重复业务副作用。
 
+实现与验证记录见 [NR-P5 持久化命令迁移验收记录](node-registration-p5-durable-commands.md)。
+
 ### NR-P6：DataStream 迁移
+
+状态：已完成（2026-07-25）。
 
 迁移顺序：
 
@@ -687,6 +701,8 @@ public_host + mail_public_ips
 - Control/Data 隔离压测。
 
 验收：大附件传输时心跳和控制命令延迟不越过阈值，客户端取消能停止 node 读取。
+
+实现与验证记录见 [NR-P6 DataStream 迁移验收记录](node-registration-p6-data-stream.md)。
 
 ### NR-P7：dual 灰度与关闭 8081
 
@@ -708,7 +724,7 @@ public_host + mail_public_ips
 | NR-P6 | ControlStream、持久化命令和全部 DataStream 业务路径可用 | 可进入远程 staging，视为功能 MVP 候选 |
 | NR-P7 | dual canary、回滚演练、关闭 system -> node `8081`、移除 control_stream 节点 shared secret，完成第 14 节验收 | 可生产发布的 MVP 完成 |
 
-不得把 NR-P4 的“已连接”或 NR-P5 的“命令可执行”描述成远程业务 MVP；在 NR-P6 前，邮件正文、raw EML、附件、预览和隔离区读取仍需要 legacy 数据路径。
+NR-P6 已达到远程 staging 的功能 MVP 候选范围；在 NR-P7 完成 dual canary、回滚演练、关闭 `8081` 和 shared secret 清理前，不得描述为可生产发布的 MVP。
 
 ### 后续安全加固：mTLS
 
