@@ -122,14 +122,3 @@ MinIO 版本应作为独立存储阶段开发，而不是替换本索引：
 6. 后续在 Linux 目标机补充不同邮件数、附件大小和并发数的基准，记录 p50/p95、首字节时间、峰值 RSS 和 GC。
 
 本次 Windows 构建环境已使用 MSYS2 GCC 16.1 和 `CGO_ENABLED=1` 通过两个 Go 模块的全量 `-race`，并通过普通全仓测试、静态检查和 Linux amd64 交叉构建。
-
-## 7. 生产发布记录
-
-2026-07-17 已将同一 Linux amd64 产物发布到两台 mail-node：
-
-- 产物大小：16,496,458 字节；SHA256：`aa881b9eb754c726b06c304a32d4d70c486071aa513dcb0321de066a0b6f49c3`。
-- 节点 1 回滚点：`/opt/mgmt-system/backups/message-index-20260717-152908`。
-- 节点 2 回滚点：`/root/mailhub-backups/message-index-20260717-152020`。
-- 两台节点均为 `active`，控制面记录为 `healthy`，revision 分别为 `2/2` 和 `1/1`，发布后日志无 panic/fatal。
-- 主节点真实邮箱烟测：当前页 19 封邮件，列表 200、正文 200、附件 200，附件响应 125,553 字节。
-- 控制面 `/health`、`/health/ready` 均为 200；主节点 Postfix/Dovecot 账号数仍为 14/14，第二节点 vmailbox 仍为空。

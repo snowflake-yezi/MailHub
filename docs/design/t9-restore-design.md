@@ -179,7 +179,7 @@ func (s *Store) RestoreMailbox(mailboxID uint64) error {
 
 - [ ] `mail-node go test ./...`：新增 `RestoreFromTrash` 用例（建邮箱→MoveToTrash→Restore→断言 Maildir 回原位 + Dovecot/Postfix 行重建 + 密码一致；`.trash` 无匹配返回明确错误）
 - [ ] `mgmt-system go test ./...`：新增 `RestoreMailbox` store 用例（soft_deleted→active + 时间戳清空；非 soft_deleted `RowsAffected=0`）
-- [ ] mgmt 交叉编译 linux binary；国际机部署备份 mgmt+mail-node binary
+- [ ] mgmt 交叉编译 Linux binary；在隔离验证环境备份并部署 mgmt/mail-node binary
 - [ ] 后台删除一个测试邮箱 → 状态 soft_deleted + `.trash` 出现目录
 - [ ] 点恢复 → 状态回 active + `.trash` 目录消失（已回迁）+ Dovecot 可用原密码登录 + Postfix 能收信
 - [ ] 手动让 `.trash` 过期（改目录名 ts 为 25h 前）触发 GC 后再 restore → 返回"恢复窗口已过"，状态保持

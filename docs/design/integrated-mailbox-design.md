@@ -4,7 +4,7 @@
 
 ## 1. 背景
 
-当前所有非垃圾邮件统一 SMTP 转发到「集成邮箱」`union@asadad.bond`（需求 §2.3 P0）。该地址**写死在 mail-node `config.yaml` 的 `forward.target_address`**，每次更换需登服务器改配置 + 重启。
+当前所有非垃圾邮件统一 SMTP 转发到「集成邮箱」`union@example.com`（需求 §2.3 P0）。该地址**写死在 mail-node `config.yaml` 的 `forward.target_address`**，每次更换需登服务器改配置 + 重启。
 
 用户两个诉求合并解决：
 - **可见**：在邮箱管理后台看到集成邮箱（当前完全无展示入口）。
@@ -19,7 +19,7 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | BIGINT PK | 自增 |
-| email_address | VARCHAR(191) UNIQUE NOT NULL | 集成邮箱地址，如 `union@asadad.bond` |
+| email_address | VARCHAR(191) UNIQUE NOT NULL | 集成邮箱地址，如 `union@example.com` |
 | display_name | VARCHAR(191) | 备注，如「主汇总」「备用」 |
 | is_active | TINYINT(1) NOT NULL DEFAULT 0 | 是否当前生效的转发目标（**全局唯一为 1**） |
 | created_at / updated_at | DATETIME | 时间戳 |
@@ -32,7 +32,7 @@ gorm AutoMigrate 建表；`email_address` 唯一索引，`is_active` 普通索�
 
 | key | value | category | reloadable |
 |-----|-------|----------|-----------|
-| `forward.target_address` | `union@asadad.bond` | forward | true |
+| `forward.target_address` | `union@example.com` | forward | true |
 
 此 key 是 mail-node 转发目标的**真正生效来源**。`integrated_mailboxes.is_active=true` 的记录与该 key 保持同步（激活时事务写入）。
 

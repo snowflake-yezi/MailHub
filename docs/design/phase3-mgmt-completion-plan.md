@@ -30,7 +30,7 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 | C7 | 域名管理（§2.1.6） | ✅ T4/T5 已完成 | 服务器域名池 + Postfix/DKIM + DNS 清单 | ✅ 已完成 |
 | C8 | 批量幂等 / 缺失页面 / 停用下发 等 | ✅ T10 收尾已完成 | filter 主动推送、停用下发等收尾 | ✅ 已完成 |
 | E1 | 订单-邮箱 N:M 映射扩展（§2.1.2） | 暂缓 | 后续按扩展方案评审 | 🟢 扩展 |
-| O1 | mgmt 部署国际机 | ✅ 已完成（2026-06-25） | MariaDB + Nginx + systemd | ✅ 已完成 |
+| O1 | mgmt 生产部署流程 | 文档已完成 | MariaDB + Nginx + systemd | ✅ 已完成 |
 | O2 | inet_protocols / 临时机清理 / Let's Encrypt | TLS 部署文档已完成；IPv4、Let's Encrypt 和临时机清理仍为独立运维候选 | 运维收尾 | 🟢 候选 |
 
 **优先级结论**：
@@ -53,7 +53,7 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 | 后台批量创建 | T2 已统一走 `MailboxCreator`，创建链路一致性已收敛 | ✅ |
 | 幂等语义 | T2 已修复：按 `order_id` 或 `email_address` 幂等返回已有账号 | ✅ |
 | 域名管理 | T4/T5 已完成：`server_domains` 表 + 域名池 CRUD + Postfix 虚拟域 + DKIM + DNS 清单 | ✅ |
-| 鉴权 | T6 已完成：Session 登录 + Bearer Token Scope + Shared-Secret 内部互信，已部署国际机 | ✅ |
+| 鉴权 | T6 已完成：Session 登录 + Bearer Token Scope + Shared-Secret 内部互信 | ✅ |
 | Scope | T6 已修复：`RequireScope` 类型断言改为 `*model.ApiToken`，缺失/错误 scope 正确返回 403 | ✅ |
 | 邮件查询 | T8 已完成：按邮箱维度提供 MIME 结构化列表/正文，附件下载与安全预览已接通 | ✅ |
 | 生命周期 | T9 与 restore 已完成：四态、停收、软删、GC、重启恢复和回迁均已接通 | ✅ |
@@ -190,7 +190,7 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 - **管理后台**：session 登录（用户名/密码，cookie session），运营人员用——不是 API Token。`/admin/login` 页 + session 中间件
 - **对外 API**（`/api/v1/mailboxes`、`/api/v1/emails`）：保留 Bearer Token，接线 `RequireScope`（出票中心用 `mailbox:write`，大模型用 `email:read`）
 - **内部接口**（`/api/v1/internal/*`）：加 shared-secret header 校验（mgmt ↔ mail-node 互信）
-- **前置依赖**：mgmt 部署国际机 + Nginx 在前（生产部署 `/admin` 须 IP 白名单/Basic Auth 双保险）
+- **前置依赖**：mgmt 与 Nginx 已按生产部署指南配置（`/admin` 须 IP 白名单/Basic Auth 双保险）
 
 **工作量**：中（session 机制 + scope 接线 + 内部 secret）
 
@@ -224,7 +224,7 @@ Phase 2 已完成**数据面闭环**：国际机收发信 + mail-node 自动转�
 
 ```
 Phase 3A — 地基（前置，无此则线上功能跑不起来）
-  O1  mgmt 部署国际机（MySQL + binary + Nginx）
+  O1  mgmt 生产部署流程（MySQL + binary + Nginx）
   C6  鉴权体系（session + scope + 内部 secret）   ← 部署完顺手做
 
 Phase 3B — 控制面基础能力
@@ -261,7 +261,7 @@ Phase 3X — 扩展方案（暂缓）
 - 保留现有 `order_id` 字段兼容 MVP，不做 N:M 拆表。
 - AutoMigrate 后注意已有数据 password 为空的历史账号，需要页面显示为“未记录”。
 
-**验收**：✅ 已通过。新创建邮箱刷新页面后仍能看到密码；历史邮箱不会因空密码崩溃。验证账号：`t1-check-0624-01@example.com` / `<password>`，`sync_status=synced`。
+**验收**：新创建邮箱刷新页面后仍能看到密码；历史邮箱为空密码时页面正常显示“未记录”。
 
 **T2. 统一创建服务（已完成，2026-06-24）**
 - 抽出统一创建流程：生成/接收密码 → 选域名 → 选服务器 → 调 mail-node `/internal/mailboxes` → 成功后写 mgmt DB。
@@ -269,7 +269,7 @@ Phase 3X — 扩展方案（暂缓）
 - 远端失败策略：MVP 采用“远端失败则不写本地，返回失败”，避免污染账号台账。
 - 外部 API 按 `order_id` 幂等返回已有记录；后台批量/CSV 复用同一 `MailboxCreator` 流程。
 
-**验收**：✅ 已通过。本地 `test-node-01`（127.0.0.1:8081）不可用时创建失败且不落本地；将该节点标记为 `down` 后，自动分配到国际机 `mail-node-intl`（server_id=2）。验证账号：`t2-api-0624-01@example.com`（外部 API，幂等重试返回 `already_exists`）、`t2-batch-0624-01@example.com`（后台批量，密码 `<password>`），均为 `sync_status=synced`。
+**验收**：节点不可用时创建失败且不落本地；节点标记为 `down` 后，自动分配到其他健康节点；外部 API 幂等重试返回 `already_exists`，后台批量创建保持相同语义。
 
 **T3. 邮箱账号集合页（已完成，2026-06-24）**
 - 账号台账从 `order_mailboxes` 拆出为 `mailbox_accounts`，维度为 server + domain + mailbox + credential；订单关系由 `order_mailbox_mappings` 绑定账号 ID。
@@ -278,7 +278,7 @@ Phase 3X — 扩展方案（暂缓）
 - 支持按 `domain_id`、`server_id`、`status`、关键词搜索；后台页面第一屏为“邮箱账号台账”。
 - 当前阶段明文展示密码；复制按钮尚未做，留到 T10/UX 收尾。
 
-**验收**：✅ 已通过。`/admin/mailboxes?domain_id=1` 返回 200，页面包含“邮箱账号台账”“密码”“example.com”“mail-node-intl”；`/api/v1/admin/mailboxes?domain_id=1&server_id=2` 返回 `mailbox_accounts` 台账。启动时已通过 SSH 从国际机 `mail-node-intl` 的 `/etc/dovecot/users.conf` 导入真实账号 7 个，包括 `union@example.com / <password>`、`dns-test@example.com / <password>`、`test-fix@example.com / <password>`、`intl-test@example.com / <password>` 以及 T1/T2 验证账号。
+**验收**：邮箱台账页面和管理 API 支持按域名、节点与状态筛选，并正确返回账号同步状态；测试数据仅使用示例域名和临时 fixture。
 
 ### Sprint 2：域名与服务器分配
 
@@ -294,13 +294,13 @@ Phase 3X — 扩展方案（暂缓）
 - 邮箱创建入口优先落在「服务器 → 域名」上下文，固定 `server_id + domain_id`；外部 API 可选传 `domain_id`，由域名感知分配选择健康服务器。
 
 **执行拆分**
-- **T4A**：mgmt 域名池地基。建 `ServerDomain`/`server_domains`，补 store 查询与域名感知分配方法，把当前 `mail-node-intl(server_id=2) + example.com(domain_id=1)` seed 为 synced，只读展示服务器域名池。
+- **T4A**：mgmt 域名池地基。建 `ServerDomain`/`server_domains`，补 store 查询与域名感知分配方法，把示例节点与示例域名 seed 为 synced，只读展示服务器域名池。
 - **T4B**：域名池下创建邮箱。域名池页支持单个/批量创建，`MailboxCreator` 校验指定 server 是否已绑定指定 domain 且 `postfix_status=synced`。
 - **T5A**：mail-node Postfix 虚拟域数据面。新增 `/internal/domains` Add/List/Remove，真正维护 `virtual_mailbox_domains`。
 - **T5B**：DKIM 与 DNS 记录。每台服务器使用独立 selector（如 `mail-s2`），返回 MX/SPF/DKIM/DMARC 记录，并保存 DKIM 状态到 `server_domains`。
 - **T5C**：移除域名与回归。有邮箱的 server-domain 绑定不得移除；无邮箱测试域可远端清理并本地 inactive。
 
-**验收摘要**：服务器页能看到国际机 `example.com` 域名池；该域名池下建邮箱会真实落国际机；外部 `POST /api/v1/mailboxes {domain_id}` 只分配到绑定该域的健康服务器；新增测试域能在 mail-node 侧写入 Postfix 虚拟域并返回 DNS/DKIM 记录。
+**验收摘要**：服务器页能看到示例域名池；该域名池下建邮箱会写入对应测试节点；外部 `POST /api/v1/mailboxes {domain_id}` 只分配到绑定该域的健康服务器；新增测试域能在 mail-node 侧写入 Postfix 虚拟域并返回 DNS/DKIM 记录。
 
 ### Sprint 3：安全与运行状态
 
@@ -341,7 +341,7 @@ Phase 3X — 扩展方案（暂缓）
 - 过滤规则主动推送 reload。
 - 仪表盘今日创建数。
 - `message_id` 尖括号/URL 编码兼容。
-- 运维：mgmt 部署国际机、`inet_protocols=ipv4`、Let's Encrypt、临时机清理。
+- 运维：补齐 mgmt 部署、`inet_protocols=ipv4`、Let's Encrypt 和临时环境清理流程。
 
 ---
 

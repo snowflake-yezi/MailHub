@@ -277,11 +277,11 @@ go test -C mgmt-system ./...
 npm --prefix mgmt-system/web run build
 ```
 
-国际机：
+隔离 Linux 验证环境：
 
 1. 交叉编译并部署 `mail-node`。
 2. 可选部署 `mgmt-system`（如果只改 mail-node 推断逻辑，mgmt 二进制不一定需要变；但 React 静态资源若已更新则保持当前部署即可）。
-3. 向 `union@asadad.bond` 发送正文内嵌图片邮件。
+3. 向 `union@example.com` 发送正文内嵌图片邮件。
 4. 检查后台 `/admin/emails` 中该邮件附件元数据：
    - inline 图片 filename 有 `.png/.jpg` 后缀。
    - content_type 是 `image/*`，不是 `application/octet-stream`。

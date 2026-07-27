@@ -58,7 +58,7 @@ var definitions = map[string]Definition{
 	},
 	"forward.target_address": {
 		Key: "forward.target_address", Owner: "mail-node", Category: "forward", Label: "转发目标邮箱", Description: "非垃圾邮件汇总转发的目标邮箱地址",
-		ValueType: "string", DefaultValue: "union@asadad.bond", Unit: "邮箱", Min: 3, Max: 191, NodeOverridable: true, ApplyStrategy: ReadThrough,
+		ValueType: "string", DefaultValue: "union@example.com", Unit: "邮箱", Min: 3, Max: 191, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"forward.smtp_dial_timeout": {
 		Key: "forward.smtp_dial_timeout", Owner: "mail-node", Category: "forward", Label: "SMTP 拨号超时", Description: "连接 SMTP 服务器的超时时间",

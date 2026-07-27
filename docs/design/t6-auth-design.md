@@ -258,7 +258,7 @@ shared_secret: "<与 mgmt 一致的随机字符串>"
 4. 替换 `/usr/local/bin/mail-node` binary
 5. `systemctl restart mgmt-system`
 6. `systemctl restart mail-node`
-7. 浏览器访问 `https://mail.asadad.bond/admin/` → 应跳转登录页
+7. 浏览器访问 `https://mail.example.com/admin/` → 应跳转登录页
 8. 用 admin_user/admin_pass 登录 → 验证各页面正常
 9. 测试改密 → 验证 Roundcube 可用新密码登录
 

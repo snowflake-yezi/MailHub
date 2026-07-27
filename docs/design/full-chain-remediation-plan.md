@@ -83,26 +83,11 @@ SMTP 无法与本地文件系统组成原子事务，因此系统继续采用 at
 - SEC-2 配套场景：命令失败传播和 mailbox/domain 配置并发写入均有自动化覆盖。
 - SEC-3：控制面 schema、种子值和节点 fallback 均默认 `tls_insecure_skip=false`；现有显式配置值不会被种子更新覆盖。
 - SEC-4：Gin 路由表不再包含 `/smtp/filter`，`/internal/*` 保持注册；请求体限制测试确认超过 16 MiB 时读取被拒绝。
-- SEC-3/SEC-4 生产发布：控制面与两台 mail-node 均完成备份和原子替换；控制面 health/ready 为 200，两台节点 healthy 且 revision 一致，近 100 行日志无 panic/fatal。
-- SEC-3/SEC-4 生产实测：两台节点的 `/smtp/filter` 从发布前 POST 200 变为发布后 404；携带本机 shared secret 的 `/internal/health` 返回 200，17 MiB JSON 请求在绑定阶段被拒绝。
-- SEC-3/SEC-4 回滚点：主机 `/opt/mgmt-system/backups/sec3-sec4-e1a6aa1-20260716-094254`，节点 2 `/root/mailhub-backups/sec3-sec4-e1a6aa1-20260716-094936`。
 - REL-1：定向测试复现隔离文件会被旧扫描器重新处理；修复后覆盖 move 失败传播、同目录 `.forwarded-error` 隔离、后续扫描跳过，以及跨盘复制关闭源文件后再删除。
-- REL-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功，SHA256 为 `4acca650ef2eb5b2bf97ab4d914a0b8fe726182f23efb9b1381c1def5bf525a1`。
-- REL-1 生产发布：提交 `9114cba` 已进入远端 `main`，两台 mail-node 均使用上述 SHA256；回滚点分别为 `/opt/mgmt-system/backups/rel1-9114cba-20260717-014749` 和 `/root/mailhub-backups/rel1-9114cba-20260717-013700`。
-- REL-1 生产验收：控制面 health/ready 均为 200；两台节点均为 healthy，revision 分别为 `2/2`、`1/1`，未鉴权内部健康请求均为 401；最近 100 行日志的 panic/fatal 和 `delivered but commit failed` 均为 0，发布后 `.forwarded-error` 数量均为 0。
-- 第二节点发布前已有 7 封历史测试邮件因 SMTP 主机名无法解析而每轮发送失败；后续确认来自已解绑旧域残留，并于 2026-07-17 在完整备份后通过正式接口软删除 3 个历史测试账号、移除旧域。节点 1 的正式绑定、14 个账号和 Maildir 未改动。
+- REL-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功。
 - CFG-1：最小复现确认非法默认动作会直接进入旧 Engine；修复后覆盖启动安全回退、默认动作与标题前缀热更新、空前缀、非法 revision 拒绝、revision 到运行中 Engine 的集成链路，以及并发过滤/更新竞态。
-- CFG-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功，SHA256 为 `4a519db09f8d8907a32bf87dfbc28b5d9748e688feb5f3b029259b8e2e5dc144`。
-- CFG-1 生产发布：提交 `9e7df68` 已进入远端 `main`，两台 mail-node 均原子替换为上述 SHA256；节点 1 回滚点为 `/opt/mgmt-system/backups/cfg1-9e7df68-20260717-065308`，节点 2 回滚点为 `/root/mailhub-backups/cfg1-9e7df68-20260717-141253`，两处 binary/config 校验均通过。
-- CFG-1 生产行为验收：节点 2 临时隔离配置下，`block` reload 前后 PID 均为 `6987`；合成邮件由 `new/` 移入 `cur/:2,S`，日志记录 `rule=0 reason=default action`，且无 SMTP 转发。随后同 PID 恢复真实 `pass` 配置，最终还原 YAML、清除代理和探针目录并重启到真实管理端。
-- CFG-1 发布后验收：管理端 health/ready 均为 200；节点 1/2 均为 healthy，revision 分别为 `2/2`、`1/1`，无 apply/reload error，未鉴权内部健康请求均为 401。两台最近 100 行日志的 panic/fatal、配置错误和 `delivered but commit failed` 均为 0；节点 1 的 14 个 Postfix/Dovecot 账号及配置哈希未变，`postconf` 仍报告 2 个虚拟域，节点 2 仍无活跃 vmailbox/Maildir。
+- CFG-1 发布门禁：两个 Go 模块的普通全量测试、`go vet ./...` 和 `go test -race -count=1 ./...` 均通过；Linux/amd64 mail-node 构建成功。
 - CFG-2 原始复现：直接以 `intervalSec=0` 调用 `StartAutoSync`，进程在 `time.NewTicker` 触发 `panic: non-positive interval for NewTicker`。修复后配置加载层和运行期入口均将缺省或非正值回退为 3600 秒，显式正值保持不变。
 - CFG-2 自动化门禁：定向测试覆盖缺省、零值、负值、30 秒正常值，并用本地 HTTP 测试服务器确认零值和负值路径均完成首次规则同步；两个 Go 模块的普通全量测试、`go vet ./...` 和清洁 Windows CGO 环境下的 `go test -race -count=1 ./...` 均通过。
-- CFG-2 生产发布：提交 `b4fe64a` 已进入远端 `main`；Linux/amd64 mail-node 大小 16,545,508 字节，SHA256 为 `b277ab805d0ddb36b62efab954ba574006b75a1308325726d3aa982307bbe573`，两台节点均完成原子替换。节点 1 回滚点为 `/opt/mgmt-system/backups/cfg2-b4fe64a-20260717-155551`，节点 2 回滚点为 `/root/mailhub-backups/cfg2-b4fe64a-20260717-155551`。
-- CFG-2 生产行为验收：节点 2 临时配置 `filter_sync_interval: 0` 后成功启动并完成首次 `filter synced`，无 panic/fatal；随后配置恢复为原 30 秒且 SHA256 与备份一致，新二进制继续运行。最终节点 1/2 PID 分别为 `23754`、`14870`，同步间隔分别为 3600/30 秒。
-- CFG-2 发布后验收：控制面 health/ready 均正常；两台节点 healthy，revision 分别为 `2/2`、`1/1`，apply/reload error 均为空，未鉴权内部健康请求均为 401，近 10 分钟目标错误日志计数均为 0。节点 1 的 Postfix/Dovecot 账号仍为 14/14、虚拟域仍为 2 个，节点 2 仍为 0/0；真实 `union@asadad.bond` 当前页 19 封邮件的列表、正文、附件均为 200，附件 125553 字节。
-- 生产数据库已验证 `api_tokens` 物理删除，两个迁移后的哈希凭证保持启用，`auth.tokens` 已从运行配置移除。
 - 两个模块的 `go test -race -count=1 ./...` 已通过。
 - OPS-1 原始复现中，真实 mail-node 收到未完成请求头后停顿 7.08 秒，补全请求仍返回 401，证明鉴权前连接没有请求头超时。修复后 mail-node 使用显式 `http.Server`，配置 `ReadHeaderTimeout=5s`、`ReadTimeout=30s`、`WriteTimeout=2m`、`IdleTimeout=2m`；普通内部健康请求仍返回 401，同一慢请求停顿 7.02 秒后连接已由服务端关闭，未进入鉴权。双模块普通全量测试、`go vet ./...` 和全量 race 均通过。
-- OPS-1 生产发布：提交 `77a2f0a` 已进入远端 `main`；Linux/amd64 发布产物大小 11,493,538 字节，SHA256 为 `05bd5612e1b149755c8ee017498123eb7f32405e3b73924ef7f324ae6b44e608`，两台 mail-node 均完成备份和原子替换。节点 1 回滚点为 `/opt/mgmt-system/backups/ops1-77a2f0a-20260717-193328`，PID `472 -> 8871`；节点 2 回滚点为 `/root/mailhub-backups/ops1-77a2f0a-20260717-193328`，PID `23658 -> 1165`。
-- OPS-1 生产验收：两台节点替换前的 7 秒慢请求均继续返回 401；替换后向已关闭连接补写均失败且无 HTTP 响应，正常未鉴权请求仍为 401，携带本机 Shared-Secret 的健康请求均为 200。控制面 health/ready 为 200，两节点 healthy、revision `4/4` 与 `3/3`、apply/reload error 为空；节点 1 Postfix/Dovecot 账号仍为 14/14、两个虚拟域不变，真实 `union@asadad.bond` 邮件列表为 200，节点 2 账号仍为 0/0，两台目标错误日志计数均为 0。

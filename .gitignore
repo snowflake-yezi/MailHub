@@ -38,6 +38,8 @@ roundcube.conf
 *.tar.gz
 *.zip
 /build/
+/release/
+/codex_ssh_askpass.go
 
 # === 备份 ===
 *.bak-*

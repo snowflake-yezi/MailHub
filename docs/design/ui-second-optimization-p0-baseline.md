@@ -87,7 +87,7 @@ div.email-workbench
 普通邮箱：
 
 ```text
-union@asadad.bond
+union@example.com
 ```
 
 长邮箱：
@@ -107,7 +107,7 @@ very-long-mailbox-name-for-ui-overflow-regression-abcdefghijklmnopqrstuvwxyz-012
 长 Message-ID：
 
 ```text
-<mailhub-ui-second-optimization-regression-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789@mail.asadad.bond>
+<mailhub-ui-second-optimization-regression-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789@mail.example.com>
 ```
 
 ### 4.3 邮件主题样例
@@ -156,7 +156,7 @@ Raw 元信息：
 
 ```json
 {
-  "message_id": "<mailhub-ui-second-optimization-regression-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789@mail.asadad.bond>",
+  "message_id": "<mailhub-ui-second-optimization-regression-abcdefghijklmnopqrstuvwxyz-0123456789-abcdefghijklmnopqrstuvwxyz-0123456789@mail.example.com>",
   "from": "\"Very Long Sender Display Name\" <sender-with-very-long-local-part@example-long-domain.test>",
   "to": [
     "receiver-one-with-long-name@example-long-domain.test",

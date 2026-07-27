@@ -15,7 +15,7 @@ T9 四态生命周期 + 节点自动发现上线后，双节点已稳定在线�
 | 注册要手填 SMTP/IMAP | `RegisterServer`（`server.go:54`）不推导，`servers.html:79-85` 表单要求填写 | SMTP/IMAP 几乎总等于 api_host 的 host 部分，手填是噪声；而自动发现路径 `DiscoverServer`（`server.go:376-377`）已经会用 `extractHost(api_host)` 推导，两条注册路径不一致 |
 | 列表看不到域名归属 | `ListServers`（`store.go:120`）返回纯 `[]MailServer`，不带域名；`servers.html` 列表无域名列 | 运营要知道「某服务器挂了哪些域」必须逐台点进域名池页（`/admin/servers/:id/domains`），域名池可见性差 |
 | SMTP/IMAP 列信息冗余 | 列表有独立 SMTP/IMAP 两列（`servers.html:102`） | 推导后 ≈ api_host，占位却低价值；列表已达 11 列，挤 |
-| 心跳间隔写死配置 | `heartbeat_interval` 仅在 mail-node `config.yaml`（`main.go:213` 固定 ticker），`beat()` 丢弃响应（`main.go:247`） | 改值需登录机器改文件并重启；国际机 60/临时机 30 不一致；无法在后台在线调整节拍 |
+| 心跳间隔写死配置 | `heartbeat_interval` 仅在 mail-node `config.yaml`（`main.go:213` 固定 ticker），`beat()` 丢弃响应（`main.go:247`） | 改值需登录机器改文件并重启；不同环境可能不一致；无法在后台在线调整节拍 |
 
 ### 1.2 目标
 
@@ -135,7 +135,7 @@ success(c, "success", list)
 事实源从 mail-node 本地 config 迁到 mgmt：mgmt 在每次心跳响应里下发期望 `heartbeat_interval`，mail-node 每轮跟随；本地 config 值降为冷启动首次与断连兜底。
 
 **mgmt 侧**：
-- `mail_servers` 加列 `HeartbeatInterval int default 30`（per-server）；老 server 迁移后自动得 30，国际机从 60 降为 30，达成统一。
+- `mail_servers` 加列 `HeartbeatInterval int default 30`（per-server）；老 server 迁移后自动使用统一默认值。
 - `Heartbeat` handler（`server.go:391`）：现仅调 `UpdateServerHeartbeat` 并返回 nil data；改为读取该 server 的 `HeartbeatInterval`，响应 data 带 `{heartbeat_interval: <n>}`。
 - 后台编辑弹窗加「心跳间隔(秒)」输入框；`UpdateServer` 放行该字段，校验 5–600。
 
@@ -181,9 +181,9 @@ API 响应：`GET /api/v1/admin/servers` 每个 server 对象多一个可选 `do
 
 - [ ] `mgmt-system go test ./...` 通过；新增 `server_test.go` 用例：`RegisterServer` 空 SMTP/IMAP 时落库值 = `extractHost(api_host)`；`ListServers` 返回的 domains 与 `server_domains` active 绑定一致。
 - [ ] `mgmt-system go build` 通过。
-- [ ] 国际机部署：备份 mgmt binary + `servers.html`，发布，重启 `mgmt-system`。
-- [ ] 国际机发布 mgmt + mail-node 新 binary（**不改 config.yaml**）；AutoMigrate 给现有 server 补 `heartbeat_interval=30`。
-- [ ] 后台 `/admin/servers`：列表出现「关联域名」列，mail-node-intl 行显示 `asadad.bond` tag；SMTP/IMAP 列已移除。
+- [ ] 隔离 Linux 环境部署：备份 mgmt binary + `servers.html`，发布并重启 `mgmt-system`。
+- [ ] 发布 mgmt + mail-node 新 binary（**不改 config.yaml**）；AutoMigrate 给现有 server 补 `heartbeat_interval=30`。
+- [ ] 后台 `/admin/servers`：列表出现「关联域名」列，示例节点行显示 `example.com` tag；SMTP/IMAP 列已移除。
 - [ ] 注册一台测试服务器（只填 name + api_host），列表/详情确认 SMTP/IMAP 自动填充为 api_host 的 host。
 - [ ] 编辑弹窗 SMTP 留空保存 → 既有值不变；填入新值 → 覆盖生效。
 - [ ] 后台编辑某 server 心跳间隔 30→15 保存，mail-node 日志 1–2 周期内节拍变 15s（无需重启）；DB 改异常值（0）→ mail-node 沿用上一周期不狂跳。

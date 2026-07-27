@@ -410,7 +410,7 @@
                     </div>
                 </div>
                 <form method="GET" action="/admin/emails" class="toolbar">
-                    <input type="text" name="mailbox" value="{{.mailbox}}" placeholder="输入邮箱地址，例如 order-001@asadad.bond">
+                    <input type="text" name="mailbox" value="{{.mailbox}}" placeholder="输入邮箱地址，例如 order-001@example.com">
                     <input type="number" name="page" value="{{if .page}}{{.page}}{{else}}1{{end}}" min="1" placeholder="页码">
                     <input type="number" name="size" value="{{if .size}}{{.size}}{{else}}20{{end}}" min="1" max="100" placeholder="每页条数">
                     <button type="submit" class="btn btn-primary">查询</button>

@@ -585,7 +585,7 @@ PUT /api/v1/admin/account
 
 ### 14.1 Docker Compose
 
-当前实际部署资产已落地到 `mgmt-system/Dockerfile` 与 `deploy/docker/compose.yaml`，操作步骤见 `docs/control-plane-deployment.md`。下方片段保留设计结构说明。
+部署资产位于 `mgmt-system/Dockerfile` 与 `deploy/docker/compose.yaml`，操作步骤见 `docs/control-plane-deployment.md`。下方片段保留设计结构说明。
 
 ```yaml
 services:
@@ -752,7 +752,7 @@ auth:
 
 - Docker Compose、裸机部署文档完整。
 - P0-P4 不回退。
-- 新版本可在国际机完成 bootstrap、登录、改密、恢复演练。
+- 新版本可在隔离 Linux 环境完成 bootstrap、登录、改密和恢复演练。
 
 ---
 
@@ -833,6 +833,6 @@ O2-P5 完成时必须满足：
 6. 改密或 reset 后旧 session 失效。
 7. release 模式未初始化不能启动。
 8. 部署文档包含 Docker Compose 和裸机流程。
-9. 已记录国际机升级、验证和回滚步骤。
+9. 部署指南包含升级、验证和回滚方法；具体生产记录存放在仓库外。
 10. 登录页与 React 管理端共用 MailHub 品牌资产和视觉 token，浅色、深色及已保存品牌色一致。
 11. 登录页在 `320px`、`768px`、`1440px` 下无重叠、横向滚动或动态状态引起的布局跳变。

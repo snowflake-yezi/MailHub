@@ -29,9 +29,9 @@
 
 ---
 
-## 2. 现状基线（2026-06-24 核查）
+## 2. 示例环境基线
 
-**国际机 203.0.113.10**（SSH 免密可查）：
+**示例节点 `203.0.113.10`**：
 - `virtual_mailbox_domains = example.com` —— **仅一域**，加新域必须改此值
 - `virtual_mailbox_maps = hash:/etc/postfix/vmailbox` —— 按邮箱记录
 - DKIM **按域硬编码**：`SigningTable`/`KeyTable` 仅 `example.com` 一条，selector=`mail`，key 在 `/etc/opendkim/keys/example.com/`
@@ -201,7 +201,7 @@ type ServerDomain struct {
 | **RemoveDomain 安全** | 必须先扫 `vmailbox` 确认该域无邮箱，有则拒绝（保护存量账号） |
 | **opendkim 服务名/权限** | CentOS 7 服务名 `opendkim`，reload 用 `systemctl reload opendkim`；key 目录须 `chown opendkim:opendkim` |
 | **DNS 记录需人工解析** | 系统只生成并展示 A/MX/SPF/DKIM/DMARC 文本 + 复制；实际到 DNS 控制台发布是运营动作（与 example.com 当初一致） |
-| **mail-node 重新部署** | 数据面改动需交叉编译 ELF → scp 国际机 → systemctl restart mail-node |
+| **mail-node 重新部署** | 数据面改动需交叉编译 ELF → 上传目标节点 → `systemctl restart mail-node` |
 
 ---
 
@@ -210,7 +210,7 @@ type ServerDomain struct {
 ### T4A：mgmt 域名池地基（不先动远端配置）
 1. model 加 `ServerDomain`；AutoMigrate 建 `server_domains`。✅
 2. store 加绑定/查询/域名感知分配方法。✅
-3. 种子/迁移：把当前 `mail-node-intl(server_id=2) + example.com(domain_id=1)` 写为 `status=active`、`sync_status=synced`、`postfix_status=synced`、`dkim_status=synced`，因为国际机当前已真实配置该域。✅
+3. 种子/迁移：为示例节点和示例域名写入 `status=active`、`sync_status=synced`、`postfix_status=synced`、`dkim_status=synced`。✅
 4. handler 加 `GET /api/v1/admin/servers/:id/domains`，服务器页增加「域名池」入口和只读列表。✅
 
 ### T4B：域名池下创建邮箱 + 域名感知分配
@@ -222,7 +222,7 @@ type ServerDomain struct {
 ### T5A：mail-node 域名数据面（Postfix 虚拟域）
 9. 新建 `internal/domain/manager.go`（AddDomain/ListDomains/RemoveDomain，先覆盖 Postfix virtual_mailbox_domains + DNS 记录）。✅
 10. `internal/handler` 加域名接口，`RegisterRoutes` 挂 `/internal/domains*`。✅
-11. 交叉编译 → scp 国际机 → 改 config.yaml → restart mail-node。✅
+11. 交叉编译 → 上传测试节点 → 更新 config.yaml → 重启 mail-node。✅
 
 ### T5B：DKIM 自动生成与 DNS 记录
 12. mail-node config 加 `dkim`/`public_host`/selector 策略，注入 DomainManager。✅ 代码完成（2026-06-24）
@@ -239,31 +239,31 @@ type ServerDomain struct {
 ## 7. 验证清单
 
 **T4A/T4B（mgmt）**
-- [x] AutoMigrate 建 `server_domains` 表，当前 `mail-node-intl + example.com` 自动绑定为 synced
-- [x] 服务器页 → 国际机「域名池」能看到 `example.com`，展示 `postfix_status/dkim_status/sync_status`
-- [x] 域名池下「批量创建」固定 `server_id=2 + domain_id=1` → 落 `mailbox_accounts` + 远端真实创建
+- [x] AutoMigrate 建 `server_domains` 表，示例节点和域名自动绑定为 synced
+- [x] 服务器页的「域名池」能看到 `example.com`，展示 `postfix_status/dkim_status/sync_status`
+- [x] 域名池下「批量创建」固定传入 server/domain ID → 落 `mailbox_accounts` + 测试节点创建
 - [x] 外部 `POST /api/v1/mailboxes {order_id, domain_id}` → 落到绑定该域的健康服务器
 - [x] 指定未绑定该域的 server 创建 → 拒绝
 
-**T5A/T5B（国际机 mail-node）**
+**T5A/T5B（Linux 测试节点）**
 - [x] `POST /internal/domains {t4-test.com}` → virtual_mailbox_domains 含测试域；返回 DNS 记录（T5A 已完成 Postfix 虚拟域，DKIM 记录当前为 pending）
-- [x] `GET /internal/domains` 返回当前真实域 `example.com`
-- [x] 该域下建邮箱 → vmailbox/users.conf 写入（T4B 验证账号 `t4b-auto-01@example.com` 已真实落国际机）
-- [x] `DELETE /internal/domains/t4-test.com`（有邮箱）→ 拒绝；无邮箱 → 成功清理（本地 vmailbox_file 测试覆盖有邮箱拒绝，国际机无邮箱测试域已清理）
-- [x] T5B：`/etc/opendkim/keys/<domain>/` 生成；SigningTable/KeyTable 各加一行；opendkim reload 后发信带 DKIM 签名（国际机已用 `t5b-check.example.com` 验证，随后已清理）
+- [x] `GET /internal/domains` 返回示例域 `example.com`
+- [x] 该域下建邮箱 → vmailbox/users.conf 写入（使用临时测试账号验证）
+- [x] `DELETE /internal/domains/t4-test.com`（有邮箱）→ 拒绝；无邮箱 → 成功清理
+- [x] T5B：`/etc/opendkim/keys/<domain>/` 生成；SigningTable/KeyTable 各加一行；opendkim reload 后发信带 DKIM 签名
 
 **T5C（移除与回归）**
-- [x] 服务器页 → 国际机「域名池」→ 新域 → DNS 记录可展示/复制
-- [x] 移除域名（该域有邮箱）→ 拒绝（国际机 DELETE `example.com` 已验证返回 `domain has mailbox accounts`）
+- [x] 服务器页 → 测试节点「域名池」→ 新域 → DNS 记录可展示/复制
+- [x] 移除域名（该域有邮箱）→ 拒绝并返回 `domain has mailbox accounts`
 - [x] 移除无邮箱测试域 → 远端 RemoveDomain 成功，本地 `server_domains.status=inactive`
 - [x] DNS UI 按“原始域名 + A 记录主机头”生成最终记录；`t5-ui-a.example.com` 验证返回 A/MX/SPF/DKIM/DMARC 后已清理
 
 **构建/回归**
-- [x] mail-node `GOOS=linux GOARCH=amd64 go build -buildvcs=false` 通过，并已部署国际机
+- [x] mail-node `GOOS=linux GOARCH=amd64 go build -buildvcs=false` 通过
 - [x] mgmt `go test ./...`、`go build -buildvcs=false ./cmd/server` 通过；AutoMigrate 建 server_domains 表；现有 example.com 邮箱/台账无回归
 - [x] T5B 本地验证：mail-node `go test ./...`、mgmt `go test ./...`、mail-node linux/amd64 构建 `mail-node.t5b` 通过（2026-06-24）
-- [x] T5B 国际机回归：`mail-node/postfix/opendkim` 均 active；`GET /internal/domains` 清理后仅返回 `example.com`；测试域 OpenDKIM 表项已移除
-- [x] T5C 本地/国际机回归：RemoveDomain 有邮箱拒绝、无邮箱删除、重复删除 DKIM 残留清理均有测试或真实验证；测试域 `t5c-check.example.com` 已清理，最终仅剩 `example.com`
+- [x] T5B Linux 回归：`mail-node/postfix/opendkim` 均 active；测试域 OpenDKIM 表项可正确移除
+- [x] T5C 回归：RemoveDomain 有邮箱拒绝、无邮箱删除、重复删除和 DKIM 残留清理均有自动化或隔离环境验证
 
 ---
 

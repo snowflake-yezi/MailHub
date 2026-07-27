@@ -100,7 +100,7 @@ func (s *Store) SeedDefaultIntegratedMailboxes() error {
 		return nil
 	}
 	return s.db.Create(&model.IntegratedMailbox{
-		EmailAddress: "union@asadad.bond",
+		EmailAddress: "union@example.com",
 		DisplayName:  "主汇总",
 		IsActive:     true,
 	}).Error
@@ -135,7 +135,7 @@ func (s *Store) ReconcileActiveIntegratedMailboxConfig() error {
 		Category:     "forward",
 		Label:        "转发目标邮箱",
 		Description:  "非垃圾邮件汇总转发的集成邮箱地址（当前生效项，由集成邮箱管理页联动写入）",
-		DefaultValue: "union@asadad.bond",
+		DefaultValue: "union@example.com",
 		Reloadable:   true,
 	}).Error
 }

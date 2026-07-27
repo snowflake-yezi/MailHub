@@ -213,14 +213,3 @@ systemctl start mgmt-system
 先上传到临时路径并核对 SHA256，再用 `install` / 目录 swap 原子替换。管理员迁移完成后，回滚旧二进制不会删除 `admin_users` 或 `system_state`；但旧二进制会重新读取旧配置密码，因此回滚窗口内必须保留旧字段并限制配置文件权限。
 
 API Token 迁移的回滚边界更严格：`api_tokens` 删除后不得只替换回旧二进制。旧版本可能重新创建明文表，并从残留配置重新写入已撤销 Token。需要回滚时，必须停止服务，同时恢复升级前数据库备份、旧二进制和匹配的旧配置。
-
-## 7. 国际机 O2-P5 发布记录
-
-2026-07-11 已在 `141.11.2.143` 完成 systemd 裸机升级：
-
-- Git commit：`d8faef79705ba95f367e64486a812b3722b97c40`。
-- Linux/amd64 binary SHA256：`8ac3894ba2e27084104fce46291e95703574d8827673a0e8ab0f1c4eda8be5d0`。
-- 备份：`/opt/mgmt-system/backups/p5-20260711-064009`。
-- 旧配置账号通过 `bootstrap-from-config` 一次性迁移，强制首次改密。
-- `mgmt-system=active`，`/health`、`/health/ready`、新登录页、登录 CSS 和新 SPA 资源均返回 200。
-- 错误密码返回 401；bootstrap 重复执行不覆盖现有数据库凭据。

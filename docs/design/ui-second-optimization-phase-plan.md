@@ -367,7 +367,7 @@ GET /internal/messages/:message_id/attachments/:index/preview?mailbox=<email>
 2. 本地构建通过。
 3. 覆盖该 phase 的核心验收项。
 4. 明确列出未覆盖项和下一 phase 接续点。
-5. 若发布到国际机，记录备份路径、静态资源 hash 或二进制版本、线上烟测结果。
+5. 若执行生产发布，将备份路径、制品摘要、版本和线上烟测结果记录到仓库外的受控运维系统。
 
 ---
 

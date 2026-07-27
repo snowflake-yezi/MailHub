@@ -111,7 +111,7 @@ X-Internal-Token: <shared-secret>
   "message": "success",
   "request_id": "...",
   "data": {
-    "email_address": "order-001@asadad.bond",
+    "email_address": "order-001@example.com",
     "page": 1,
     "size": 20,
     "total": 2,
@@ -124,7 +124,7 @@ X-Internal-Token: <shared-secret>
         "text_preview": "您的航班时间已变更...",
         "has_attachments": true,
         "attachments_count": 1,
-        "mailbox": "order-001@asadad.bond",
+        "mailbox": "order-001@example.com",
         "received_at": "2026-06-27T10:20:31Z"
       }
     ]
@@ -137,14 +137,14 @@ X-Internal-Token: <shared-secret>
 **外部 API**
 
 ```http
-GET /api/v1/emails/:message_id/body?mailbox=order-001@asadad.bond
+GET /api/v1/emails/:message_id/body?mailbox=order-001@example.com
 Authorization: Bearer <token with email:read>
 ```
 
 **mgmt 内部转发**
 
 ```http
-GET /internal/messages/:message_id?mailbox=order-001@asadad.bond
+GET /internal/messages/:message_id?mailbox=order-001@example.com
 X-Internal-Token: <shared-secret>
 ```
 
@@ -157,10 +157,10 @@ X-Internal-Token: <shared-secret>
   "request_id": "...",
   "data": {
     "message_id": "<abc@example.com>",
-    "mailbox": "order-001@asadad.bond",
+    "mailbox": "order-001@example.com",
     "subject": "航变通知",
     "from": "Airline <notice@example.com>",
-    "to": ["order-001@asadad.bond"],
+    "to": ["order-001@example.com"],
     "cc": [],
     "date": "2026-06-27T10:20:30Z",
     "text_body": "您的航班时间已变更...",
@@ -201,7 +201,7 @@ GET /api/v1/orders/:order_id/emails?page=1&size=20
 新增后台页面：
 
 ```http
-GET /admin/emails?mailbox=order-001@asadad.bond
+GET /admin/emails?mailbox=order-001@example.com
 ```
 
 页面能力：
@@ -390,7 +390,7 @@ r.GET("/mailboxes/:email/messages", h.GetMailboxMessages)
 
 ### 8.4 联调验证
 
-- 给国际机真实邮箱发送一封带中文标题、中文正文、PDF 附件的邮件。
+- 向隔离测试邮箱发送一封带中文标题、中文正文、PDF 附件的邮件。
 - 通过 mgmt 邮箱维度 API 拉取列表和详情。
 - 验证 `text_body` 可读、附件元数据完整、union 转发链路不受影响。
 
@@ -405,8 +405,8 @@ r.GET("/mailboxes/:email/messages", h.GetMailboxMessages)
 5. mgmt 增加后台邮件查询页面，按邮箱查看列表和详情。
 6. 补外部 API scope 接线确认，保持 `email:read` 保护。
 7. 本地执行 `go test ./...`（mgmt-system、mail-node）。
-8. 部署国际机并用真实邮件样本验证。
-9. 更新 `REQUIREMENTS_ANALYSIS.md`、`context.md` 和部署记录。
+8. 在隔离 Linux 环境中使用脱敏邮件样本验证。
+9. 更新公开设计文档；生产部署证据保存在仓库外的受控运维系统中。
 
 ---
 

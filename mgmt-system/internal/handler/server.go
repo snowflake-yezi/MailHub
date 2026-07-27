@@ -601,7 +601,7 @@ func (h *ServerHandler) DeleteServer(c *gin.Context) {
 
 // DiscoverServer mail-node 启动时自动发现/注册自己的 server_id。
 // POST /api/v1/internal/servers/discover
-// Body: {"api_host": "157.254.193.174:8081", "node_name": "mail-node-01"}
+// Body: {"api_host": "203.0.113.20:8081", "node_name": "mail-node-01"}
 // 按 api_host 匹配已有服务器；未匹配时自动创建（name=node_name, 容量默认 5000）。
 func (h *ServerHandler) DiscoverServer(c *gin.Context) {
 	var req struct {
