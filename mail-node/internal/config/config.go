@@ -15,7 +15,6 @@ const (
 	defaultTransportMode  = "legacy_http"
 	defaultIdentityDir    = "/var/lib/mail-node/identity"
 	defaultCredentialFile = "/var/lib/mail-node/identity/credential"
-	defaultManagementCA   = "/etc/mail-node/management-ca.pem"
 )
 
 type Config struct {
@@ -104,7 +103,6 @@ func Load(path string) (*Config, error) {
 			FilterSyncInterval: defaultFilterSyncIntervalSeconds,
 			TransportMode:      defaultTransportMode,
 			CredentialFile:     defaultCredentialFile,
-			CAFile:             defaultManagementCA,
 		},
 		Identity: IdentityConfig{Directory: defaultIdentityDir},
 		Filter: FilterConfig{
@@ -136,9 +134,6 @@ func Load(path string) (*Config, error) {
 	}
 	if strings.TrimSpace(cfg.Management.CredentialFile) == "" {
 		cfg.Management.CredentialFile = defaultCredentialFile
-	}
-	if strings.TrimSpace(cfg.Management.CAFile) == "" {
-		cfg.Management.CAFile = defaultManagementCA
 	}
 	if strings.TrimSpace(cfg.Identity.Directory) == "" {
 		cfg.Identity.Directory = defaultIdentityDir

@@ -65,7 +65,7 @@ func TestLoadDefaultsNodeTransportToLegacy(t *testing.T) {
 	if cfg.Management.ControlURL != "" {
 		t.Fatalf("control URL must be empty by default, got %q", cfg.Management.ControlURL)
 	}
-	if cfg.Management.CredentialFile != defaultCredentialFile || cfg.Management.CAFile != defaultManagementCA {
+	if cfg.Management.CredentialFile != defaultCredentialFile || cfg.Management.CAFile != "" {
 		t.Fatalf("unexpected management identity defaults: %+v", cfg.Management)
 	}
 	if cfg.Identity.Directory != defaultIdentityDir {

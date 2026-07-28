@@ -116,6 +116,7 @@ function SecretDialog({ title, alert, secret, copyLabel, onCopy, onClose }) {
 function InvitationDrawer({ form, servers, saving, onChange, onSubmit, onClose }) {
   const { t } = useTranslation('pages')
   const update = (field, value) => onChange(current => ({ ...current, [field]: value }))
+  const selectedServer = servers.find(server => server.id === Number(form.recovery_server_id))
   return (
     <div className="drawer-overlay" onClick={onClose}>
       <aside className="drawer" onClick={event => event.stopPropagation()} aria-label={t('servers.enrollment.invitationAria')}>
@@ -133,8 +134,9 @@ function InvitationDrawer({ form, servers, saving, onChange, onSubmit, onClose }
             <label>{t('servers.enrollment.recoveryServer')}</label>
             <select value={form.recovery_server_id} onChange={event => update('recovery_server_id', Number(event.target.value))}>
               <option value={0}>{t('servers.enrollment.newNode')}</option>
-              {servers.filter(server => server.node_uuid).map(server => <option key={server.id} value={server.id}>{server.name} · {server.node_uuid}</option>)}
+              {servers.map(server => <option key={server.id} value={server.id}>#{server.id} · {server.name} · {server.node_uuid || `${t('servers.enrollment.legacyMigration')} · ${server.api_host}`}</option>)}
             </select>
+            {selectedServer && !selectedServer.node_uuid && <div className="form-hint">{t('servers.enrollment.migrationHint', { id: selectedServer.id, host: selectedServer.api_host })}</div>}
           </div>
           {!form.recovery_server_id && <div className="form-group"><label>{t('servers.enrollment.expectedUUID')}</label><input value={form.expected_node_uuid} onChange={event => update('expected_node_uuid', event.target.value)} placeholder={t('servers.enrollment.expectedUUIDPlaceholder')} /><div className="form-hint">{t('servers.enrollment.expectedUUIDHint')}</div></div>}
           <div className="form-group"><label>{t('servers.enrollment.labels')}</label><textarea rows={3} value={form.labels} onChange={event => update('labels', event.target.value)} placeholder={t('servers.enrollment.labelsPlaceholder')} /></div>
@@ -165,6 +167,7 @@ function RequestDialog({ details, busy, onApprove, onReject, onClose }) {
           <div><dt>{t('servers.enrollment.agent')}</dt><dd>{request.agent_version || '-'}</dd></div>
           <div><dt>{t('servers.enrollment.source')}</dt><dd>{request.source_ip || '-'}</dd></div>
           <div><dt>{t('servers.enrollment.invitation')}</dt><dd>{invitation.name} · <code>{invitation.token_prefix}</code></dd></div>
+          {invitation.purpose === 'migration' && details.target_server && <div><dt>{t('servers.enrollment.migrationTarget')}</dt><dd><strong>{details.target_server.name}</strong> · #{details.target_server.id} · <code>{details.target_server.api_host}</code></dd></div>}
           <div><dt>{t('servers.enrollment.createdBy')}</dt><dd>{invitation.created_by || '-'}</dd></div>
           <div><dt>{t('servers.enrollment.requestedAt')}</dt><dd>{formatDateTime(request.created_at)}</dd></div>
           {request.review_note && <div><dt>{t('servers.enrollment.reviewNote')}</dt><dd>{request.review_note}</dd></div>}
@@ -704,7 +707,7 @@ export default function ServersPage() {
           <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.enrollment.invitation')}</th><th>{t('servers.enrollment.scope')}</th><th>{t('servers.enrollment.usage')}</th><th>{t('servers.enrollment.expiresAt')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.list.operations')}</th></tr></thead><tbody>
             {invitations.map(invitation => <tr key={invitation.id}>
               <td><strong>{invitation.name}</strong><div><code>{invitation.token_prefix}</code></div></td>
-              <td>{invitation.purpose === 'recovery' ? t('servers.enrollment.recovery') : invitation.expected_node_uuid ? t('servers.enrollment.prebound') : t('servers.enrollment.standard')}<div className="muted-text">{[invitation.environment, invitation.region].filter(Boolean).join(' · ') || '-'}</div></td>
+              <td>{invitation.purpose === 'recovery' ? t('servers.enrollment.recovery') : invitation.purpose === 'migration' ? t('servers.enrollment.migration') : invitation.expected_node_uuid ? t('servers.enrollment.prebound') : t('servers.enrollment.standard')}<div className="muted-text">{[invitation.environment, invitation.region].filter(Boolean).join(' · ') || '-'}</div></td>
               <td>{invitation.used_count} / {invitation.max_uses}</td><td>{formatDateTime(invitation.expires_at)}</td>
               <td><span className={`tag tag-${INVITATION_STATE_TONE[invitation.state] || 'info'}`}>{t(`servers.enrollment.invitationState.${invitation.state}`)}</span></td>
               <td><button className="icon-button compact danger" type="button" disabled={!['active', 'used'].includes(invitation.state)} title={t('servers.enrollment.revoke')} onClick={() => revokeInvitation(invitation)}><UserX size={15} /></button></td>

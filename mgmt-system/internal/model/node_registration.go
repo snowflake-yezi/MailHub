@@ -30,8 +30,9 @@ const (
 	EnrollmentTokenExpired = "expired"
 	EnrollmentTokenRevoked = "revoked"
 
-	EnrollmentPurposeNew      = "new"
-	EnrollmentPurposeRecovery = "recovery"
+	EnrollmentPurposeNew       = "new"
+	EnrollmentPurposeMigration = "migration"
+	EnrollmentPurposeRecovery  = "recovery"
 
 	EnrollmentRequestPending   = "pending"
 	EnrollmentRequestApproved  = "approved"

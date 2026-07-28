@@ -1,10 +1,10 @@
 # Mail-node 节点注册与加入集群指南
 
-> 文档类型：当前运维指南（NR-P6）
+> 文档类型：当前运维指南（NR-P7）
 >
 > 适用方案：[Mail-node 注册、身份与出站控制通道设计](design/node-enrollment-control-channel-design.md)
 >
-> 实现状态：NR-P6 已实现独立 DataStream、分块读取、取消、并发/大小限制以及全部邮件与隔离区读取迁移。当前可进入远程 staging，生产关闭 node `8081`、移除 shared secret 和 canary/回滚验收仍属于 NR-P7。
+> 实现状态：NR-P7 代码已实现逐节点 transport 门禁、dual 影子读取、Legacy 节点原位注册迁移和 control_stream 本地 HTTP 关闭。生产关闭 node `8081`、移除 shared secret 仍必须在真实环境完成 canary、回滚与全业务验收。
 
 ---
 
@@ -38,7 +38,7 @@ system 创建短期注册邀请
 
 ---
 
-## 2. 两种注册模式
+## 2. 三种注册模式
 
 ### 2.1 标准审批注册（推荐）
 
@@ -53,6 +53,12 @@ system 创建短期注册邀请
 适合受监管机房、资产已提前备案、安装与审批职责分离，或必须提前锁定机器身份的环境。
 
 UUID 只是注册约束，不是密码。即使使用严格模式，也必须校验 Enrollment Token、TLS 服务端身份和批准后签发的节点独立凭证。
+
+### 2.3 现有 Legacy 节点原位迁移
+
+已有邮箱、域名和历史任务绑定在现有 `mail_servers` 行上时，必须在“注册用途”中显式选择该 Legacy 节点。system 会创建单次、禁止自动批准的迁移邀请；审批通过后只给原 server ID 绑定 node UUID、注册状态和 Agent 版本，不会新建 server 行，也不会改动地址、容量、邮箱、域名或分配状态。
+
+迁移目标必须仍满足 `node_uuid IS NULL`、`enrollment_state=legacy_approved` 和 `transport_mode=legacy_http`。目标在邀请、申请或审批期间发生变化时，事务会拒绝绑定。不得通过“注册新节点”后手工搬数据库关系来迁移生产节点。
 
 ---
 
@@ -135,9 +141,10 @@ install -m 0600 /dev/null /run/mail-node/enrollment-token
 mail-node enroll \
   --management-url https://mailhub.example.com \
   --token-file /run/mail-node/enrollment-token \
-  --ca-file /etc/mail-node/management-ca.pem \
   --name mail-node-cn-01
 ```
+
+公开受信任的 HTTPS 证书使用系统 CA，不传 `--ca-file`。只有 system 使用私有 CA 时，才追加 `--ca-file /etc/mail-node/management-ca.pem`，并提前安装对应 PEM 文件。
 
 该命令应完成：
 
@@ -207,19 +214,20 @@ node_control:
   command_timeout_seconds: 15
   data_max_concurrency_per_node: 4
   data_chunk_size: 262144
+  legacy_http_enabled: true
 ```
 
-已有节点 P6 canary 使用 `dual`：变更命令以 ControlStream 为单一主通道，读取优先 DataStream，并在数据会话尚未建立或请求建立失败时安全回退 legacy：
+已有节点 P7 canary 使用 `dual`：变更命令以 ControlStream 为单一主通道，读取优先 DataStream，并在数据会话尚未建立或请求建立失败时安全回退 legacy。使用公开受信任证书时 `ca_file` 留空以使用系统 CA；私有 CA 才填写 PEM 文件：
 
 ```yaml
 management:
   control_url: "node-control.example.com:443"
   transport_mode: "dual"
   credential_file: "/var/lib/mail-node/identity/credential"
-  ca_file: "/etc/mail-node/management-ca.pem"
+  ca_file: ""
 ```
 
-`control_stream` 已覆盖域名、邮箱、消息删除、生命周期、隔离区命令，以及邮件列表/正文、raw EML、附件/预览、隔离区原件/附件读取。同步命令等待超过 `command_timeout_seconds` 时返回 `202` 和 `operation_id`，不能据此判断业务失败。P7 前生产节点仍建议保持 `dual`、shared secret 和 node `8081`，完成 canary 与回滚演练后再关闭兼容入口。
+`control_stream` 已覆盖域名、邮箱、消息删除、生命周期、隔离区命令，以及邮件列表/正文、raw EML、附件/预览、隔离区原件/附件读取。同步命令等待超过 `command_timeout_seconds` 时返回 `202` 和 `operation_id`，不能据此判断业务失败。生产节点应先保持 `dual`、shared secret 和 node `8081`，完成 canary 与回滚演练后再关闭兼容入口。
 
 注册完成后删除临时文件：
 
@@ -259,11 +267,21 @@ NR-P2 输出为机器可读 JSON，必须确认：
 - raw EML 和附件按不超过 `data_chunk_size` 的分块传输，结束帧总字节数和 SHA-256 校验通过。
 - 下载客户端取消后 node 读取器及时关闭；超时和慢消费者只取消对应请求。
 
-P6 canary 通过后，可为 `dual` 节点启用分配，并在远程 staging 中验证纯 `control_stream` 节点不配置可达 `api_host` 仍能完成全部业务。生产启用纯 `control_stream`、关闭 `8081` 和清理 shared secret 必须等 NR-P7 验收。
+P7 dual canary 通过后，可在远程 staging 中验证纯 `control_stream` 节点不配置可达 `api_host` 仍能完成全部业务。生产启用纯 `control_stream`、关闭 `8081` 和清理 shared secret 必须等远程验收与回滚证据完整。
 
 ---
 
-## 5. 严格预绑定 UUID
+## 5. 现有 Legacy 节点原位迁移
+
+1. 在“服务器池 -> 创建邀请”的“注册用途”中选择带 `Legacy` 标识的现有 server，并核对页面显示的 server ID、名称和 `api_host`。
+2. 在目标 node 按第 4 节步骤 2-3 保存 Token 并执行 `mail-node enroll`。不要先删除、复制或手工修改原 server 行。
+3. 审批页再次核对迁移目标、node UUID、主机名、机器指纹和来源 IP，再人工批准。
+4. node 领取凭证后，确认后台 server ID 未变化，原邮箱数、域名绑定、容量和 legacy 健康状态保持不变。
+5. 先在 node 配置 `management.transport_mode: dual` 并重启，使 ControlStream/DataStream 建连；确认 lease 与 readiness 后，再通过 transport API 把同一 server 切到 `dual`。
+
+迁移和 transport 切换是两个独立步骤。注册完成不会自动改变 transport；失败回滚到 `legacy_http` 也不会撤销 UUID、节点凭证或已完成的持久命令。
+
+## 6. 严格预绑定 UUID
 
 ### 步骤 1：在 node 初始化并读取身份
 
@@ -303,7 +321,7 @@ system 必须保证：
 
 ---
 
-## 6. 注册后的 system 页面
+## 7. 注册后的 system 页面
 
 节点详情页应至少显示：
 
@@ -335,7 +353,7 @@ system 必须保证：
 
 ---
 
-## 7. 常见问题
+## 8. 常见问题
 
 ### system 添加 node 时到底要不要 UUID？
 
@@ -371,9 +389,9 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 ---
 
-## 8. 异常与恢复
+## 9. 异常与恢复
 
-### 8.1 重复 UUID
+### 9.1 重复 UUID
 
 如果同一 UUID 同时从两个不同机器指纹或不同凭证建立连接：
 
@@ -384,7 +402,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 不得允许两个会话共享同一 UUID 来临时绕过。
 
-### 8.2 节点系统重装
+### 9.2 节点系统重装
 
 有安全备份且确认原机器时，恢复整个身份目录及其权限。没有可信节点凭证时：
 
@@ -393,11 +411,11 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 3. 创建带审计的身份恢复邀请，或按新节点注册。
 4. 不要仅凭原 IP 认领旧节点。
 
-### 8.3 替换硬件
+### 9.3 替换硬件
 
 新硬件默认注册为新 UUID。邮箱数据迁移、域名切换和旧节点退役是独立流程，不应复制旧节点运行 Token 来伪装成旧节点。
 
-### 8.4 撤销节点
+### 9.4 撤销节点
 
 推荐顺序：
 
@@ -409,7 +427,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 ---
 
-## 9. 自动化注册
+## 10. 自动化注册
 
 自动化平台可以通过 system 管理 API 创建短期邀请，再将 Token 注入实例临时 Secret。要求：
 
@@ -424,7 +442,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 ---
 
-## 10. 安全检查清单
+## 11. 安全检查清单
 
 - [ ] system 注册入口仅通过 HTTPS 提供。
 - [ ] node 校验 system 证书，不启用 insecure skip verify。
@@ -441,7 +459,7 @@ enroll 返回可重试错误并保留本地 UUID。system 恢复后用仍有效�
 
 ---
 
-## 11. 当前阶段验收
+## 12. 当前阶段验收
 
 当前实现提供不泄露敏感信息的机器可读输出：
 
@@ -459,4 +477,4 @@ system 侧应能核对：
 新节点保持 allocation=disabled
 ```
 
-NR-P2 已覆盖标准审批、严格预绑定、Token 过期/撤销/重复使用、拒绝、凭证轮换/撤销和重装恢复。NR-P4-P6 已覆盖出站连接、lease、revision、持久命令、节点幂等日志、DataStream 读取、取消和 Control/Data 隔离。当前发现机制与 shared secret 仍作为 legacy 兼容路径保留，只有 NR-P7 完成 canary、回滚和关闭 `8081` 验收后才能移除。
+NR-P2 已覆盖标准审批、严格预绑定、Token 过期/撤销/重复使用、拒绝、凭证轮换/撤销和重装恢复。NR-P4-P6 已覆盖出站连接、lease、revision、持久命令、节点幂等日志、DataStream 读取、取消和 Control/Data 隔离。NR-P7 已补齐 Legacy 原位迁移、逐节点切换门禁、dual 影子读取与 control_stream HTTP 关闭；shared secret 仍作为 dual/legacy 兼容路径保留，只有远程 canary、回滚和关闭 `8081` 验收后才能移除。

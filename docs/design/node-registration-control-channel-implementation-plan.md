@@ -1,6 +1,6 @@
 # 节点注册发现与出站控制通道实施计划
 
-> 状态：NR-P0、NR-P1、NR-P2、NR-P3、NR-P4、NR-P5、NR-P6 已完成，下一步 NR-P7
+> 状态：NR-P0 至 NR-P6 已完成；NR-P7 代码完成，下一步远程 canary、回滚和防火墙验收
 >
 > 优先级：P0，当前开发主线
 >
@@ -706,7 +706,7 @@ public_host + mail_public_ips
 
 ### NR-P7：dual 灰度与关闭 8081
 
-状态：代码完成（节点切换、fleet preflight、dual 影子读取、凭证解耦和 control_stream HTTP 关闭已实现；真实远程验收待执行）。
+状态：代码完成（节点切换、fleet preflight、dual 影子读取、Legacy 节点原位注册迁移、凭证解耦和 control_stream HTTP 关闭已实现；真实远程验收待执行）。
 
 交付：
 

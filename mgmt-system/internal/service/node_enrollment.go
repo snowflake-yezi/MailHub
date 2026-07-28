@@ -73,6 +73,7 @@ type EnrollmentClaimResult struct {
 type EnrollmentRequestDetails struct {
 	Request      model.NodeEnrollmentRequest   `json:"request"`
 	Invitation   model.NodeEnrollmentToken     `json:"invitation"`
+	TargetServer *model.MailServer             `json:"target_server,omitempty"`
 	Credential   *model.NodeCredential         `json:"credential,omitempty"`
 	RecentAudits []model.NodeRegistrationAudit `json:"recent_audits"`
 }
@@ -122,17 +123,27 @@ func (service *NodeEnrollmentService) CreateEnrollment(input CreateEnrollmentInp
 	var recoveryServerID *uint64
 	if input.RecoveryServerID != 0 {
 		server, err := service.store.GetServer(input.RecoveryServerID)
-		if err != nil || server.NodeUUID == nil {
-			return nil, fmt.Errorf("recovery server must have a node UUID: %w", ErrEnrollmentNotFound)
+		if err != nil {
+			return nil, fmt.Errorf("existing server not found: %w", ErrEnrollmentNotFound)
 		}
-		purpose = model.EnrollmentPurposeRecovery
-		expected := *server.NodeUUID
-		expectedUUID = &expected
+		if server.NodeUUID == nil {
+			if server.EnrollmentState != model.EnrollmentLegacyApproved || server.TransportMode != model.TransportLegacyHTTP {
+				return nil, fmt.Errorf("only legacy HTTP servers can be migrated in place: %w", ErrEnrollmentInvalidState)
+			}
+			purpose = model.EnrollmentPurposeMigration
+		} else {
+			if strings.TrimSpace(*server.NodeUUID) == "" {
+				return nil, fmt.Errorf("existing server has an invalid empty node UUID: %w", ErrEnrollmentInvalidState)
+			}
+			purpose = model.EnrollmentPurposeRecovery
+			expected := *server.NodeUUID
+			expectedUUID = &expected
+		}
 		recoveryID := server.ID
 		recoveryServerID = &recoveryID
 		input.MaxUses = 1
 		if input.AutoApprove {
-			return nil, fmt.Errorf("recovery invitations cannot auto approve")
+			return nil, fmt.Errorf("migration and recovery invitations cannot auto approve")
 		}
 	} else if strings.TrimSpace(input.ExpectedNodeUUID) != "" {
 		normalized, err := normalizeNodeUUID(input.ExpectedNodeUUID)
@@ -155,12 +166,50 @@ func (service *NodeEnrollmentService) CreateEnrollment(input CreateEnrollmentInp
 		AutoApprove: input.AutoApprove, CreatedBy: input.Actor,
 	}
 	err = service.store.DB().Transaction(func(tx *gorm.DB) error {
+		if recoveryServerID != nil {
+			var current model.MailServer
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, *recoveryServerID).Error; err != nil {
+				return ErrEnrollmentNotFound
+			}
+			switch purpose {
+			case model.EnrollmentPurposeMigration:
+				if current.NodeUUID != nil || current.EnrollmentState != model.EnrollmentLegacyApproved || current.TransportMode != model.TransportLegacyHTTP {
+					return ErrEnrollmentInvalidState
+				}
+				var competing int64
+				if err := tx.Model(&model.NodeEnrollmentToken{}).
+					Where("purpose = ? AND recovery_server_id = ? AND state = ? AND expires_at > ?",
+						model.EnrollmentPurposeMigration, current.ID, model.EnrollmentTokenActive, now).
+					Count(&competing).Error; err != nil {
+					return err
+				}
+				if competing == 0 {
+					if err := tx.Model(&model.NodeEnrollmentRequest{}).
+						Joins("JOIN node_enrollment_tokens ON node_enrollment_tokens.id = node_enrollment_requests.enrollment_token_id").
+						Where("node_enrollment_tokens.purpose = ? AND node_enrollment_tokens.recovery_server_id = ? AND node_enrollment_requests.state IN ?",
+							model.EnrollmentPurposeMigration, current.ID, []string{model.EnrollmentRequestPending, model.EnrollmentRequestApproved}).
+						Count(&competing).Error; err != nil {
+						return err
+					}
+				}
+				if competing != 0 {
+					return ErrEnrollmentInvalidState
+				}
+			case model.EnrollmentPurposeRecovery:
+				if current.NodeUUID == nil || expectedUUID == nil || *current.NodeUUID != *expectedUUID {
+					return ErrEnrollmentUUIDMismatch
+				}
+			default:
+				return ErrEnrollmentInvalidState
+			}
+		}
 		if err := tx.Create(&record).Error; err != nil {
 			return err
 		}
 		return createNodeAudit(tx, "invitation.create", "invitation", fmt.Sprint(record.ID), input.Actor, input.SourceIP, map[string]any{
 			"purpose": purpose, "token_prefix": record.TokenPrefix, "expires_at": record.ExpiresAt,
 			"max_uses": record.MaxUses, "auto_approve": record.AutoApprove, "expected_node_uuid": expectedUUID,
+			"target_server_id": recoveryServerID,
 		})
 	})
 	if err != nil {
@@ -250,7 +299,8 @@ func (service *NodeEnrollmentService) Claim(input EnrollmentClaimInput) (*Enroll
 		if invitation.ExpectedNodeUUID != nil && *invitation.ExpectedNodeUUID != nodeUUID {
 			return ErrEnrollmentUUIDMismatch
 		}
-		if invitation.Purpose == model.EnrollmentPurposeRecovery {
+		switch invitation.Purpose {
+		case model.EnrollmentPurposeRecovery:
 			if invitation.RecoveryServerID == nil || invitation.ExpectedNodeUUID == nil {
 				return ErrEnrollmentInvalidState
 			}
@@ -258,7 +308,30 @@ func (service *NodeEnrollmentService) Claim(input EnrollmentClaimInput) (*Enroll
 			if err := tx.First(&server, *invitation.RecoveryServerID).Error; err != nil || server.NodeUUID == nil || *server.NodeUUID != nodeUUID {
 				return ErrEnrollmentUUIDMismatch
 			}
-		} else {
+		case model.EnrollmentPurposeMigration:
+			if invitation.RecoveryServerID == nil || invitation.ExpectedNodeUUID != nil {
+				return ErrEnrollmentInvalidState
+			}
+			var server model.MailServer
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&server, *invitation.RecoveryServerID).Error; err != nil {
+				return ErrEnrollmentNotFound
+			}
+			if server.NodeUUID != nil || server.EnrollmentState != model.EnrollmentLegacyApproved || server.TransportMode != model.TransportLegacyHTTP {
+				return ErrEnrollmentInvalidState
+			}
+			var targetCount int64
+			if err := tx.Model(&model.NodeEnrollmentRequest{}).
+				Joins("JOIN node_enrollment_tokens ON node_enrollment_tokens.id = node_enrollment_requests.enrollment_token_id").
+				Where("node_enrollment_tokens.purpose = ? AND node_enrollment_tokens.recovery_server_id = ? AND node_enrollment_requests.state IN ?",
+					model.EnrollmentPurposeMigration, *invitation.RecoveryServerID, []string{model.EnrollmentRequestPending, model.EnrollmentRequestApproved}).
+				Count(&targetCount).Error; err != nil {
+				return err
+			}
+			if targetCount != 0 {
+				return ErrEnrollmentInvalidState
+			}
+			fallthrough
+		case model.EnrollmentPurposeNew:
 			var count int64
 			if err := tx.Model(&model.MailServer{}).Where("node_uuid = ?", nodeUUID).Count(&count).Error; err != nil {
 				return err
@@ -266,6 +339,8 @@ func (service *NodeEnrollmentService) Claim(input EnrollmentClaimInput) (*Enroll
 			if count != 0 {
 				return ErrEnrollmentDuplicateUUID
 			}
+		default:
+			return ErrEnrollmentInvalidState
 		}
 		var pendingCount int64
 		if err := tx.Model(&model.NodeEnrollmentRequest{}).
@@ -328,7 +403,15 @@ func (service *NodeEnrollmentService) ListRequests(state string) ([]EnrollmentRe
 		if err := service.store.DB().First(&invitation, request.EnrollmentTokenID).Error; err != nil {
 			return nil, err
 		}
-		result = append(result, EnrollmentRequestDetails{Request: request, Invitation: invitation, RecentAudits: []model.NodeRegistrationAudit{}})
+		details := EnrollmentRequestDetails{Request: request, Invitation: invitation, RecentAudits: []model.NodeRegistrationAudit{}}
+		if invitation.RecoveryServerID != nil {
+			server, err := service.store.GetServer(*invitation.RecoveryServerID)
+			if err != nil {
+				return nil, err
+			}
+			details.TargetServer = server
+		}
+		result = append(result, details)
 	}
 	return result, nil
 }
@@ -343,6 +426,13 @@ func (service *NodeEnrollmentService) GetRequest(id string) (*EnrollmentRequestD
 		return nil, err
 	}
 	details := &EnrollmentRequestDetails{Request: request, Invitation: invitation, RecentAudits: []model.NodeRegistrationAudit{}}
+	if invitation.RecoveryServerID != nil {
+		server, err := service.store.GetServer(*invitation.RecoveryServerID)
+		if err != nil {
+			return nil, err
+		}
+		details.TargetServer = server
+	}
 	if request.ServerID != nil {
 		var credential model.NodeCredential
 		if err := service.store.DB().Where("server_id = ?", *request.ServerID).Order("version DESC").First(&credential).Error; err == nil {
@@ -386,7 +476,8 @@ func (service *NodeEnrollmentService) ApproveRequest(id, actor, note, sourceIP s
 			return err
 		}
 		var server model.MailServer
-		if invitation.Purpose == model.EnrollmentPurposeRecovery {
+		switch invitation.Purpose {
+		case model.EnrollmentPurposeRecovery:
 			if invitation.RecoveryServerID == nil {
 				return ErrEnrollmentInvalidState
 			}
@@ -401,7 +492,35 @@ func (service *NodeEnrollmentService) ApproveRequest(id, actor, note, sourceIP s
 			}).Error; err != nil {
 				return err
 			}
-		} else {
+		case model.EnrollmentPurposeMigration:
+			if invitation.RecoveryServerID == nil || invitation.ExpectedNodeUUID != nil {
+				return ErrEnrollmentInvalidState
+			}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&server, *invitation.RecoveryServerID).Error; err != nil {
+				return err
+			}
+			if server.NodeUUID != nil || server.EnrollmentState != model.EnrollmentLegacyApproved || server.TransportMode != model.TransportLegacyHTTP {
+				return ErrEnrollmentInvalidState
+			}
+			nodeUUID := approved.RequestedNodeUUID
+			result := tx.Model(&model.MailServer{}).
+				Where("id = ? AND node_uuid IS NULL AND enrollment_state = ? AND transport_mode = ?", server.ID, model.EnrollmentLegacyApproved, model.TransportLegacyHTTP).
+				Updates(map[string]any{
+					"node_uuid": &nodeUUID, "enrollment_state": model.EnrollmentApproved, "agent_version": approved.AgentVersion,
+				})
+			if result.Error != nil {
+				if isDuplicateError(result.Error) {
+					return ErrEnrollmentDuplicateUUID
+				}
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrEnrollmentInvalidState
+			}
+			server.NodeUUID = &nodeUUID
+			server.EnrollmentState = model.EnrollmentApproved
+			server.AgentVersion = approved.AgentVersion
+		case model.EnrollmentPurposeNew:
 			nodeUUID := approved.RequestedNodeUUID
 			server = model.MailServer{
 				Name: approved.RequestedName, NodeUUID: &nodeUUID, APIHost: "", SMTPHost: "", IMAPHost: "",
@@ -416,6 +535,8 @@ func (service *NodeEnrollmentService) ApproveRequest(id, actor, note, sourceIP s
 				}
 				return err
 			}
+		default:
+			return ErrEnrollmentInvalidState
 		}
 		result := tx.Model(&model.NodeEnrollmentRequest{}).Where("id = ? AND state = ?", approved.ID, model.EnrollmentRequestPending).
 			Updates(map[string]any{"state": model.EnrollmentRequestApproved, "reviewed_by": actor, "reviewed_at": &now, "review_note": strings.TrimSpace(note), "server_id": server.ID})
@@ -463,18 +584,37 @@ func (service *NodeEnrollmentService) CompleteRequest(id, requestSecret, sourceI
 	now := service.now().UTC()
 	record := model.NodeCredential{CredentialPrefix: prefix(credential), CredentialHash: HashNodeSecret(credential), State: model.NodeCredentialActive}
 	err = service.store.DB().Transaction(func(tx *gorm.DB) error {
-		var request model.NodeEnrollmentRequest
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("id = ? AND request_secret_hash = ?", strings.TrimSpace(id), HashNodeSecret(strings.TrimSpace(requestSecret))).First(&request).Error; err != nil {
+		requestID := strings.TrimSpace(id)
+		requestSecretHash := HashNodeSecret(strings.TrimSpace(requestSecret))
+		var candidate model.NodeEnrollmentRequest
+		if err := tx.Where("id = ? AND request_secret_hash = ?", requestID, requestSecretHash).First(&candidate).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrEnrollmentRequestSecret
 			}
 			return err
 		}
-		if request.State != model.EnrollmentRequestApproved || request.ServerID == nil {
+		if candidate.State != model.EnrollmentRequestApproved || candidate.ServerID == nil {
 			return ErrEnrollmentInvalidState
 		}
-		record.ServerID = *request.ServerID
+		var server model.MailServer
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&server, *candidate.ServerID).Error; err != nil {
+			return mapNotFound(err)
+		}
+		var request model.NodeEnrollmentRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND request_secret_hash = ?", requestID, requestSecretHash).First(&request).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrEnrollmentRequestSecret
+			}
+			return err
+		}
+		if request.State != model.EnrollmentRequestApproved || request.ServerID == nil || *request.ServerID != server.ID {
+			return ErrEnrollmentInvalidState
+		}
+		if server.NodeUUID == nil || *server.NodeUUID != request.RequestedNodeUUID || server.EnrollmentState != model.EnrollmentApproved {
+			return ErrEnrollmentInvalidState
+		}
+		record.ServerID = server.ID
 		var version uint64
 		if err := tx.Model(&model.NodeCredential{}).Where("server_id = ?", record.ServerID).
 			Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
@@ -551,8 +691,14 @@ func (service *NodeEnrollmentService) RevokeCredentials(serverID uint64, actor, 
 	now := service.now().UTC()
 	return service.store.DB().Transaction(func(tx *gorm.DB) error {
 		var server model.MailServer
-		if err := tx.First(&server, serverID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&server, serverID).Error; err != nil {
 			return mapNotFound(err)
+		}
+		invalidated := tx.Model(&model.NodeEnrollmentRequest{}).
+			Where("server_id = ? AND state = ?", serverID, model.EnrollmentRequestApproved).
+			Update("state", model.EnrollmentRequestExpired)
+		if invalidated.Error != nil {
+			return invalidated.Error
 		}
 		if err := tx.Model(&model.NodeCredential{}).Where("server_id = ? AND state IN ?", serverID, []string{model.NodeCredentialActive, model.NodeCredentialRotating}).
 			Updates(map[string]any{"state": model.NodeCredentialRevoked, "revoked_at": &now}).Error; err != nil {
@@ -564,7 +710,9 @@ func (service *NodeEnrollmentService) RevokeCredentials(serverID uint64, actor, 
 		}).Error; err != nil {
 			return err
 		}
-		return createNodeAudit(tx, "credential.revoke", "server", fmt.Sprint(serverID), actor, sourceIP, map[string]any{})
+		return createNodeAudit(tx, "credential.revoke", "server", fmt.Sprint(serverID), actor, sourceIP, map[string]any{
+			"invalidated_requests": invalidated.RowsAffected,
+		})
 	})
 }
 

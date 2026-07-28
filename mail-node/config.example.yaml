@@ -14,7 +14,8 @@ management:
   control_url: "node-control.example.com:443"
   transport_mode: "legacy_http"
   credential_file: "/var/lib/mail-node/identity/credential"
-  ca_file: "/etc/mail-node/management-ca.pem"
+  # Leave empty for a publicly trusted certificate; set a PEM path for a private CA.
+  ca_file: ""
   heartbeat_interval: 30
   filter_sync_interval: 3600
 

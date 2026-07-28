@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,20 @@ type sqliteEnrollmentMailServer struct {
 
 func (sqliteEnrollmentMailServer) TableName() string { return "mail_servers" }
 
+type sqliteEnrollmentMailboxReference struct {
+	ID       uint64 `gorm:"primaryKey;autoIncrement"`
+	ServerID uint64 `gorm:"not null;index"`
+}
+
+func (sqliteEnrollmentMailboxReference) TableName() string { return "mailbox_accounts" }
+
+type sqliteEnrollmentDomainReference struct {
+	ID       uint64 `gorm:"primaryKey;autoIncrement"`
+	ServerID uint64 `gorm:"not null;index"`
+}
+
+func (sqliteEnrollmentDomainReference) TableName() string { return "server_domains" }
+
 func (store *enrollmentTestStore) DB() *gorm.DB { return store.db }
 func (store *enrollmentTestStore) GetServer(id uint64) (*model.MailServer, error) {
 	var server model.MailServer
@@ -80,6 +95,7 @@ func newEnrollmentTestService(t *testing.T) (*NodeEnrollmentService, *gorm.DB, *
 	if err := db.AutoMigrate(
 		&sqliteEnrollmentMailServer{}, &model.NodeEnrollmentToken{}, &model.NodeEnrollmentRequest{},
 		&model.NodeCredential{}, &model.NodeRegistrationAudit{},
+		&sqliteEnrollmentMailboxReference{}, &sqliteEnrollmentDomainReference{},
 	); err != nil {
 		t.Fatalf("migrate enrollment test schema: %v", err)
 	}
@@ -264,6 +280,66 @@ func TestEnrollmentInvitationBoundariesAndRejection(t *testing.T) {
 	}
 }
 
+func TestEnrollmentCompleteRejectsRevokedServer(t *testing.T) {
+	service, db, _ := newEnrollmentTestService(t)
+	invitation, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "revoked before completion", Actor: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.Claim(EnrollmentClaimInput{Token: invitation.Token, NodeUUID: testNodeUUIDA, Name: "revoked-node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	approved, err := service.ApproveRequest(claim.Request.ID, "admin", "verified", "127.0.0.1")
+	if err != nil || approved.ServerID == nil {
+		t.Fatalf("approve request = %+v, error = %v", approved, err)
+	}
+	if err := service.RevokeCredentials(*approved.ServerID, "admin", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := service.CompleteRequest(claim.Request.ID, claim.RequestSecret, "127.0.0.1"); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("completion after revocation error = %v", err)
+	}
+
+	var request model.NodeEnrollmentRequest
+	if err := db.First(&request, "id = ?", claim.Request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if request.State != model.EnrollmentRequestExpired {
+		t.Fatalf("revocation did not invalidate approved request: %+v", request)
+	}
+	var credentialCount, completionAuditCount int64
+	if err := db.Model(&model.NodeCredential{}).Where("server_id = ?", *approved.ServerID).Count(&credentialCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.NodeRegistrationAudit{}).
+		Where("action = ? AND entity_id = ?", "request.complete", claim.Request.ID).Count(&completionAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if credentialCount != 0 || completionAuditCount != 0 {
+		t.Fatalf("failed completion left partial state: credentials=%d audits=%d", credentialCount, completionAuditCount)
+	}
+
+	recovery, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "recover revoked node", RecoveryServerID: *approved.ServerID, Actor: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryClaim, err := service.Claim(EnrollmentClaimInput{Token: recovery.Token, NodeUUID: testNodeUUIDA, Name: "recovered-node"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApproveRequest(recoveryClaim.Request.ID, "admin", "recovery verified", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.CompleteRequest(claim.Request.ID, claim.RequestSecret, "127.0.0.1"); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("old request revived after recovery approval: %v", err)
+	}
+	if _, _, err := service.CompleteRequest(recoveryClaim.Request.ID, recoveryClaim.RequestSecret, "127.0.0.1"); err != nil {
+		t.Fatalf("recovery request completion error = %v", err)
+	}
+}
+
 func TestEnrollmentRecoveryReusesServerAndRevokesOldCredential(t *testing.T) {
 	service, db, now := newEnrollmentTestService(t)
 	nodeUUID := testNodeUUIDA
@@ -320,5 +396,172 @@ func TestEnrollmentRecoveryReusesServerAndRevokesOldCredential(t *testing.T) {
 	}
 	if _, err := service.AuthenticateCredential(newRaw, nodeUUID, *now); err != nil {
 		t.Fatalf("new recovery credential error = %v", err)
+	}
+}
+
+func TestEnrollmentMigrationAdoptsLegacyServerInPlace(t *testing.T) {
+	service, db, now := newEnrollmentTestService(t)
+	server := model.MailServer{
+		Name: "legacy-existing", APIHost: "10.0.0.9:8081", SMTPHost: "smtp.example", IMAPHost: "imap.example",
+		PublicHost: "mail.example", MailPublicIPs: []string{"203.0.113.9"}, Capacity: 321, CurrentLoad: 17,
+		Status: "healthy", EnrollmentState: model.EnrollmentLegacyApproved, ConnectionState: model.ConnectionUnknown,
+		ReadinessState: model.ReadinessReady, AllocationState: model.AllocationActive, TransportMode: model.TransportLegacyHTTP,
+		DesiredRevision: 23, AppliedRevision: 22, LastApplyError: "legacy warning", HeartbeatInterval: 45,
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&sqliteEnrollmentMailboxReference{ServerID: server.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&sqliteEnrollmentDomainReference{ServerID: server.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	invitation, err := service.CreateEnrollment(CreateEnrollmentInput{
+		Name: "migrate legacy", RecoveryServerID: server.ID, MaxUses: 9, Actor: "admin", SourceIP: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invitation.Invitation.Purpose != model.EnrollmentPurposeMigration || invitation.Invitation.ExpectedNodeUUID != nil ||
+		invitation.Invitation.RecoveryServerID == nil || *invitation.Invitation.RecoveryServerID != server.ID || invitation.Invitation.MaxUses != 1 {
+		t.Fatalf("migration invitation = %+v", invitation.Invitation)
+	}
+
+	claim, err := service.Claim(EnrollmentClaimInput{
+		Token: invitation.Token, NodeUUID: testNodeUUIDA, Name: "legacy-existing", Hostname: "mx-existing",
+		OS: "linux", Arch: "amd64", AgentVersion: "p7-migration", MachineFingerprint: "sha256:" + strings.Repeat("c", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	details, err := service.GetRequest(claim.Request.ID)
+	if err != nil || details.TargetServer == nil || details.TargetServer.ID != server.ID || details.TargetServer.APIHost != server.APIHost {
+		t.Fatalf("migration request target = %+v, error = %v", details, err)
+	}
+	approved, err := service.ApproveRequest(claim.Request.ID, "admin", "legacy host verified", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.ServerID == nil || *approved.ServerID != server.ID {
+		t.Fatalf("migration server ID = %v, want %d", approved.ServerID, server.ID)
+	}
+
+	var migrated model.MailServer
+	if err := db.First(&migrated, server.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if migrated.NodeUUID == nil || *migrated.NodeUUID != testNodeUUIDA || migrated.EnrollmentState != model.EnrollmentApproved {
+		t.Fatalf("migrated identity = %+v", migrated)
+	}
+	if migrated.APIHost != server.APIHost || migrated.SMTPHost != server.SMTPHost || migrated.IMAPHost != server.IMAPHost ||
+		migrated.PublicHost != server.PublicHost || migrated.Capacity != server.Capacity || migrated.CurrentLoad != server.CurrentLoad ||
+		migrated.Status != server.Status || migrated.ConnectionState != server.ConnectionState || migrated.ReadinessState != server.ReadinessState ||
+		migrated.AllocationState != server.AllocationState || migrated.TransportMode != model.TransportLegacyHTTP ||
+		migrated.DesiredRevision != server.DesiredRevision || migrated.AppliedRevision != server.AppliedRevision ||
+		migrated.LastApplyError != server.LastApplyError || migrated.HeartbeatInterval != server.HeartbeatInterval ||
+		len(migrated.MailPublicIPs) != 1 || migrated.MailPublicIPs[0] != server.MailPublicIPs[0] {
+		t.Fatalf("migration changed legacy server state: before=%+v after=%+v", server, migrated)
+	}
+	var serverCount int64
+	if err := db.Model(&model.MailServer{}).Count(&serverCount).Error; err != nil || serverCount != 1 {
+		t.Fatalf("server count = %d, error = %v", serverCount, err)
+	}
+	var mailboxRefs, domainRefs int64
+	if err := db.Model(&sqliteEnrollmentMailboxReference{}).Where("server_id = ?", server.ID).Count(&mailboxRefs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&sqliteEnrollmentDomainReference{}).Where("server_id = ?", server.ID).Count(&domainRefs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if mailboxRefs != 1 || domainRefs != 1 {
+		t.Fatalf("legacy references changed: mailboxes=%d domains=%d", mailboxRefs, domainRefs)
+	}
+	var invitationAudit model.NodeRegistrationAudit
+	if err := db.Where("action = ? AND entity_id = ?", "invitation.create", invitation.Invitation.ID).First(&invitationAudit).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(invitationAudit.Details, fmt.Sprintf("\"target_server_id\":%d", server.ID)) || strings.Contains(invitationAudit.Details, invitation.Token) {
+		t.Fatalf("migration invitation audit = %+v", invitationAudit)
+	}
+
+	rawCredential, _, err := service.CompleteRequest(claim.Request.ID, claim.RequestSecret, "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := service.AuthenticateCredential(rawCredential, testNodeUUIDA, *now)
+	if err != nil || principal.ServerID != server.ID {
+		t.Fatalf("migration credential principal = %+v, error = %v", principal, err)
+	}
+}
+
+func TestEnrollmentMigrationRejectsCompetingInvitationForSameLegacyServer(t *testing.T) {
+	service, db, _ := newEnrollmentTestService(t)
+	server := model.MailServer{
+		Name: "legacy-existing", APIHost: "10.0.0.9:8081", SMTPHost: "smtp.example", IMAPHost: "imap.example",
+		Capacity: 100, Status: "healthy", EnrollmentState: model.EnrollmentLegacyApproved,
+		ConnectionState: model.ConnectionUnknown, ReadinessState: model.ReadinessReady,
+		AllocationState: model.AllocationActive, TransportMode: model.TransportLegacyHTTP,
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	first, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "first migration", RecoveryServerID: server.ID, Actor: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "second migration", RecoveryServerID: server.ID, Actor: "admin"}); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("competing migration invitation error = %v", err)
+	}
+	if _, err := service.Claim(EnrollmentClaimInput{Token: first.Token, NodeUUID: testNodeUUIDA, Name: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "third migration", RecoveryServerID: server.ID, Actor: "admin"}); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("migration invitation while request is pending error = %v", err)
+	}
+}
+
+func TestEnrollmentMigrationRejectsTargetChangeBeforeApproval(t *testing.T) {
+	service, db, _ := newEnrollmentTestService(t)
+	server := model.MailServer{
+		Name: "legacy-changing", APIHost: "10.0.0.10:8081", SMTPHost: "smtp.example", IMAPHost: "imap.example",
+		Capacity: 100, Status: "healthy", EnrollmentState: model.EnrollmentLegacyApproved,
+		ConnectionState: model.ConnectionUnknown, ReadinessState: model.ReadinessReady,
+		AllocationState: model.AllocationActive, TransportMode: model.TransportLegacyHTTP,
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	invitation, err := service.CreateEnrollment(CreateEnrollmentInput{Name: "migration", RecoveryServerID: server.ID, Actor: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.Claim(EnrollmentClaimInput{Token: invitation.Token, NodeUUID: testNodeUUIDA, Name: "legacy-changing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.MailServer{}).Where("id = ?", server.ID).Update("transport_mode", model.TransportDual).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ApproveRequest(claim.Request.ID, "admin", "must fail", "127.0.0.1"); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("approval after target change error = %v", err)
+	}
+	var request model.NodeEnrollmentRequest
+	if err := db.First(&request, "id = ?", claim.Request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if request.State != model.EnrollmentRequestPending || request.ServerID != nil {
+		t.Fatalf("failed approval changed request = %+v", request)
+	}
+	var credentialCount, approveAuditCount int64
+	if err := db.Model(&model.NodeCredential{}).Count(&credentialCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.NodeRegistrationAudit{}).Where("action = ? AND entity_id = ?", "request.approve", request.ID).Count(&approveAuditCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if credentialCount != 0 || approveAuditCount != 0 {
+		t.Fatalf("failed approval left partial state: credentials=%d audits=%d", credentialCount, approveAuditCount)
 	}
 }

@@ -20,6 +20,10 @@ its enrolled identity has an active control lease and reports `ready`.
   available for the final migrated state.
 - `GET /api/v1/admin/servers/transport-preflight` reports fleet cutover blockers.
 - `dual` query reads run a bounded legacy shadow read and compare status/body hashes without changing the primary result.
+- An administrator can migrate a selected legacy server in place; approval binds
+  the node UUID to the existing server ID without moving mailbox/domain ownership.
+- A dual node's local HTTP routes accept either its node credential or the
+  retained shared secret, so legacy probes, shadow reads, and fallback remain usable.
 - Control-stream nodes use their node credential for management HTTP calls and do not bind the local legacy HTTP listener.
 
 ## Remote acceptance still required
