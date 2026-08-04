@@ -102,11 +102,10 @@ func readForFiltering(filePath string, maxSize, bodyLimit int64) (headers map[st
 
 // streamToSMTP sends the email file to union via SMTP.
 //
-// Robust body-preservation strategy: instead of parsing and selectively
-// copying MIME headers (which can drop boundary/filename/disposition
-// parameters), we read the raw file, modify ONLY the Subject line in the
-// original headers, prepend our forwarding headers, and pass the original
-// body through byte-for-byte unchanged.
+// Robust body-preservation strategy: read the raw file, modify only the
+// Subject line in the original headers, prepend forwarding headers, and
+// recursively repair only CID-referenced generic inline part headers. MIME
+// boundaries, transfer encodings, and encoded payload bytes remain intact.
 func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAddress, smtpUser, smtpPass string) error {
 	// 1. Read entire raw file (capped at maxEmailSize for safety).
 	//    For Phase 1 volumes this is fine; upgrade to streaming if needed.
@@ -145,7 +144,7 @@ func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAdd
 	// 4. Normalize CID-referenced inline image part headers before SMTP forwarding.
 	//    Postfix/Dovecot store the original bytes, but Roundcube renders from the
 	//    forwarded raw MIME. Repairing only the API metadata is not enough.
-	originalBody = normalizeForwardedInlineImageParts(originalBody)
+	originalBody = normalizeForwardedInlineImagePartsWithContentType(originalBody, rawHeaderValue(originalHeaders, "Content-Type"))
 
 	// 5. SMTP connection (STARTTLS on port 587)
 	host, _, err := net.SplitHostPort(cfg.SMTPHost)
@@ -224,152 +223,280 @@ func streamToSMTP(cfg ForwardConfig, filePath, newSubject, sourceAddr, targetAdd
 var htmlCIDReferenceRE = regexp.MustCompile(`(?i)cid:([^"'\s>]+)`)
 
 func normalizeForwardedInlineImageParts(body []byte) []byte {
-	segments := splitMIMEBodySegments(body)
-	if len(segments) == 0 {
+	// Compatibility wrapper for tests/callers that only have the multipart body.
+	// The first delimiter gives us a safe fallback boundary; production callers
+	// pass the authoritative top-level Content-Type via the typed helper below.
+	lineEnd := bytes.IndexByte(body, '\n')
+	if lineEnd < 0 {
 		return body
 	}
-
-	cidRefs := collectBodyCIDReferences(segments)
-	if len(cidRefs) == 0 {
+	first := strings.TrimSpace(strings.TrimSuffix(string(body[:lineEnd]), "\r"))
+	if !strings.HasPrefix(first, "--") {
 		return body
 	}
+	boundary := strings.TrimSuffix(strings.TrimPrefix(first, "--"), "--")
+	if boundary == "" {
+		return body
+	}
+	return normalizeForwardedInlineImagePartsWithContentType(body, `multipart/mixed; boundary="`+quoteHeaderParam(boundary)+`"`)
+}
 
-	changed := false
-	for i := range segments {
-		if !segments[i].hasHeaders {
+func rawHeaderValue(raw []byte, key string) string {
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	prefix := strings.ToLower(strings.TrimSpace(key)) + ":"
+	var value string
+	currentKey := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			if currentKey == prefix {
+				value += " " + strings.TrimSpace(line)
+			}
 			continue
 		}
-		rawContentID := headerValue(segments[i].headers, "Content-ID")
-		contentID := normalizeForwardCID(rawContentID)
-		if contentID == "" {
-			continue
-		}
-		if _, ok := cidRefs[contentID]; !ok {
-			continue
-		}
-
-		decoded, ok := decodeMIMEPartBody(segments[i].body, headerValue(segments[i].headers, "Content-Transfer-Encoding"))
-		if !ok {
-			continue
-		}
-		contentType, ext := detectForwardImage(decoded)
-		if contentType == "" {
-			continue
-		}
-
-		filename := partFilenameFromHeaders(segments[i].headers)
-		if filename == "" {
-			filename = displayForwardCID(rawContentID)
-			if filename == "" {
-				filename = contentID
+		currentKey = ""
+		if i := strings.IndexByte(line, ':'); i >= 0 {
+			currentKey = strings.ToLower(strings.TrimSpace(line[:i])) + ":"
+			if currentKey == prefix {
+				value = strings.TrimSpace(line[i+1:])
 			}
 		}
-		if shouldAppendForwardExtension(filename, ext) {
-			filename += ext
-		}
-
-		segments[i].headers = upsertHeader(segments[i].headers, "Content-Type", fmt.Sprintf(`%s; name="%s"`, contentType, quoteHeaderParam(filename)))
-		segments[i].headers = upsertHeader(segments[i].headers, "Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, quoteHeaderParam(filename)))
-		changed = true
 	}
+	return value
+}
 
+func normalizeForwardedInlineImagePartsWithContentType(body []byte, contentType string) []byte {
+	boundary := multipartBoundary(contentType)
+	if boundary == "" {
+		return body
+	}
+	refs := map[string]struct{}{}
+	collectRawCIDReferences(body, boundary, refs)
+	if len(refs) == 0 {
+		return body
+	}
+	rewritten, changed := rewriteRawMultipart(body, boundary, refs)
 	if !changed {
 		return body
 	}
-	return joinMIMEBodySegments(segments)
+	return rewritten
 }
 
-type mimeBodySegment struct {
-	prefix     []byte
-	headers    []string
-	separator  []byte
-	body       []byte
-	hasHeaders bool
+func multipartBoundary(contentType string) string {
+	_, params, err := mime.ParseMediaType(strings.TrimSpace(contentType))
+	if err != nil {
+		return ""
+	}
+	return params["boundary"]
 }
 
-func splitMIMEBodySegments(body []byte) []mimeBodySegment {
-	matches := regexp.MustCompile(`(?m)^--[^\r\n]+(?:--)?[\t ]*\r?$`).FindAllIndex(body, -1)
-	if len(matches) == 0 {
-		return nil
+func splitRawHeaderBody(raw []byte) (headers, separator, body []byte, ok bool) {
+	if idx := bytes.Index(raw, []byte("\r\n\r\n")); idx >= 0 {
+		return raw[:idx], raw[idx : idx+4], raw[idx+4:], true
 	}
-
-	segments := make([]mimeBodySegment, 0, len(matches))
-	for i, match := range matches {
-		start := match[1]
-		if start < len(body) && body[start] == '\r' {
-			start++
-		}
-		if start < len(body) && body[start] == '\n' {
-			start++
-		}
-		end := len(body)
-		if i+1 < len(matches) {
-			end = matches[i+1][0]
-		}
-		segment := mimeBodySegment{prefix: body[match[0]:start]}
-		content := body[start:end]
-		sep, sepLen, headerEnd := findHeaderBodySeparator(content)
-		if headerEnd < 0 {
-			segment.body = content
-			segments = append(segments, segment)
-			continue
-		}
-		segment.headers = strings.Split(string(content[:headerEnd]), string(sep))
-		segment.separator = content[headerEnd : headerEnd+sepLen]
-		segment.body = content[headerEnd+sepLen:]
-		segment.hasHeaders = true
-		segments = append(segments, segment)
+	if idx := bytes.Index(raw, []byte("\n\n")); idx >= 0 {
+		return raw[:idx], raw[idx : idx+2], raw[idx+2:], true
 	}
-	return segments
+	return nil, nil, raw, false
 }
 
-func findHeaderBodySeparator(content []byte) ([]byte, int, int) {
-	if idx := bytes.Index(content, []byte("\r\n\r\n")); idx >= 0 {
-		return []byte("\r\n"), 4, idx
-	}
-	if idx := bytes.Index(content, []byte("\n\n")); idx >= 0 {
-		return []byte("\n"), 2, idx
-	}
-	return nil, 0, -1
+func rawHeaderValueFromBlock(headers []byte, key string) string {
+	return rawHeaderValue(headers, key)
 }
 
-func joinMIMEBodySegments(segments []mimeBodySegment) []byte {
-	var out bytes.Buffer
-	for _, segment := range segments {
-		out.Write(segment.prefix)
-		if segment.hasHeaders {
-			lineSep := []byte("\r\n")
-			if len(segment.separator) >= 2 && segment.separator[0] == '\n' {
-				lineSep = []byte("\n")
-			}
-			out.WriteString(strings.Join(segment.headers, string(lineSep)))
-			out.Write(segment.separator)
-		}
-		out.Write(segment.body)
-	}
-	return out.Bytes()
-}
-
-func collectBodyCIDReferences(segments []mimeBodySegment) map[string]struct{} {
-	refs := map[string]struct{}{}
-	for _, segment := range segments {
-		if !strings.HasPrefix(strings.ToLower(headerValue(segment.headers, "Content-Type")), "text/html") {
-			continue
-		}
-		decoded, ok := decodeMIMEPartBody(segment.body, headerValue(segment.headers, "Content-Transfer-Encoding"))
+func collectRawCIDReferences(body []byte, boundary string, refs map[string]struct{}) {
+	forEachRawMultipartPart(body, boundary, func(part []byte) {
+		headers, _, partBody, ok := splitRawHeaderBody(part)
 		if !ok {
-			continue
+			return
+		}
+		contentType := rawHeaderValueFromBlock(headers, "Content-Type")
+		if nested := multipartBoundary(contentType); nested != "" {
+			collectRawCIDReferences(partBody, nested, refs)
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(contentType)), "text/html") {
+			return
+		}
+		decoded, ok := decodeMIMEPartBody(partBody, rawHeaderValueFromBlock(headers, "Content-Transfer-Encoding"))
+		if !ok {
+			return
 		}
 		for _, match := range htmlCIDReferenceRE.FindAllStringSubmatch(string(decoded), -1) {
-			if len(match) < 2 {
-				continue
+			if len(match) > 1 {
+				if cid := normalizeForwardCID(match[1]); cid != "" {
+					refs[cid] = struct{}{}
+				}
 			}
-			if cid := normalizeForwardCID(match[1]); cid != "" {
-				refs[cid] = struct{}{}
+		}
+	})
+}
+
+func rewriteRawMultipart(body []byte, boundary string, refs map[string]struct{}) ([]byte, bool) {
+	var out bytes.Buffer
+	changed := false
+	last := 0
+	var childStart int
+	found := false
+	forEachRawMultipartDelimiter(body, boundary, func(start, end int, closing bool) bool {
+		if !found {
+			out.Write(body[:start]) // preserve preamble exactly
+			found = true
+		} else if childStart <= start {
+			part := body[childStart:start]
+			headers, _, partBody, ok := splitRawHeaderBody(part)
+			if ok {
+				contentType := rawHeaderValueFromBlock(headers, "Content-Type")
+				if nested := multipartBoundary(contentType); nested != "" {
+					if nestedBody, nestedChanged := rewriteRawMultipart(partBody, nested, refs); nestedChanged {
+						part = rebuildRawPart(headers, part, nestedBody)
+						changed = true
+					}
+				} else {
+					cid := normalizeForwardCID(rawHeaderValueFromBlock(headers, "Content-ID"))
+					declared := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+					genericDeclared := declared == "" || declared == "application/octet-stream" || declared == "binary/octet-stream" || declared == "application/x-download"
+					if cid != "" && genericDeclared {
+						if _, referenced := refs[cid]; referenced {
+							if decoded, decodeOK := decodeMIMEPartBody(partBody, rawHeaderValueFromBlock(headers, "Content-Transfer-Encoding")); decodeOK {
+								if detected, ext := detectForwardImage(decoded); detected != "" {
+									filename := partFilenameFromRawHeaders(headers)
+									if filename == "" {
+										filename = displayForwardCID(rawHeaderValueFromBlock(headers, "Content-ID"))
+									}
+									if filename == "" {
+										filename = cid
+									}
+									if shouldAppendForwardExtension(filename, ext) {
+										filename += ext
+									}
+									part = rewriteRawPartHeaders(headers, part, fmt.Sprintf(`%s; name="%s"`, detected, quoteHeaderParam(filename)), fmt.Sprintf(`inline; filename="%s"`, quoteHeaderParam(filename)))
+									changed = true
+								}
+							}
+						}
+					}
+				}
+			}
+			out.Write(part)
+		}
+		out.Write(body[start:end])
+		last = end
+		if closing {
+			childStart = end
+			return false
+		}
+		childStart = end
+		return true
+	})
+	if !found {
+		return body, false
+	}
+	if last < len(body) {
+		out.Write(body[last:])
+	}
+	return out.Bytes(), changed
+}
+
+func rebuildRawPart(headers, original, newBody []byte) []byte {
+	_, sep, _, ok := splitRawHeaderBody(original)
+	if !ok {
+		return original
+	}
+	return append(append(append([]byte{}, headers...), sep...), newBody...)
+}
+
+func rewriteRawPartHeaders(headers, original []byte, contentType, disposition string) []byte {
+	_, sep, body, ok := splitRawHeaderBody(original)
+	if !ok {
+		return original
+	}
+	lineSep := "\r\n"
+	if bytes.Equal(sep, []byte("\n\n")) {
+		lineSep = "\n"
+	}
+	lines := strings.Split(strings.ReplaceAll(string(headers), "\r\n", "\n"), "\n")
+	kept := make([]string, 0, len(lines)+2)
+	skipFolded := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			if !skipFolded {
+				kept = append(kept, line)
+			}
+			continue
+		}
+		skipFolded = false
+		name := ""
+		if i := strings.IndexByte(line, ':'); i >= 0 {
+			name = strings.ToLower(strings.TrimSpace(line[:i]))
+		}
+		if name == "content-type" || name == "content-disposition" {
+			skipFolded = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	kept = append(kept, "Content-Type: "+contentType, "Content-Disposition: "+disposition)
+	newHeaders := []byte(strings.Join(kept, lineSep))
+	return append(append(newHeaders, sep...), body...)
+}
+
+func partFilenameFromRawHeaders(headers []byte) string {
+	for _, key := range []string{"Content-Disposition", "Content-Type"} {
+		_, params, err := mime.ParseMediaType(rawHeaderValueFromBlock(headers, key))
+		if err == nil {
+			if name := strings.TrimSpace(params["filename"]); name != "" {
+				return name
+			}
+			if name := strings.TrimSpace(params["name"]); name != "" {
+				return name
 			}
 		}
 	}
-	return refs
+	return ""
+}
+
+func forEachRawMultipartPart(body []byte, boundary string, fn func([]byte)) {
+	var starts []struct {
+		start, end int
+		closing    bool
+	}
+	forEachRawMultipartDelimiter(body, boundary, func(start, end int, closing bool) bool {
+		starts = append(starts, struct {
+			start, end int
+			closing    bool
+		}{start, end, closing})
+		return !closing
+	})
+	for i := 0; i+1 < len(starts); i++ {
+		if starts[i].closing {
+			break
+		}
+		fn(body[starts[i].end:starts[i+1].start])
+	}
+}
+
+func forEachRawMultipartDelimiter(body []byte, boundary string, fn func(start, end int, closing bool) bool) {
+	prefix := []byte("--" + boundary)
+	for pos := 0; pos < len(body); {
+		lineEnd := bytes.IndexByte(body[pos:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(body) - pos
+		} else {
+			lineEnd++
+		}
+		end := pos + lineEnd
+		line := strings.TrimSpace(strings.TrimSuffix(string(body[pos:end]), "\n"))
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, string(prefix)) {
+			rest := strings.TrimSpace(strings.TrimPrefix(line, string(prefix)))
+			if rest == "" || rest == "--" {
+				if !fn(pos, end, rest == "--") {
+					return
+				}
+			}
+		}
+		pos = end
+	}
 }
 
 func decodeMIMEPartBody(body []byte, encoding string) ([]byte, bool) {
@@ -390,44 +517,6 @@ func decodeMIMEPartBody(body []byte, encoding string) ([]byte, bool) {
 	default:
 		return body, true
 	}
-}
-
-func headerValue(headers []string, key string) string {
-	prefix := strings.ToLower(key) + ":"
-	for _, header := range headers {
-		if strings.HasPrefix(strings.ToLower(header), prefix) {
-			return strings.TrimSpace(header[len(prefix):])
-		}
-	}
-	return ""
-}
-
-func upsertHeader(headers []string, key, value string) []string {
-	prefix := strings.ToLower(key) + ":"
-	line := key + ": " + value
-	for i, header := range headers {
-		if strings.HasPrefix(strings.ToLower(header), prefix) {
-			headers[i] = line
-			return headers
-		}
-	}
-	return append(headers, line)
-}
-
-func partFilenameFromHeaders(headers []string) string {
-	for _, key := range []string{"Content-Disposition", "Content-Type"} {
-		_, params, err := mime.ParseMediaType(headerValue(headers, key))
-		if err != nil {
-			continue
-		}
-		if filename := strings.TrimSpace(params["filename"]); filename != "" {
-			return filename
-		}
-		if name := strings.TrimSpace(params["name"]); name != "" {
-			return name
-		}
-	}
-	return ""
 }
 
 func normalizeForwardCID(value string) string {

@@ -52,3 +52,48 @@ Content-Transfer-Encoding: base64
 		t.Fatalf("unreferenced attachment changed:\n%s", string(got))
 	}
 }
+
+func TestNormalizeForwardedInlineImagePartsNestedMultipartAndFoldedHeaders(t *testing.T) {
+	body := []byte(strings.ReplaceAll(`preamble
+--outer
+Content-Type: multipart/related; boundary="inner"
+
+--inner
+Content-Type: text/html; charset="utf-8"
+
+<html><img src="cid:logo@example.com"></html>
+--inner
+Content-Type: application/octet-stream
+Content-ID: <logo@example.com>
+Content-Disposition: inline;
+ filename="logo"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--inner--
+--outer--
+epilogue
+`, "\n", "\r\n"))
+	got := normalizeForwardedInlineImagePartsWithContentType(body, `multipart/mixed; boundary="outer"`)
+	text := string(got)
+	if !strings.Contains(text, `Content-Type: image/png; name="logo.png"`) {
+		t.Fatalf("nested inline part was not repaired:\n%s", text)
+	}
+	if !strings.Contains(text, `Content-Disposition: inline; filename="logo.png"`) {
+		t.Fatalf("nested disposition was not repaired:\n%s", text)
+	}
+	if !strings.HasPrefix(text, "preamble\r\n") || !strings.HasSuffix(text, "epilogue\r\n") {
+		t.Fatalf("preamble/epilogue were not preserved:\n%s", text)
+	}
+	if strings.Count(text, "epilogue") != 1 {
+		t.Fatalf("epilogue was duplicated: %q", text)
+	}
+	if !bytes.Contains(got, []byte("iVBORw0KGgo=")) {
+		t.Fatalf("encoded payload disappeared")
+	}
+	missingType := bytes.Replace(body, []byte("Content-Type: application/octet-stream\r\n"), nil, 1)
+	missingType = normalizeForwardedInlineImagePartsWithContentType(missingType, `multipart/mixed; boundary="outer"`)
+	if !bytes.Contains(missingType, []byte(`Content-Type: image/png; name="logo.png"`)) {
+		t.Fatalf("missing declared content type was not repaired")
+	}
+}
