@@ -95,7 +95,7 @@ func emptyFeatures(serverID uint64, mailbox, uniqueName string, sizeBytes int64)
 	}
 }
 
-func featuresFromEnvelope(envelope *enmime.Envelope, features filtercontract.MailFeatures, limits Limits) filtercontract.MailFeatures {
+func featuresFromEnvelope(envelope *enmime.Envelope, features filtercontract.MailFeatures, limits Limits, attachments []ParsedAttachment) filtercontract.MailFeatures {
 	warnings := newWarningSet(limits.MaxWarnings)
 
 	features.MessageID = strings.TrimSpace(envelope.GetHeader("Message-ID"))
@@ -120,7 +120,7 @@ func featuresFromEnvelope(envelope *enmime.Envelope, features filtercontract.Mai
 	urls.addText(features.Text)
 	features.HTMLText, features.TrackingPixelCount = analyzeHTML(htmlBody, urls, warnings)
 	features.URLs = urls.features(limits.MaxURLs, warnings)
-	features.Attachments = attachmentFeatures(envelope, limits.MaxAttachments, warnings)
+	features.Attachments = attachmentFeatures(attachments, limits.MaxAttachments, warnings)
 	checkPartLimits(envelope.Root, limits.MaxPartBytes, warnings)
 	addEnvelopeWarnings(envelope, warnings)
 	features.ParseWarnings = warnings.values()
@@ -394,8 +394,7 @@ func isTrackingImage(attributes []html.Attribute) bool {
 	return strings.Contains(style, "display:none") || strings.Contains(style, "visibility:hidden") || strings.Contains(style, "opacity:0")
 }
 
-func attachmentFeatures(envelope *enmime.Envelope, maxAttachments int, warnings *warningSet) []filtercontract.AttachmentFeature {
-	attachments := Attachments(envelope)
+func attachmentFeatures(attachments []ParsedAttachment, maxAttachments int, warnings *warningSet) []filtercontract.AttachmentFeature {
 	if len(attachments) > maxAttachments {
 		attachments = attachments[:maxAttachments]
 		warnings.add("attachment_limit_exceeded")

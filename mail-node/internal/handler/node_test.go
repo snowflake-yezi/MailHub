@@ -262,7 +262,6 @@ Content-Type: text/html; charset="utf-8"
 --related-boundary
 Content-Type: application/octet-stream
 Content-ID: <logo123@example.com>
-Content-Disposition: inline
 Content-Transfer-Encoding: base64
 
 iVBORw0KGgoA
@@ -321,7 +320,7 @@ PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=
 		t.Fatalf("attachment bytes = %q", w.Body.String())
 	}
 
-	// 2. inline 图片下载 index=4，仍按 collectAttachmentParts 的顺序与元数据对齐（附件先于 inline）。
+	// 2. 无 disposition 的 CID 正文图片追加为 index=4，既有附件 index 保持不变。
 	wInline := httptest.NewRecorder()
 	cInline, _ := gin.CreateTestContext(wInline)
 	cInline.Request = httptest.NewRequest(http.MethodGet, "/internal/messages/x/attachments/4?mailbox="+url.QueryEscape(mailbox), nil)

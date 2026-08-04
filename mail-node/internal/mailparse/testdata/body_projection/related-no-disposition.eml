@@ -1,0 +1,25 @@
+Message-ID: <related-no-disposition@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed"
+
+--mixed
+Content-Type: multipart/related; boundary="related"
+
+--related
+Content-Type: text/html; charset="utf-8"
+
+<p>body image<img src="cid:Photo%40Example.Test"></p>
+--related
+Content-Type: image/jpeg; name="photo.jpg"
+Content-ID: <Photo@Example.Test>
+Content-Transfer-Encoding: base64
+
+/9j/2Q==
+--related--
+--mixed
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+UERGREFUQQ==
+--mixed--

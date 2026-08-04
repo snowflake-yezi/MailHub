@@ -137,12 +137,13 @@ func parseMessageFile(filePath string, options Options, includeBody bool) (*Pars
 		textBody = projection.text
 		htmlBody = projection.html
 	}
-	message := messageFromEnvelope(filePath, options.Mailbox, options.MaildirBase, stat, envelope, includeBody, textBody, htmlBody)
+	attachments := parsedAttachments(projection.externalParts)
+	message := messageFromEnvelope(filePath, options.Mailbox, options.MaildirBase, stat, envelope, includeBody, textBody, htmlBody, attachments)
 	if mode == ProjectorEnforce {
 		message.ParseStatus = string(projection.status)
 		message.ParseError = projection.errorCode
 	}
-	features = featuresFromEnvelope(envelope, features, limits)
+	features = featuresFromEnvelope(envelope, features, limits, attachments)
 	if stat.Size() > limits.MaxMessageBytes && mode == ProjectorShadow {
 		projection.status = ParseTooLarge
 		projection.errorCode = "message_size_limit_exceeded"
@@ -201,22 +202,19 @@ func ParseAttachment(filePath string, index int) (*ParsedPart, error) {
 	if err != nil {
 		return nil, err
 	}
-	if runtime.Mode == ProjectorEnforce {
-		limits := normalizedLimits(Limits{MaxMessageBytes: runtime.MaxMessageBytes})
-		if projection := projectEnvelope(envelope, limits); projection.status == ParseTooLarge {
-			return nil, ErrMIMETooLarge
-		}
+	limits := normalizedLimits(Limits{MaxMessageBytes: runtime.MaxMessageBytes})
+	projection := projectEnvelope(envelope, limits)
+	if runtime.Mode == ProjectorEnforce && projection.status == ParseTooLarge {
+		return nil, ErrMIMETooLarge
 	}
-	parts := AttachmentParts(envelope)
-	if index >= len(parts) {
+	if index >= len(projection.externalParts) {
 		return nil, ErrAttachmentIndex
 	}
-	part := parts[index]
-	inline := index >= len(envelope.Attachments) || IsInlinePart(part, HTMLCIDReferences(envelope.HTML))
+	externalPart := projection.externalParts[index]
 	return &ParsedPart{
-		Content: part.Content,
-		Info:    InferPartInfo(part, index, inline),
-		Inline:  inline,
+		Content: externalPart.part.Content,
+		Info:    InferPartInfo(externalPart.part, index, externalPart.inline),
+		Inline:  externalPart.inline,
 	}, nil
 }
 
@@ -242,14 +240,12 @@ func messageIdentityForFile(filePath, maildirBase string, stat os.FileInfo) stri
 	return FallbackMessageID(filePath, maildirBase, stat)
 }
 
-func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo, envelope *enmime.Envelope, includeBody bool, textBody, htmlBody string) *ParsedMessage {
+func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo, envelope *enmime.Envelope, includeBody bool, textBody, htmlBody string, attachments []ParsedAttachment) *ParsedMessage {
 	receivedAt := stat.ModTime()
 	messageID := strings.TrimSpace(envelope.GetHeader("Message-ID"))
 	if messageID == "" {
 		messageID = FallbackMessageID(filePath, maildirBase, stat)
 	}
-
-	attachments := Attachments(envelope)
 
 	message := &ParsedMessage{
 		MessageID:        messageID,
@@ -323,22 +319,13 @@ func parseEnvelopeDate(envelope *enmime.Envelope) *time.Time {
 }
 
 func AttachmentParts(envelope *enmime.Envelope) []*enmime.Part {
-	parts := make([]*enmime.Part, 0, len(envelope.Attachments)+len(envelope.Inlines))
-	parts = append(parts, envelope.Attachments...)
-	parts = append(parts, envelope.Inlines...)
-	return parts
+	projection := projectEnvelope(envelope, normalizedLimits(DefaultLimits()))
+	return externalPartPointers(projection.externalParts)
 }
 
 func Attachments(envelope *enmime.Envelope) []ParsedAttachment {
-	parts := AttachmentParts(envelope)
-	attachmentCount := len(envelope.Attachments)
-	inlineContentIDs := HTMLCIDReferences(envelope.HTML)
-	attachments := make([]ParsedAttachment, 0, len(parts))
-	for i, part := range parts {
-		inline := i >= attachmentCount || IsInlinePart(part, inlineContentIDs)
-		attachments = append(attachments, attachmentFromPart(i, part, inline))
-	}
-	return attachments
+	projection := projectEnvelope(envelope, normalizedLimits(DefaultLimits()))
+	return parsedAttachments(projection.externalParts)
 }
 
 func IsInlinePart(part *enmime.Part, inlineContentIDs map[string]struct{}) bool {

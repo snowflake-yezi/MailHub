@@ -1,6 +1,7 @@
 package mailparse
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,6 +59,136 @@ func TestBodyProjectionMixedRelatedAlternative(t *testing.T) {
 	}
 	if len(result.Message.Attachments) != 3 || result.Message.Attachments[0].Index != 0 || result.Message.Attachments[1].Index != 1 || result.Message.Attachments[2].Index != 2 {
 		t.Fatalf("attachments = %+v", result.Message.Attachments)
+	}
+}
+
+func TestBodyProjectionExportsReferencedRelatedPartWithoutDisposition(t *testing.T) {
+	path := filepath.Join("testdata", "body_projection", "related-no-disposition.eml")
+	result, err := ParseFile(path, Options{
+		Mailbox:       "inbox@example.test",
+		MaildirBase:   filepath.Dir(path),
+		ProjectorMode: ProjectorEnforce,
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+
+	if len(result.Message.Attachments) != 2 {
+		t.Fatalf("attachments = %+v, want existing PDF plus referenced related image", result.Message.Attachments)
+	}
+	if !result.Message.HasAttachments || result.Message.AttachmentsCount != 2 {
+		t.Fatalf("attachment summary = has:%v count:%d", result.Message.HasAttachments, result.Message.AttachmentsCount)
+	}
+	if attachment := result.Message.Attachments[0]; attachment.Index != 0 || attachment.Filename != "report.pdf" || attachment.Inline {
+		t.Fatalf("existing attachment index changed: %+v", attachment)
+	}
+	image := result.Message.Attachments[1]
+	if image.Index != 1 || !image.Inline || image.Disposition != "inline" || image.ContentID != "Photo@Example.Test" || image.ContentType != "image/jpeg" {
+		t.Fatalf("related image metadata = %+v", image)
+	}
+
+	parts := projectedPartsByPath(result.Parts)
+	assertProjectedPart(t, parts, "0.0.1", RoleRelatedResource, intPointer(1))
+	assertProjectedPart(t, parts, "0.1", RoleAttachment, intPointer(0))
+
+	downloaded, err := ParseAttachment(path, 1)
+	if err != nil {
+		t.Fatalf("ParseAttachment(1) error = %v", err)
+	}
+	if !downloaded.Inline || downloaded.Info.ContentType != "image/jpeg" || !bytes.Equal(downloaded.Content, []byte{0xff, 0xd8, 0xff, 0xd9}) {
+		t.Fatalf("downloaded related image = %+v content=%x", downloaded, downloaded.Content)
+	}
+	if len(result.Features.Attachments) != 2 || result.Features.Attachments[1].Index != 1 || !result.Features.Attachments[1].Inline {
+		t.Fatalf("attachment features = %+v", result.Features.Attachments)
+	}
+}
+
+func TestBodyProjectionDoesNotExportUnsafeRelatedCandidates(t *testing.T) {
+	tests := []struct {
+		name     string
+		html     string
+		imageCID []string
+		warning  string
+	}{
+		{
+			name:     "unreferenced",
+			html:     "<p>no body image reference</p>",
+			imageCID: []string{"unused@example.test"},
+			warning:  "unreferenced_related_part",
+		},
+		{
+			name:     "ambiguous duplicate cid",
+			html:     `<img src="cid:duplicate@example.test">`,
+			imageCID: []string{"duplicate@example.test", "duplicate@example.test"},
+			warning:  "ambiguous_content_id",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var content strings.Builder
+			content.WriteString("Message-ID: <related-candidate@example.test>\r\n")
+			content.WriteString("MIME-Version: 1.0\r\n")
+			content.WriteString("Content-Type: multipart/related; boundary=related\r\n\r\n")
+			content.WriteString("--related\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+			content.WriteString(test.html)
+			content.WriteString("\r\n")
+			for _, cid := range test.imageCID {
+				content.WriteString("--related\r\nContent-Type: image/jpeg\r\nContent-ID: <")
+				content.WriteString(cid)
+				content.WriteString(">\r\nContent-Transfer-Encoding: base64\r\n\r\n/9j/2Q==\r\n")
+			}
+			content.WriteString("--related--\r\n")
+
+			path := filepath.Join(t.TempDir(), "candidate.eml")
+			if err := os.WriteFile(path, []byte(content.String()), 0600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			result, err := ParseFile(path, Options{
+				Mailbox:       "inbox@example.test",
+				MaildirBase:   filepath.Dir(path),
+				ProjectorMode: ProjectorEnforce,
+			})
+			if err != nil {
+				t.Fatalf("ParseFile() error = %v", err)
+			}
+			if len(result.Message.Attachments) != 0 {
+				t.Fatalf("unsafe related candidates were exported: %+v", result.Message.Attachments)
+			}
+			for _, part := range result.Parts {
+				if part.Role == RoleRelatedResource && part.ExternalIndex != nil {
+					t.Fatalf("related candidate received external index: %+v", part)
+				}
+			}
+			foundWarning := false
+			for _, warning := range result.Warnings {
+				if warning.Code == test.warning {
+					foundWarning = true
+				}
+			}
+			if !foundWarning {
+				t.Fatalf("warning %q missing from %+v", test.warning, result.Warnings)
+			}
+		})
+	}
+}
+
+func TestBodyProjectionExternalPartLimitPreservesExistingIndexes(t *testing.T) {
+	path := filepath.Join("testdata", "body_projection", "related-no-disposition.eml")
+	result, err := ParseFile(path, Options{
+		Mailbox:       "inbox@example.test",
+		MaildirBase:   filepath.Dir(path),
+		ProjectorMode: ProjectorEnforce,
+		Limits:        Limits{MaxMessageBytes: 1024 * 1024, MaxAttachments: 1},
+	})
+	if err != nil {
+		t.Fatalf("ParseFile() error = %v", err)
+	}
+	if len(result.Message.Attachments) != 1 || result.Message.Attachments[0].Index != 0 || result.Message.Attachments[0].Filename != "report.pdf" {
+		t.Fatalf("limited attachments = %+v", result.Message.Attachments)
+	}
+	if part := projectedPartsByPath(result.Parts)["0.0.1"]; part.ExternalIndex != nil {
+		t.Fatalf("limited related image received external index: %+v", part)
 	}
 }
 

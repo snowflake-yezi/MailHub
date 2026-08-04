@@ -22,15 +22,15 @@ type mimeTree struct {
 	byPart map[*enmime.Part]*mimeNode
 }
 
-func buildMIMETree(envelope *enmime.Envelope, limits Limits, warnings *warningCollector) (*mimeTree, string) {
+func buildMIMETree(envelope *enmime.Envelope, limits Limits, warnings *warningCollector, externalParts []externalPart) (*mimeTree, string) {
 	if envelope == nil || envelope.Root == nil {
 		return nil, "mime_parse_failed"
 	}
 
 	externalIndexes := make(map[*enmime.Part]int)
-	for index, part := range AttachmentParts(envelope) {
-		if _, exists := externalIndexes[part]; !exists {
-			externalIndexes[part] = index
+	for index, externalPart := range externalParts {
+		if _, exists := externalIndexes[externalPart.part]; !exists {
+			externalIndexes[externalPart.part] = index
 		}
 	}
 

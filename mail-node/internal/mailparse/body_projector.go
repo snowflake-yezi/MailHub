@@ -13,14 +13,15 @@ import (
 )
 
 type projectionOutcome struct {
-	text        string
-	html        string
-	primaryView *BodyView
-	bodyViews   []BodyView
-	parts       []ProjectedPart
-	status      ParseStatus
-	errorCode   string
-	warnings    []ParseWarning
+	text          string
+	html          string
+	externalParts []externalPart
+	primaryView   *BodyView
+	bodyViews     []BodyView
+	parts         []ProjectedPart
+	status        ParseStatus
+	errorCode     string
+	warnings      []ParseWarning
 }
 
 type bodyCandidate struct {
@@ -51,37 +52,40 @@ type projector struct {
 }
 
 func projectEnvelope(envelope *enmime.Envelope, limits Limits) projectionOutcome {
+	externalParts := legacyExternalParts(envelope)
 	warnings := newWarningCollector(limits.MaxWarnings)
 	projector := &projector{
 		limits:   limits,
 		warnings: warnings,
 		issues:   make(map[string]ParseStatus),
 	}
-	tree, limitCode := buildMIMETree(envelope, limits, warnings)
+	tree, limitCode := buildMIMETree(envelope, limits, warnings, externalParts)
 	if tree == nil {
 		projector.addIssue(ParseFailed, "mime_parse_failed")
-		return projector.outcome(nil, nil)
+		return projector.outcome(nil, nil, externalParts)
 	}
 	projector.collectParserWarnings(tree)
 	if limitCode != "" {
 		projector.addIssue(ParseTooLarge, limitCode)
-		return projector.outcome(tree, nil)
+		return projector.outcome(tree, nil, externalParts)
 	}
 
 	candidate := projector.candidateFor(tree.root)
 	if candidate != nil {
 		projector.applyCandidateRoles(candidate)
 		projector.resolveReferences(candidate)
+		externalParts = appendReferencedRelatedParts(externalParts, tree, limits, warnings)
 	}
-	return projector.outcome(tree, candidate)
+	return projector.outcome(tree, candidate, externalParts)
 }
 
-func (projector *projector) outcome(tree *mimeTree, candidate *bodyCandidate) projectionOutcome {
+func (projector *projector) outcome(tree *mimeTree, candidate *bodyCandidate, externalParts []externalPart) projectionOutcome {
 	outcome := projectionOutcome{
-		bodyViews: []BodyView{},
-		parts:     []ProjectedPart{},
-		status:    ParseOK,
-		warnings:  projector.warnings.values(),
+		externalParts: append([]externalPart(nil), externalParts...),
+		bodyViews:     []BodyView{},
+		parts:         []ProjectedPart{},
+		status:        ParseOK,
+		warnings:      projector.warnings.values(),
 	}
 	status := dominantStatus(projector.issues)
 	if tree != nil && status != ParseTooLarge && status != ParseFailed {
