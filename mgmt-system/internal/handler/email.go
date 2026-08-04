@@ -366,6 +366,35 @@ func (h *EmailHandler) proxyEmailAttachmentPreviewDirect(c *gin.Context, srv *mo
 	proxyNodeData(c, h.transport, nodeTarget(srv), nodetransport.MessageAttachmentPreview(messageID, emailAddr, index), "attachment")
 }
 
+// AdminGetRawEmail downloads the exact Maildir EML bytes through the admin session route.
+// GET /api/v1/admin/emails/:message_id/raw?mailbox=xxx
+func (h *EmailHandler) AdminGetRawEmail(c *gin.Context) {
+	messageID := c.Param("message_id")
+	emailAddr := c.Query("mailbox")
+	if emailAddr == "" {
+		badRequest(c, ErrCodeParamMissing, "query parameter 'mailbox' is required")
+		return
+	}
+
+	mb, err := h.store.GetMailboxByEmail(emailAddr)
+	if err != nil {
+		_, domainName, ok := splitEmail(emailAddr)
+		if !ok {
+			notFound(c, "invalid email: "+emailAddr)
+			return
+		}
+		srv, srvErr := h.store.FindServerByEmailDomain(domainName)
+		if srvErr != nil {
+			notFound(c, "mailbox not found and no server serves domain: "+emailAddr)
+			return
+		}
+		h.proxyRawEmailDirect(c, srv, messageID, emailAddr)
+		return
+	}
+
+	h.proxyRawEmail(c, messageID, mb.EmailAddress)
+}
+
 // AdminGetEmailAttachment 管理后台附件下载（含域名级服务器降级查找，与 AdminGetEmailBody 同模式）。
 // GET /api/v1/admin/emails/:message_id/attachments/:index?mailbox=xxx
 func (h *EmailHandler) AdminGetEmailAttachment(c *gin.Context) {
@@ -433,6 +462,7 @@ func splitEmail(email string) (localPart, domain string, ok bool) {
 func (h *EmailHandler) RegisterAdminRoutes(r *gin.RouterGroup) {
 	r.GET("/emails", h.AdminGetEmails)
 	r.GET("/emails/:message_id/body", h.AdminGetEmailBody)
+	r.GET("/emails/:message_id/raw", h.AdminGetRawEmail)
 	r.DELETE("/emails/:message_id", h.AdminDeleteEmail)
 	r.GET("/emails/:message_id/attachments/:index", h.AdminGetEmailAttachment)
 	r.GET("/emails/:message_id/attachments/:index/preview", h.AdminGetEmailAttachmentPreview)

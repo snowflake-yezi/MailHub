@@ -243,7 +243,7 @@ export default function EmailsPage() {
   const [selected, setSelected] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [bodyView, setBodyView] = useState('text')
+  const [bodyView, setBodyView] = useState('preview')
   const [attachmentPreview, setAttachmentPreview] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -287,11 +287,11 @@ export default function EmailsPage() {
     setSelected(normalizedMessageID)
     setDetail(null)
     setDetailLoading(true)
-    setBodyView('text')
+    setBodyView('preview')
     try {
       const data = await emailAPI.body(normalizedMessageID, normalizedMailbox)
       setDetail(data)
-      setBodyView(data?.text_body ? 'text' : data?.html_body ? 'html' : 'meta')
+      setBodyView(data?.html_body || data?.text_body ? 'preview' : 'meta')
     } catch (err) {
       setDetail({ _error: err.message })
     } finally {
@@ -338,11 +338,11 @@ export default function EmailsPage() {
   const loadMessage = async (msg) => {
     setSelected(msg.message_id)
     setDetailLoading(true)
-    setBodyView(msg.html_body ? 'html' : 'text')
+    setBodyView('preview')
     try {
       const data = await emailAPI.body(msg.message_id, query)
       setDetail(data)
-      setBodyView(data?.text_body ? 'text' : data?.html_body ? 'html' : 'meta')
+      setBodyView(data?.html_body || data?.text_body ? 'preview' : 'meta')
     } catch (err) {
       setDetail({ _error: err.message })
     } finally {
@@ -547,6 +547,13 @@ export default function EmailsPage() {
             {detail && !detail._error && (
               <div className="page-actions">
                 <span className="tag tag-success">{t('emails.detail.parsed')}</span>
+                <a
+                  className="btn btn-sm btn-outline"
+                  href={emailAPI.rawUrl(detail.message_id, query)}
+                  download="message.eml"
+                >
+                  <Download size={14} /> {t('emails.detail.rawDownload')}
+                </a>
                 <button className="btn btn-sm btn-danger" type="button" onClick={() => setDeleteConfirm(detail)}>
                   <Trash2 size={14} /> {t('emails.detail.delete')}
                 </button>
@@ -575,9 +582,9 @@ export default function EmailsPage() {
 
               <div className="phase-tabs email-body-tabs">
                 {[
-                  ['text', 'Text'],
-                  ['html', 'HTML'],
-                  ['meta', t('emails.detail.rawMeta')],
+                  ['preview', t('emails.detail.previewTab')],
+                  ['text', t('emails.detail.textTab')],
+                  ['meta', t('emails.detail.metadataTab')],
                 ].map(([value, label]) => (
                   <button className={bodyView === value ? 'active' : ''} type="button" key={value} onClick={() => setBodyView(value)}>
                     {label}
@@ -585,22 +592,26 @@ export default function EmailsPage() {
                 ))}
               </div>
 
-              {bodyView === 'text' && (
+              {bodyView === 'preview' && (
                 <div className="email-body-card">
-                  <div className="body-card-title"><FileText size={15} /> {t('emails.detail.body')}</div>
-                  <pre>{detail.text_body || '-'}</pre>
-                </div>
-              )}
-              {bodyView === 'html' && (
-                <div className="email-body-card">
-                  <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.htmlPreview')}</div>
+                  <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.previewTitle')}</div>
                   {detail.html_body ? (
                     <iframe
-                      title={t('emails.detail.htmlAria')}
+                      title={t('emails.detail.previewAria')}
                       sandbox="allow-same-origin"
                       srcDoc={buildSafeEmailHtml(detail, query)}
                     />
-                  ) : <div className="muted-text">{t('emails.detail.noHtml')}</div>}
+                  ) : detail.text_body ? (
+                    <pre>{detail.text_body}</pre>
+                  ) : <div className="muted-text">{t('emails.detail.noBody')}</div>}
+                </div>
+              )}
+              {bodyView === 'text' && (
+                <div className="email-body-card">
+                  <div className="body-card-title"><FileText size={15} /> {t('emails.detail.plainText')}</div>
+                  {detail.text_body
+                    ? <pre>{detail.text_body}</pre>
+                    : <div className="muted-text">{t('emails.detail.noText')}</div>}
                 </div>
               )}
               {bodyView === 'meta' && (

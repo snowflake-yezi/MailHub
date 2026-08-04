@@ -19,8 +19,10 @@ type emailStoreStub struct {
 	mailboxByEmail map[string]*model.MailboxAccount
 	mailboxByOrder map[string]*model.MailboxAccount
 	servers        map[uint64]*model.MailServer
+	serverByDomain map[string]*model.MailServer
 	emailLookups   []string
 	orderLookups   []string
+	domainLookups  []string
 }
 
 func (s *emailStoreStub) GetMailboxByEmail(email string) (*model.MailboxAccount, error) {
@@ -49,8 +51,13 @@ func (s *emailStoreStub) GetServer(id uint64) (*model.MailServer, error) {
 	return server, nil
 }
 
-func (s *emailStoreStub) FindServerByEmailDomain(string) (*model.MailServer, error) {
-	return nil, errors.New("server not found")
+func (s *emailStoreStub) FindServerByEmailDomain(domain string) (*model.MailServer, error) {
+	s.domainLookups = append(s.domainLookups, domain)
+	server, ok := s.serverByDomain[domain]
+	if !ok {
+		return nil, errors.New("server not found")
+	}
+	return server, nil
 }
 
 func newEmailHandlerForUpstream(apiHost string) *EmailHandler {
@@ -298,6 +305,55 @@ func TestGetRawEmailProxiesExactBytes(t *testing.T) {
 		if got := response.Header().Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
 		}
+	}
+}
+
+func TestAdminGetRawEmailFallsBackByDomain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	raw := []byte("Message-ID: <raw-admin@example.com>\r\n\r\nexact admin raw")
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Path; got != "/internal/messages/raw-admin/raw" {
+			t.Errorf("upstream path = %q", got)
+		}
+		if got := r.URL.Query().Get("mailbox"); got != "unregistered@example.com" {
+			t.Errorf("mailbox = %q, want unregistered@example.com", got)
+		}
+		w.Header().Set("Content-Type", "message/rfc822")
+		w.Header().Set("Content-Disposition", `attachment; filename="message.eml"`)
+		w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+		_, _ = w.Write(raw)
+	}))
+	defer upstream.Close()
+
+	server := &model.MailServer{ID: 9, APIHost: strings.TrimPrefix(upstream.URL, "http://")}
+	store := &emailStoreStub{
+		mailboxByEmail: map[string]*model.MailboxAccount{},
+		mailboxByOrder: map[string]*model.MailboxAccount{},
+		servers:        map[uint64]*model.MailServer{},
+		serverByDomain: map[string]*model.MailServer{"example.com": server},
+	}
+	handler := NewEmailHandler(store, newTestNodeTransport("shared-secret", upstream.Client()))
+	router := gin.New()
+	handler.RegisterAdminRoutes(router.Group("/api/v1/admin"))
+
+	response := httptest.NewRecorder()
+	target := "/api/v1/admin/emails/raw-admin/raw?mailbox=unregistered%40example.com"
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, target, nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %q", response.Code, response.Body.Bytes())
+	}
+	if !bytes.Equal(response.Body.Bytes(), raw) {
+		t.Fatalf("raw response differs from upstream: got %x, want %x", response.Body.Bytes(), raw)
+	}
+	if got := response.Header().Get("Content-Type"); got != "message/rfc822" {
+		t.Fatalf("content type = %q, want message/rfc822", got)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != `attachment; filename="message.eml"` {
+		t.Fatalf("content disposition = %q", got)
+	}
+	if len(store.domainLookups) != 1 || store.domainLookups[0] != "example.com" {
+		t.Fatalf("domain lookups = %#v", store.domainLookups)
 	}
 }
 

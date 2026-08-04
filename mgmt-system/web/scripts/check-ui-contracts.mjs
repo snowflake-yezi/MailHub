@@ -37,6 +37,12 @@ for (const route of ['orders/:order_id/emails', 'mailboxes/:mailbox_ref/messages
 assert.doesNotMatch(externalAccess, /group === '过滤规则' \? 'filter'/, 'retired legacy filter permissions are still grouped in external access')
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
 assert.match(emails, /emails\.list\.jumpAria/, 'email direct page navigation is missing')
+assert.match(api, /rawUrl\(id, mailbox\).*\/raw\?mailbox=/s, 'admin raw EML URL mapping is missing')
+assert.match(emails, /\['preview', t\('emails\.detail\.previewTab'\)\]/, 'email details must default to a message preview tab')
+assert.match(emails, /detail\.html_body \? \(/, 'message preview must prefer the safe HTML renderer')
+assert.match(emails, /: detail\.text_body \? \(/, 'message preview must fall back to plain text')
+assert.match(emails, /emailAPI\.rawUrl\(detail\.message_id, query\)/, 'email details cannot download the original EML')
+assert.doesNotMatch(emails, /\['html', 'HTML'\]|rawMeta/, 'legacy Text/HTML/Raw metadata tabs are still exposed')
 
 for (const method of ['invitations', 'createInvitation', 'revokeInvitation', 'requests', 'approve', 'reject', 'credentials', 'rotateCredential', 'revokeCredentials']) {
   assert.match(api, new RegExp(`\\b${method}\\(`), `node enrollment API is missing ${method}`)
