@@ -3011,12 +3011,26 @@ textarea {
 }
 
 .email-body-card iframe {
+  display: block;
   width: 100%;
   min-width: 0;
   min-height: 460px;
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: var(--color-surface);
+}
+
+.email-inline-images {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  justify-items: start;
+}
+
+.email-inline-images img {
+  display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .attachment-list {

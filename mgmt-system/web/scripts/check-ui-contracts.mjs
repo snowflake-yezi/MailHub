@@ -41,6 +41,10 @@ assert.match(api, /rawUrl\(id, mailbox\).*\/raw\?mailbox=/s, 'admin raw EML URL 
 assert.match(emails, /\['preview', t\('emails\.detail\.previewTab'\)\]/, 'email details must default to a message preview tab')
 assert.match(emails, /detail\.html_body \? \(/, 'message preview must prefer the safe HTML renderer')
 assert.match(emails, /: detail\.text_body \? \(/, 'message preview must fall back to plain text')
+assert.match(emails, /partitionEmailAttachments\(detail\)/, 'message details must separate inline body images from file attachments')
+assert.match(emails, /messages\.reduce\(\(sum, msg\) => sum \+ countFileAttachments\(msg\)/, 'email list counts must exclude inline body images')
+assert.match(emails, /emailPresentation\.trailingInlineImages\.map/, 'unplaced inline images must render with the message body')
+assert.match(emails, /emailPresentation\.fileAttachments\.map/, 'the attachment list must only render file attachments')
 assert.match(emails, /emailAPI\.rawUrl\(detail\.message_id, query\)/, 'email details cannot download the original EML')
 assert.doesNotMatch(emails, /\['html', 'HTML'\]|rawMeta/, 'legacy Text/HTML/Raw metadata tabs are still exposed')
 

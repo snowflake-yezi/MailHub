@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
+import { countFileAttachments, isInlineBodyImage, normalizeContentType, partitionEmailAttachments } from '../emailPresentation'
 import { formatDateTime } from '../i18n'
 
 function normalizeContentID(value) {
@@ -33,10 +34,13 @@ function normalizeContentID(value) {
 function buildCidAttachmentMap(detail, mailbox) {
   const cidMap = new Map()
   for (const attachment of detail?.attachments || []) {
-    if (!attachment?.inline || !attachment.content_id) continue
+    if (!isInlineBodyImage(attachment) || !attachment.content_id) continue
     const cid = normalizeContentID(attachment.content_id)
     if (!cid) continue
-    cidMap.set(cid, emailAPI.attachmentUrl(detail.message_id, attachment.index, mailbox))
+    cidMap.set(cid, {
+      attachment,
+      url: emailAPI.attachmentUrl(detail.message_id, attachment.index, mailbox),
+    })
   }
   return cidMap
 }
@@ -60,7 +64,7 @@ function sanitizeURLAttributes(doc) {
   }
 }
 
-function buildSafeEmailHtml(detail, mailbox) {
+function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
   const html = String(detail?.html_body || '').trim()
   if (!html) return ''
 
@@ -76,14 +80,15 @@ function buildSafeEmailHtml(detail, mailbox) {
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') || ''
     if (/^\s*cid:/i.test(src)) {
-      const attachmentURL = cidMap.get(normalizeContentID(src))
-      if (attachmentURL) {
-        img.setAttribute('src', attachmentURL)
+      const resource = cidMap.get(normalizeContentID(src))
+      if (resource) {
+        img.setAttribute('src', resource.url)
+        renderedInlineIndexes?.add(resource.attachment.index)
       } else {
         img.removeAttribute('src')
         img.setAttribute('alt', img.getAttribute('alt') || 'inline image not found')
       }
-    } else if (!/^\s*data:image\//i.test(src)) {
+    } else if (!/^\s*data:image\/(?:avif|bmp|gif|jpeg|png|webp)(?:;[^,]*)?,/i.test(src)) {
       img.removeAttribute('src')
     }
     img.removeAttribute('srcset')
@@ -109,10 +114,6 @@ function formatBytes(value) {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
   return `${(size / 1024 / 1024).toFixed(1)} MB`
-}
-
-function normalizeContentType(value) {
-  return String(value || '').split(';')[0].trim().toLowerCase()
 }
 
 function isPreviewableAttachment(attachment) {
@@ -249,9 +250,22 @@ export default function EmailsPage() {
   const [deleting, setDeleting] = useState(false)
 
   const totalAttachments = useMemo(
-    () => messages.reduce((sum, msg) => sum + (Number(msg.attachments_count) || 0), 0),
+    () => messages.reduce((sum, msg) => sum + countFileAttachments(msg), 0),
     [messages],
   )
+
+  const emailPresentation = useMemo(() => {
+    const renderedInlineIndexes = new Set()
+    const { inlineImages, fileAttachments } = partitionEmailAttachments(detail)
+    const safeHTML = detail?.html_body
+      ? buildSafeEmailHtml(detail, query, renderedInlineIndexes)
+      : ''
+    return {
+      fileAttachments,
+      safeHTML,
+      trailingInlineImages: inlineImages.filter(image => !renderedInlineIndexes.has(image.index)),
+    }
+  }, [detail, query])
 
   const fetchMessages = useCallback(async (targetMailbox, targetPage = 1, targetSize = size) => {
     const normalizedMailbox = String(targetMailbox || '').trim()
@@ -496,7 +510,7 @@ export default function EmailsPage() {
               >
                 <div className="email-list-top">
                   <strong title={msg.subject || t('emails.list.noSubject')}>{msg.subject || t('emails.list.noSubject')}</strong>
-                  {(msg.attachments_count || 0) > 0 && <span className="tag tag-info"><Paperclip size={12} /> {msg.attachments_count}</span>}
+                  {countFileAttachments(msg) > 0 && <span className="tag tag-info"><Paperclip size={12} /> {countFileAttachments(msg)}</span>}
                 </div>
                 <div className="email-list-meta">
                   <span title={msg.from || '-'}>{msg.from || '-'}</span>
@@ -599,11 +613,22 @@ export default function EmailsPage() {
                     <iframe
                       title={t('emails.detail.previewAria')}
                       sandbox="allow-same-origin"
-                      srcDoc={buildSafeEmailHtml(detail, query)}
+                      srcDoc={emailPresentation.safeHTML}
                     />
                   ) : detail.text_body ? (
                     <pre>{detail.text_body}</pre>
                   ) : <div className="muted-text">{t('emails.detail.noBody')}</div>}
+                  {emailPresentation.trailingInlineImages.length > 0 && (
+                    <div className="email-inline-images" role="group" aria-label={t('emails.detail.inlineImages')}>
+                      {emailPresentation.trailingInlineImages.map(image => (
+                        <img
+                          key={image.index}
+                          src={emailAPI.attachmentUrl(detail.message_id, image.index, query)}
+                          alt={image.filename || t('emails.detail.inlineImageAlt')}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {bodyView === 'text' && (
@@ -628,11 +653,11 @@ export default function EmailsPage() {
                 </div>
               )}
 
-              <div className="attachments-panel">
-                <div className="body-card-title"><Paperclip size={15} /> {t('emails.detail.attachments')}</div>
-                {detail.attachments && detail.attachments.length > 0 ? (
+              {emailPresentation.fileAttachments.length > 0 && (
+                <div className="attachments-panel">
+                  <div className="body-card-title"><Paperclip size={15} /> {t('emails.detail.attachments')}</div>
                   <div className="attachment-list">
-                    {detail.attachments.map(a => (
+                    {emailPresentation.fileAttachments.map(a => (
                       <div className="attachment-item" key={a.index}>
                         <div className="attachment-copy">
                           <strong title={a.filename || `attachment-${a.index}`}>{a.filename || `attachment-${a.index}`}</strong>
@@ -653,8 +678,8 @@ export default function EmailsPage() {
                       </div>
                     ))}
                   </div>
-                ) : <div className="muted-text">{t('emails.detail.noAttachments')}</div>}
-              </div>
+                </div>
+              )}
             </div>
           )}
           {!detail && !detailLoading && (

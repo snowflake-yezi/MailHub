@@ -7,9 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test:email-presentation": "node scripts/check-email-presentation.mjs",
     "test:i18n": "node scripts/check-i18n.mjs",
     "test:ui-contracts": "node scripts/check-ui-contracts.mjs",
-    "test": "npm run test:i18n && npm run test:ui-contracts"
+    "test": "npm run test:email-presentation && npm run test:i18n && npm run test:ui-contracts"
   },
   "dependencies": {
     "i18next": "^26.3.6",
