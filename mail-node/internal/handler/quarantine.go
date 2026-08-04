@@ -2,15 +2,13 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jhillyerd/enmime"
 	"github.com/ticket/email-mail-node/internal/filterquarantine"
+	"github.com/ticket/email-mail-node/internal/mailparse"
 )
 
 func (h *NodeHandler) GetQuarantineMessage(c *gin.Context) {
@@ -48,6 +46,10 @@ func (h *NodeHandler) GetQuarantineAttachment(c *gin.Context) {
 	}
 	part, info, inline, err := attachmentPartFromPath(path, index)
 	if err != nil {
+		if errors.Is(err, mailparse.ErrMIMETooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": 1003, "message": "message too large"})
+			return
+		}
 		c.JSON(http.StatusNotFound, gin.H{"code": 2003, "message": err.Error()})
 		return
 	}
@@ -60,23 +62,12 @@ func (h *NodeHandler) GetQuarantineAttachment(c *gin.Context) {
 	c.Data(http.StatusOK, info.ContentType, part.Content)
 }
 
-func attachmentPartFromPath(path string, index int) (*enmime.Part, inferredPartInfo, bool, error) {
-	file, err := os.Open(path)
+func attachmentPartFromPath(path string, index int) (*parsedPart, inferredPartInfo, bool, error) {
+	part, err := mailparse.ParseAttachment(path, index)
 	if err != nil {
 		return nil, inferredPartInfo{}, false, err
 	}
-	defer file.Close()
-	envelope, err := enmime.ReadEnvelope(file)
-	if err != nil {
-		return nil, inferredPartInfo{}, false, err
-	}
-	parts := collectAttachmentParts(envelope)
-	if index < 0 || index >= len(parts) {
-		return nil, inferredPartInfo{}, false, fmt.Errorf("attachment index out of range")
-	}
-	part := parts[index]
-	inline := index >= len(envelope.Attachments) || isInlinePart(part, htmlCIDReferences(envelope.HTML))
-	return part, inferPartInfo(part, index, inline), inline, nil
+	return part, part.Info, part.Inline, nil
 }
 
 func (h *NodeHandler) ReleaseQuarantine(c *gin.Context) {

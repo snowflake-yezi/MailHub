@@ -38,7 +38,15 @@ func normalizedLimits(limits Limits) Limits {
 		limits.MaxMessageBytes = defaults.MaxMessageBytes
 	}
 	if limits.MaxPartBytes <= 0 {
-		limits.MaxPartBytes = defaults.MaxPartBytes
+		limits.MaxPartBytes = limits.MaxMessageBytes
+	}
+	if limits.MaxDecodedBytes <= 0 {
+		const maxDecodedBytes = int64(2 * 1024 * 1024 * 1024)
+		if limits.MaxMessageBytes > maxDecodedBytes/2 {
+			limits.MaxDecodedBytes = maxDecodedBytes
+		} else {
+			limits.MaxDecodedBytes = 2 * limits.MaxMessageBytes
+		}
 	}
 	if limits.MaxTextBytes <= 0 {
 		limits.MaxTextBytes = defaults.MaxTextBytes
@@ -57,6 +65,18 @@ func normalizedLimits(limits Limits) Limits {
 	}
 	if limits.MaxWarnings <= 0 {
 		limits.MaxWarnings = defaults.MaxWarnings
+	}
+	if limits.MaxParts <= 0 {
+		limits.MaxParts = defaults.MaxParts
+	}
+	if limits.MaxDepth <= 0 {
+		limits.MaxDepth = defaults.MaxDepth
+	}
+	if limits.MaxReferences <= 0 {
+		limits.MaxReferences = defaults.MaxReferences
+	}
+	if limits.MaxReferenceBytes <= 0 {
+		limits.MaxReferenceBytes = defaults.MaxReferenceBytes
 	}
 	return limits
 }

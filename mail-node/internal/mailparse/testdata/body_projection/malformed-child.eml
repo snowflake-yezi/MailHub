@@ -1,0 +1,16 @@
+Message-ID: <malformed-child@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: malformed child
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-boundary"
+
+--mixed-boundary
+Content-Type: text/plain; charset=utf-8
+
+retained body
+--mixed-boundary
+this child header has no colon
+
+discarded body
+--mixed-boundary--

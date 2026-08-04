@@ -16,13 +16,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jhillyerd/enmime"
 	"github.com/ticket/email-mail-node/internal/config"
 	"github.com/ticket/email-mail-node/internal/domain"
 	"github.com/ticket/email-mail-node/internal/filter"
 	"github.com/ticket/email-mail-node/internal/filterquarantine"
 	"github.com/ticket/email-mail-node/internal/forward"
 	"github.com/ticket/email-mail-node/internal/mailbox"
+	"github.com/ticket/email-mail-node/internal/mailparse"
 )
 
 const maxAttachmentPreviewBytes = 10 * 1024 * 1024
@@ -594,7 +594,7 @@ func (h *NodeHandler) GetMessageAttachmentPreview(c *gin.Context) {
 	c.Data(http.StatusOK, previewContentType, part.Content)
 }
 
-func (h *NodeHandler) messageAttachmentPart(c *gin.Context) (*enmime.Part, inferredPartInfo, bool, error) {
+func (h *NodeHandler) messageAttachmentPart(c *gin.Context) (*parsedPart, inferredPartInfo, bool, error) {
 	messageID, err := url.PathUnescape(c.Param("message_id"))
 	if err != nil {
 		messageID = c.Param("message_id")
@@ -617,29 +617,20 @@ func (h *NodeHandler) messageAttachmentPart(c *gin.Context) (*enmime.Part, infer
 		return nil, inferredPartInfo{}, false, fmt.Errorf("message not found")
 	}
 
-	file, err := os.Open(filePath)
+	part, err := mailparse.ParseAttachment(filePath, index)
 	if err != nil {
-		c.JSON(500, gin.H{"code": 5000, "message": "failed to open message file"})
-		return nil, inferredPartInfo{}, false, err
-	}
-	defer file.Close()
-
-	envelope, err := enmime.ReadEnvelope(file)
-	if err != nil {
+		if errors.Is(err, mailparse.ErrMIMETooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": 1003, "message": "message too large"})
+			return nil, inferredPartInfo{}, false, err
+		}
+		if errors.Is(err, mailparse.ErrAttachmentIndex) {
+			c.JSON(404, gin.H{"code": 2003, "message": "attachment index out of range"})
+			return nil, inferredPartInfo{}, false, err
+		}
 		c.JSON(500, gin.H{"code": 5000, "message": "failed to parse message"})
 		return nil, inferredPartInfo{}, false, err
 	}
-
-	parts := collectAttachmentParts(envelope)
-	if index >= len(parts) {
-		c.JSON(404, gin.H{"code": 2003, "message": "attachment index out of range"})
-		return nil, inferredPartInfo{}, false, fmt.Errorf("attachment index out of range")
-	}
-
-	part := parts[index]
-	inlineContentIDs := htmlCIDReferences(envelope.HTML)
-	inline := index >= len(envelope.Attachments) || isInlinePart(part, inlineContentIDs)
-	return part, inferPartInfo(part, index, inline), inline, nil
+	return part, part.Info, part.Inline, nil
 }
 
 func previewAttachmentContentType(contentType string) (string, bool) {

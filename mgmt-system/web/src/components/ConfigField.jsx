@@ -9,6 +9,7 @@ const UNIT_KEYS = {
   '分钟': 'minutes',
   '秒': 'seconds',
   '开关': 'switch',
+	'模式': 'mode',
   '版本': 'version',
 }
 
@@ -26,7 +27,13 @@ export default function ConfigField({ item, value, onChange, children, action })
       ? <span className="tag tag-info">{t('config.effects.hotReload')}</span>
       : <span className="tag tag-warning">{t('config.effects.restart')}</span>
 
-  const input = item.value_type === 'bool' ? (
+  const input = item.allowed_values?.length ? (
+	<select id={inputID} value={inputValue} onChange={event => onChange(event.target.value)}>
+	  {item.allowed_values.map(option => (
+		<option key={option} value={option}>{t(`pages:config.options.${item.key}.${option}`, { defaultValue: option })}</option>
+	  ))}
+	</select>
+  ) : item.value_type === 'bool' ? (
     <label className="toggle">
       <input
         id={inputID}

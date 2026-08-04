@@ -3,12 +3,12 @@ package handler
 import (
 	"container/list"
 	"io"
-	netmail "net/mail"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/ticket/email-mail-node/internal/mailbox"
+	"github.com/ticket/email-mail-node/internal/mailparse"
 )
 
 const defaultMessagePathIndexEntries = 10_000
@@ -177,11 +177,7 @@ func (idx *messagePathIndex) removeLocked(key messagePathIndexKey) {
 }
 
 func readMessageHeaderID(reader io.Reader) (string, error) {
-	message, err := netmail.ReadMessage(reader)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(message.Header.Get("Message-ID")), nil
+	return mailparse.ScanMessageID(reader)
 }
 
 func readMessageFileIdentity(filePath, maildirBase string) (messageID string, size int64, modTimeUnixNano int64, err error) {
@@ -195,10 +191,7 @@ func readMessageFileIdentity(filePath, maildirBase string) (messageID string, si
 	}
 	defer file.Close()
 
-	messageID, err = readMessageHeaderID(file)
-	if err != nil {
-		return "", 0, 0, err
-	}
+	messageID, _ = mailparse.ScanMessageID(file)
 	if messageID == "" {
 		messageID = fallbackMessageID(filePath, maildirBase, info)
 	}
@@ -224,14 +217,6 @@ func (h *NodeHandler) findMessagePath(email, messageID string) (string, bool) {
 	for _, filePath := range sortMailFilesByModTimeDesc(h.scanMailboxFiles(email)) {
 		candidateID, size, modTimeUnixNano, err := readMessageFileIdentity(filePath, h.mailboxMgr.MaildirBase())
 		if err != nil {
-			candidate, parseErr := parseFullMessage(filePath, email, h.mailboxMgr.MaildirBase())
-			if parseErr != nil {
-				continue
-			}
-			index.putFile(email, candidate.MessageID, filePath)
-			if matchMessageID(candidate.MessageID, messageID, normalized) {
-				return filePath, true
-			}
 			continue
 		}
 

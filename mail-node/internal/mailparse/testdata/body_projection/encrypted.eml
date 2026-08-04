@@ -1,0 +1,17 @@
+Message-ID: <encrypted@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: encrypted
+MIME-Version: 1.0
+Content-Type: multipart/encrypted; boundary="encrypted-boundary"; protocol="application/pgp-encrypted"
+
+--encrypted-boundary
+Content-Type: application/pgp-encrypted
+
+Version: 1
+--encrypted-boundary
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+
+ZW5jcnlwdGVk
+--encrypted-boundary--

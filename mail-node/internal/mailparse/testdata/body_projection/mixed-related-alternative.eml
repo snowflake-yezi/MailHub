@@ -1,0 +1,48 @@
+Message-ID: <mixed-related@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: mixed related alternative
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mixed-boundary"
+
+--mixed-boundary
+Content-Type: multipart/related; boundary="related-boundary"; start="<body-root@example.test>"
+
+--related-boundary
+Content-Type: multipart/alternative; boundary="alternative-boundary"
+Content-ID: <body-root@example.test>
+
+--alternative-boundary
+Content-Type: text/plain; charset=utf-8
+
+primary plain
+--alternative-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>primary html<img src="cid:logo@example.test"></p>
+--alternative-boundary--
+--related-boundary
+Content-Type: image/png
+Content-ID: <logo@example.test>
+Content-Disposition: inline
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--related-boundary--
+--mixed-boundary
+Content-Type: text/plain; charset=utf-8
+
+supporting plain
+--mixed-boundary
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="notes.txt"
+
+attachment text
+--mixed-boundary
+Content-Type: image/png
+Content-ID: <logo@example.test>
+Content-Disposition: inline
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--mixed-boundary--

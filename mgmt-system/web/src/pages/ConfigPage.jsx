@@ -10,6 +10,7 @@ import {
   HeartPulse,
   KeyRound,
   MailCheck,
+	FileText,
   RotateCcw,
   Save,
   Settings,
@@ -28,6 +29,7 @@ import { formatDateTime } from '../i18n'
 
 const CATEGORY_META = {
   forward: { icon: MailCheck },
+	mime: { icon: FileText },
   filter: { icon: SlidersHorizontal },
   lifecycle: { icon: TimerReset },
   healthcheck: { icon: HeartPulse },

@@ -39,7 +39,7 @@ const common = {
     noDescription: 'No description',
   },
   units: {
-    bytes: 'bytes', days: 'days', hours: 'hours', mailbox: 'mailbox', milliseconds: 'ms', minutes: 'minutes', seconds: 'seconds', switch: 'switch', version: 'version',
+	bytes: 'bytes', days: 'days', hours: 'hours', mailbox: 'mailbox', milliseconds: 'ms', minutes: 'minutes', mode: 'mode', seconds: 'seconds', switch: 'switch', version: 'version',
   },
 }
 
@@ -102,6 +102,7 @@ const pages = {
     loading: 'Loading system configuration...',
     categories: {
       forward: { label: 'Mail forwarding engine', desc: 'Control union forwarding targets, retries, and delivery behavior.' },
+	  mime: { label: 'MIME parsing', desc: 'Control body projection compatibility and parser resource limits.' },
       filter: { label: 'Filter engine', desc: 'Control rule matching, default actions, and hot reload behavior.' },
       lifecycle: { label: 'Lifecycle management', desc: 'Control mailbox disabling, recycling, and cleanup schedules.' },
       healthcheck: { label: 'Health checks', desc: 'Control active probes, failure thresholds, and status degradation.' },
@@ -123,6 +124,10 @@ const pages = {
     messages: { accountLoadFailed: 'Failed to load the admin account: {{message}}', configLoadFailed: 'Failed to load configuration: {{message}}', nodeLoadFailed: 'Failed to load node configuration: {{message}}', operationFailed: 'Operation failed: {{message}}', reloadSent: 'All nodes were notified to reload configuration', resetDone: 'Defaults restored', resetFailed: 'Failed to restore defaults: {{message}}', saved: 'Saved {{count}} settings' },
     reloadNodes: 'Reload nodes',
     fields: {
+	  mime: {
+		body_projector_mode: { label: 'Body projector mode', description: 'legacy preserves compatibility, shadow compares the new projection, and enforce serves it' },
+		max_message_bytes: { label: 'Maximum MIME message size', description: 'Maximum raw message bytes accepted before MIME parsing' },
+	  },
       forward: {
         scan_interval: { label: 'Scan interval', description: 'How often Maildir is scanned for new messages' }, max_email_size: { label: 'Maximum email size', description: 'Maximum number of bytes processed for one email' }, body_preview_size: { label: 'Body preview size', description: 'Maximum email body size read during filtering' }, target_address: { label: 'Forwarding destination', description: 'Destination mailbox for aggregated non-spam email' }, smtp_dial_timeout: { label: 'SMTP dial timeout', description: 'Timeout when connecting to the SMTP server' }, tls_insecure_skip: { label: 'Skip TLS certificate verification', description: 'Enable only for a controlled self-signed certificate' }, tls_min_version: { label: 'Minimum TLS version', description: 'Minimum SMTP STARTTLS version: 12 means TLS 1.2 and 13 means TLS 1.3' },
       },
@@ -137,6 +142,7 @@ const pages = {
       maildir: { vmail_uid: { label: 'Virtual user UID', description: 'Owner UID for Maildir files' }, vmail_gid: { label: 'Virtual user GID', description: 'Group GID for Maildir files' } },
       general: { default_retention_days: { label: 'Global email retention (days)', description: 'Applies to all existing and new mailboxes; the next lifecycle run removes email by file time without a restart' }, default_page_size: { label: 'Default page size', description: 'Default number of items per page for list APIs' }, max_page_size: { label: 'Maximum page size', description: 'Maximum number of items per page for list APIs' }, password_min_length: { label: 'Minimum password length', description: 'Minimum mailbox password length' }, password_length: { label: 'Generated password length', description: 'Number of characters in generated passwords' }, default_server_capacity: { label: 'Default server capacity', description: 'Default mailbox capacity for newly registered mail-nodes' }, default_dkim_selector: { label: 'Default DKIM selector', description: 'Default DKIM selector for new domains' } },
     },
+	options: { mime: { body_projector_mode: { legacy: 'Legacy', shadow: 'Shadow', enforce: 'Enforce' } } },
     node: {
       title: 'Node configuration', categoryTitle: '{{name}} · Node overrides', loading: 'Loading configuration...', version: 'Revision {{applied}} / {{desired}}', started: 'Started {{date}}', bootId: 'Boot ID {{value}}', dirty: '{{count}} unsaved', noChanges: 'No unsaved changes', priorityHint: 'Node overrides take precedence over global defaults', mailboxRetention: 'Use mailbox retention_days', resetGlobal: 'Restore global default', globalDefault: 'Global default', nodeOverride: 'Node override', effective: 'Effective value', source: 'Source', useMailboxSetting: 'Use mailbox setting', none: 'None', lifecycleRuntimeHint: 'Read at runtime by the management service; takes effect during the next lifecycle run', recentChanges: 'Recent configuration changes', noAudits: 'No node configuration changes', auditReset: 'Restore global', auditOverride: 'Set override', noOverride: 'No override', saveOverrides: 'Save overrides', savedOverrides: 'Saved {{count}} node overrides', resetDone: '“{{name}}” now follows the global setting', loadFailed: 'Failed to load node configuration: {{message}}', toastRestart: '{{message}}; restart the node to apply it', toastReload: '{{message}}; the node was notified to hot reload', toastRetry: '{{message}}, but node notification failed; scheduled polling will retry',
       sources: { server_override: 'Node override', global: 'Global configuration', local_config: 'Local configuration', unknown: 'Unknown' },

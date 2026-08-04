@@ -194,6 +194,7 @@ func TestRuntimeConfigSnapshotContract(t *testing.T) {
 		filterdecision.EngineModeConfigKey, filterdecision.AutoQuarantineConfigKey, "filter.quarantine_base",
 		"forward.scan_interval", "forward.max_email_size", "forward.body_preview_size", "forward.target_address",
 		"forward.smtp_dial_timeout", "forward.tls_insecure_skip", "forward.tls_min_version",
+		"mime.body_projector_mode", "mime.max_message_bytes",
 		"lifecycle.trash_retention_hours", "lifecycle.gc_interval_minutes", "lifecycle.drain_timeout_minutes", "lifecycle.drain_poll_interval_ms",
 	}
 	if len(values) != len(want) {

@@ -38,17 +38,18 @@ type groupedConfig struct {
 }
 
 type configItem struct {
-	Key          string `json:"key"`
-	Value        string `json:"value"`
-	ValueType    string `json:"value_type"`
-	Label        string `json:"label"`
-	Description  string `json:"description"`
-	DefaultValue string `json:"default_value"`
-	Reloadable   bool   `json:"reloadable"`
-	EffectType   string `json:"effect_type"`
-	Unit         string `json:"unit,omitempty"`
-	Min          *int   `json:"min,omitempty"`
-	Max          *int   `json:"max,omitempty"`
+	Key           string   `json:"key"`
+	Value         string   `json:"value"`
+	ValueType     string   `json:"value_type"`
+	Label         string   `json:"label"`
+	Description   string   `json:"description"`
+	DefaultValue  string   `json:"default_value"`
+	Reloadable    bool     `json:"reloadable"`
+	EffectType    string   `json:"effect_type"`
+	Unit          string   `json:"unit,omitempty"`
+	Min           *int     `json:"min,omitempty"`
+	Max           *int     `json:"max,omitempty"`
+	AllowedValues []string `json:"allowed_values,omitempty"`
 }
 
 func globalConfigItem(cfg model.SystemConfig) configItem {
@@ -62,6 +63,7 @@ func globalConfigItem(cfg model.SystemConfig) configItem {
 		item.Unit = definition.Unit
 		item.Min = &minValue
 		item.Max = &maxValue
+		item.AllowedValues = append([]string(nil), definition.AllowedValues...)
 	}
 	return item
 }
@@ -103,6 +105,7 @@ func (h *ConfigHandler) ListConfigs(c *gin.Context) {
 
 	categoryLabels := map[string]string{
 		"forward":     "邮件转发引擎",
+		"mime":        "MIME 解析",
 		"filter":      "过滤引擎",
 		"lifecycle":   "生命周期管理",
 		"healthcheck": "健康检查",

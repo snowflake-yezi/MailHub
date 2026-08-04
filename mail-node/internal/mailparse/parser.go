@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"html"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,46 +16,84 @@ import (
 	"unicode/utf8"
 
 	"github.com/jhillyerd/enmime"
+	nethtml "golang.org/x/net/html"
 )
 
 var cidReferencePattern = regexp.MustCompile(`(?i)cid:([^"'\\s>]+)`)
 
-// ParseSummary and ParseFull preserve the existing query response behavior.
-// Feature limits apply only to ParseFile and cannot truncate query bodies.
 func ParseSummary(filePath, mailbox, maildirBase string) (*ParsedMessage, error) {
-	return parseLegacyMessage(filePath, mailbox, maildirBase, false)
+	options := runtimeOptions()
+	options.Mailbox = mailbox
+	options.MaildirBase = maildirBase
+	result, err := parseMessageFile(filePath, options, false)
+	if err != nil {
+		return nil, err
+	}
+	return result.Message, nil
 }
 
 func ParseFull(filePath, mailbox, maildirBase string) (*ParsedMessage, error) {
-	return parseLegacyMessage(filePath, mailbox, maildirBase, true)
+	options := runtimeOptions()
+	options.Mailbox = mailbox
+	options.MaildirBase = maildirBase
+	result, err := parseMessageFile(filePath, options, true)
+	if err != nil {
+		return nil, err
+	}
+	return result.Message, nil
 }
 
-// ParseFile produces the query model and bounded filter features in one MIME pass.
 func ParseFile(filePath string, options Options) (*Result, error) {
+	return parseMessageFile(filePath, options, true)
+}
+
+var errParserPanic = errors.New("MIME parser panic recovered")
+var ErrAttachmentIndex = errors.New("attachment index out of range")
+var ErrMIMETooLarge = errors.New("MIME projection exceeds configured limits")
+
+func parseMessageFile(filePath string, options Options, includeBody bool) (*ParseResult, error) {
 	stat, err := os.Stat(filePath)
 	if err != nil {
 		return nil, err
 	}
-	receivedAt := stat.ModTime()
+	runtime := CurrentRuntimeConfig()
+	if options.ProjectorMode == "" {
+		options.ProjectorMode = runtime.Mode
+	}
+	if options.Limits.MaxMessageBytes <= 0 {
+		options.Limits.MaxMessageBytes = runtime.MaxMessageBytes
+	}
 	limits := normalizedLimits(options.Limits)
 	uniqueName := options.MaildirUniqueName
 	if uniqueName == "" {
 		uniqueName = filepath.Base(filePath)
 	}
+	mode := normalizedProjectorMode(options.ProjectorMode)
+	messageID := messageIdentityForFile(filePath, options.MaildirBase, stat)
 
 	features := emptyFeatures(options.ServerID, options.Mailbox, uniqueName, stat.Size())
-	if stat.Size() > limits.MaxMessageBytes {
+	if stat.Size() > limits.MaxMessageBytes && mode == ProjectorEnforce {
 		features.ParseWarnings = []string{"message_size_limit_exceeded"}
-		return &Result{
+		message := emptyParsedMessage(messageID, options.Mailbox, stat)
+		message.ParseStatus = string(ParseTooLarge)
+		message.ParseError = "message_size_limit_exceeded"
+		return &ParseResult{
+			ParserVersion: ParserVersion,
+			PolicyVersion: PolicyVersion,
+			Status:        ParseTooLarge,
+			ErrorCode:     "message_size_limit_exceeded",
 			Message: &ParsedMessage{
-				MessageID:   FallbackMessageID(filePath, options.MaildirBase, stat),
-				Mailbox:     options.Mailbox,
-				ReceivedAt:  &receivedAt,
-				Attachments: []ParsedAttachment{},
-				ParseStatus: "failed",
-				ParseError:  "message size limit exceeded",
+				MessageID:   message.MessageID,
+				Mailbox:     message.Mailbox,
+				ReceivedAt:  message.ReceivedAt,
+				Attachments: message.Attachments,
+				ParseStatus: message.ParseStatus,
+				ParseError:  message.ParseError,
 			},
-			Features: features,
+			BodyViews: []BodyView{},
+			Parts:     []ProjectedPart{},
+			Warnings:  []ParseWarning{{Code: "message_size_limit_exceeded", Path: PartPath{}}},
+			Features:  features,
 		}, nil
 	}
 
@@ -64,55 +103,146 @@ func ParseFile(filePath string, options Options) (*Result, error) {
 	}
 	defer file.Close()
 
-	envelope, err := enmime.ReadEnvelope(file)
+	envelope, err := readMIMEEnvelope(file)
 	if err != nil {
-		features.ParseWarnings = []string{"mime_parse_failed"}
-		return &Result{
-			Message: &ParsedMessage{
-				MessageID:   FallbackMessageID(filePath, options.MaildirBase, stat),
-				Mailbox:     options.Mailbox,
-				ReceivedAt:  &receivedAt,
-				Attachments: []ParsedAttachment{},
-				ParseStatus: "failed",
-				ParseError:  err.Error(),
-			},
-			Features: features,
+		code := "mime_parse_failed"
+		if errors.Is(err, errParserPanic) {
+			code = "parser_panic"
+		}
+		features.ParseWarnings = []string{code}
+		message := emptyParsedMessage(messageID, options.Mailbox, stat)
+		message.ParseError = code
+		return &ParseResult{
+			ParserVersion: ParserVersion,
+			PolicyVersion: PolicyVersion,
+			Status:        ParseFailed,
+			ErrorCode:     code,
+			Message:       message,
+			BodyViews:     []BodyView{},
+			Parts:         []ProjectedPart{},
+			Warnings:      []ParseWarning{{Code: code, Path: PartPath{}}},
+			Features:      features,
 		}, nil
 	}
 
-	message := messageFromEnvelope(filePath, options.Mailbox, options.MaildirBase, stat, envelope, true)
+	projection := projectEnvelope(envelope, limits)
+	legacyText := strings.TrimSpace(envelope.Text)
+	legacyHTML := strings.TrimSpace(envelope.HTML)
+	if legacyText == "" && legacyHTML != "" {
+		legacyText = HTMLToPlainText(legacyHTML)
+	}
+	textBody := legacyText
+	htmlBody := legacyHTML
+	if mode == ProjectorEnforce {
+		textBody = projection.text
+		htmlBody = projection.html
+	}
+	message := messageFromEnvelope(filePath, options.Mailbox, options.MaildirBase, stat, envelope, includeBody, textBody, htmlBody)
+	if mode == ProjectorEnforce {
+		message.ParseStatus = string(projection.status)
+		message.ParseError = projection.errorCode
+	}
 	features = featuresFromEnvelope(envelope, features, limits)
-	return &Result{Message: message, Features: features}, nil
+	if stat.Size() > limits.MaxMessageBytes && mode == ProjectorShadow {
+		projection.status = ParseTooLarge
+		projection.errorCode = "message_size_limit_exceeded"
+		projection.parts = []ProjectedPart{}
+		projection.bodyViews = []BodyView{}
+		projection.primaryView = nil
+		projection.warnings = append(projection.warnings, ParseWarning{Code: "message_size_limit_exceeded", Path: PartPath{}})
+	}
+	return &ParseResult{
+		ParserVersion: ParserVersion,
+		PolicyVersion: PolicyVersion,
+		Status:        projection.status,
+		ErrorCode:     projection.errorCode,
+		Message:       message,
+		PrimaryView:   projection.primaryView,
+		BodyViews:     projection.bodyViews,
+		Parts:         projection.parts,
+		Warnings:      projection.warnings,
+		Features:      features,
+	}, nil
 }
 
-func parseLegacyMessage(filePath, mailbox, maildirBase string, includeBody bool) (*ParsedMessage, error) {
+func readMIMEEnvelope(reader io.Reader) (envelope *enmime.Envelope, err error) {
+	defer func() {
+		if recover() != nil {
+			envelope = nil
+			err = errParserPanic
+		}
+	}()
+	parser := enmime.NewParser(
+		enmime.SkipMalformedParts(true),
+		enmime.MaxStoredPartErrors(8),
+		enmime.DisableTextConversion(true),
+	)
+	return parser.ReadEnvelope(reader)
+}
+
+func ParseAttachment(filePath string, index int) (*ParsedPart, error) {
+	if index < 0 {
+		return nil, ErrAttachmentIndex
+	}
 	stat, err := os.Stat(filePath)
 	if err != nil {
 		return nil, err
 	}
-	receivedAt := stat.ModTime()
-
+	runtime := CurrentRuntimeConfig()
+	if runtime.Mode == ProjectorEnforce && stat.Size() > runtime.MaxMessageBytes {
+		return nil, ErrMIMETooLarge
+	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
-
-	envelope, err := enmime.ReadEnvelope(file)
+	envelope, err := readMIMEEnvelope(file)
 	if err != nil {
-		return &ParsedMessage{
-			MessageID:   FallbackMessageID(filePath, maildirBase, stat),
-			Mailbox:     mailbox,
-			ReceivedAt:  &receivedAt,
-			Attachments: []ParsedAttachment{},
-			ParseStatus: "failed",
-			ParseError:  err.Error(),
-		}, nil
+		return nil, err
 	}
-	return messageFromEnvelope(filePath, mailbox, maildirBase, stat, envelope, includeBody), nil
+	if runtime.Mode == ProjectorEnforce {
+		limits := normalizedLimits(Limits{MaxMessageBytes: runtime.MaxMessageBytes})
+		if projection := projectEnvelope(envelope, limits); projection.status == ParseTooLarge {
+			return nil, ErrMIMETooLarge
+		}
+	}
+	parts := AttachmentParts(envelope)
+	if index >= len(parts) {
+		return nil, ErrAttachmentIndex
+	}
+	part := parts[index]
+	inline := index >= len(envelope.Attachments) || IsInlinePart(part, HTMLCIDReferences(envelope.HTML))
+	return &ParsedPart{
+		Content: part.Content,
+		Info:    InferPartInfo(part, index, inline),
+		Inline:  inline,
+	}, nil
 }
 
-func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo, envelope *enmime.Envelope, includeBody bool) *ParsedMessage {
+func emptyParsedMessage(messageID, mailbox string, stat os.FileInfo) *ParsedMessage {
+	receivedAt := stat.ModTime()
+	return &ParsedMessage{
+		MessageID:   messageID,
+		Mailbox:     mailbox,
+		ReceivedAt:  &receivedAt,
+		Attachments: []ParsedAttachment{},
+		ParseStatus: string(ParseFailed),
+	}
+}
+
+func messageIdentityForFile(filePath, maildirBase string, stat os.FileInfo) string {
+	file, err := os.Open(filePath)
+	if err == nil {
+		defer file.Close()
+		if messageID, scanErr := ScanMessageID(file); scanErr == nil && messageID != "" {
+			return messageID
+		}
+	}
+	return FallbackMessageID(filePath, maildirBase, stat)
+}
+
+func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo, envelope *enmime.Envelope, includeBody bool, textBody, htmlBody string) *ParsedMessage {
 	receivedAt := stat.ModTime()
 	messageID := strings.TrimSpace(envelope.GetHeader("Message-ID"))
 	if messageID == "" {
@@ -120,11 +250,6 @@ func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo
 	}
 
 	attachments := Attachments(envelope)
-	textBody := strings.TrimSpace(envelope.Text)
-	htmlBody := strings.TrimSpace(envelope.HTML)
-	if textBody == "" && htmlBody != "" {
-		textBody = HTMLToPlainText(htmlBody)
-	}
 
 	message := &ParsedMessage{
 		MessageID:        messageID,
@@ -139,7 +264,7 @@ func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo
 		HasAttachments:   len(attachments) > 0,
 		AttachmentsCount: len(attachments),
 		Attachments:      attachments,
-		ParseStatus:      "ok",
+		ParseStatus:      string(ParseOK),
 	}
 	if includeBody {
 		message.TextBody = textBody
@@ -147,10 +272,19 @@ func messageFromEnvelope(filePath, mailbox, maildirBase string, stat os.FileInfo
 		message.Headers = EnvelopeHeaders(envelope)
 	}
 	if len(envelope.Errors) > 0 {
-		message.ParseStatus = "partial"
+		message.ParseStatus = string(ParsePartial)
 		message.ParseError = envelope.Errors[0].Error()
 	}
 	return message
+}
+
+func normalizedProjectorMode(mode ProjectorMode) ProjectorMode {
+	switch mode {
+	case ProjectorShadow, ProjectorEnforce:
+		return mode
+	default:
+		return ProjectorLegacy
+	}
 }
 
 func FallbackMessageID(filePath, maildirBase string, stat os.FileInfo) string {
@@ -158,9 +292,26 @@ func FallbackMessageID(filePath, maildirBase string, stat os.FileInfo) string {
 	if err != nil {
 		rel = filepath.Base(filePath)
 	}
-	seed := fmt.Sprintf("%s|%d|%d", filepath.ToSlash(rel), stat.Size(), stat.ModTime().UnixNano())
+	seed := fmt.Sprintf("%s|%d|%d", canonicalMaildirPhysicalPath(rel), stat.Size(), stat.ModTime().UnixNano())
 	sum := sha256.Sum256([]byte(seed))
 	return "fallback-" + hex.EncodeToString(sum[:])
+}
+
+func canonicalMaildirPhysicalPath(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) > 1 {
+		parent := len(parts) - 2
+		if parts[parent] == "new" || parts[parent] == "cur" {
+			parts = append(parts[:parent], parts[parent+1:]...)
+		}
+	}
+	if len(parts) > 0 {
+		name := parts[len(parts)-1]
+		if separator := strings.LastIndex(name, ":2,"); separator >= 0 {
+			parts[len(parts)-1] = name[:separator]
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 func parseEnvelopeDate(envelope *enmime.Envelope) *time.Time {
@@ -347,35 +498,38 @@ func EnvelopeHeaders(envelope *enmime.Envelope) map[string]string {
 }
 
 func HTMLToPlainText(input string) string {
-	var b strings.Builder
-	inTag := false
-	lastSpace := false
-	for _, r := range input {
-		switch r {
-		case '<':
-			inTag = true
-			if !lastSpace {
-				b.WriteRune(' ')
-				lastSpace = true
+	if strings.TrimSpace(input) == "" {
+		return ""
+	}
+	tokenizer := nethtml.NewTokenizer(strings.NewReader(input))
+	parts := make([]string, 0)
+	suppressedDepth := 0
+	for {
+		switch tokenizer.Next() {
+		case nethtml.ErrorToken:
+			return strings.Join(parts, " ")
+		case nethtml.StartTagToken, nethtml.SelfClosingTagToken:
+			token := tokenizer.Token()
+			switch strings.ToLower(token.Data) {
+			case "script", "style", "head", "template", "noscript":
+				suppressedDepth++
 			}
-		case '>':
-			inTag = false
-		default:
-			if inTag {
-				continue
-			}
-			if r == '\n' || r == '\r' || r == '\t' || r == ' ' {
-				if !lastSpace {
-					b.WriteRune(' ')
-					lastSpace = true
+		case nethtml.EndTagToken:
+			tag, _ := tokenizer.TagName()
+			switch strings.ToLower(string(tag)) {
+			case "script", "style", "head", "template", "noscript":
+				if suppressedDepth > 0 {
+					suppressedDepth--
 				}
-				continue
 			}
-			b.WriteRune(r)
-			lastSpace = false
+		case nethtml.TextToken:
+			if suppressedDepth == 0 {
+				if value := strings.Join(strings.Fields(string(tokenizer.Text())), " "); value != "" {
+					parts = append(parts, value)
+				}
+			}
 		}
 	}
-	return strings.TrimSpace(html.UnescapeString(b.String()))
 }
 
 func TruncateRunes(input string, limit int) string {

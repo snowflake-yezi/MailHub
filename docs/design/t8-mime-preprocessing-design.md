@@ -2,7 +2,7 @@
 
 > 状态：已实现并部署（2026-06-27）；后续附件下载、安全预览和 inline 图片兼容已补齐 | 决策：D-1 邮箱维度主线、D-2 mail-node 就地解析、D-3 mgmt 外部 API 收口、D-4 引入 enmime、D-5 附件仅返回元数据、D-6 `html_body` 可选返回、D-7 fallback message_id 使用相对路径 + size + mtime hash | 依据：`REQUIREMENTS_ANALYSIS.md` §2.1.4 / §2.2.4、`docs/architecture-overview.md`
 
-> **阅读说明：** 本文主体记录 T8 的实现前设计。正文中“暂不纳入下载端点”等范围说明已被 `attachment-download-design.md` 和 inline 图片兼容实现扩展，不应视为当前能力限制。
+> **阅读说明：** 本文主体记录 T8 的实现前设计。正文中“暂不纳入下载端点”等范围说明已被 `attachment-download-design.md` 和 inline 图片兼容实现扩展，不应视为当前能力限制。复杂正文树解释、CID scope、媒体策略和安全展示的当前上位契约以 [`mime-media-detection-and-safe-preview-design.md`](mime-media-detection-and-safe-preview-design.md) 为准。
 
 ---
 

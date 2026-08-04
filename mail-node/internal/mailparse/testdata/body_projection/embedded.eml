@@ -1,0 +1,13 @@
+Message-ID: <embedded@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: embedded
+MIME-Version: 1.0
+Content-Type: message/rfc822
+
+From: Nested <nested@example.test>
+To: Inbox <inbox@example.test>
+Subject: nested
+Content-Type: text/plain; charset=utf-8
+
+nested body must not escape

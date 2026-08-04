@@ -111,6 +111,23 @@ func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
 	}
 }
 
+func TestValidateNodeConfigValueSupportsAllowedValues(t *testing.T) {
+	definition, ok := configschema.Get("mime.body_projector_mode")
+	if !ok {
+		t.Fatal("MIME projector mode definition missing")
+	}
+	for _, value := range []string{"legacy", "shadow", "enforce"} {
+		if err := validateNodeConfigValue(definition, value); err != nil {
+			t.Fatalf("valid mode %q rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "legacy-mode", "ENFORCE"} {
+		if err := validateNodeConfigValue(definition, value); err == nil {
+			t.Fatalf("invalid mode %q accepted", value)
+		}
+	}
+}
+
 func TestFilterSyncIntervalUIContract(t *testing.T) {
 	definition, ok := configschema.Get("filter.sync_interval")
 	if !ok || !definition.NodeOverridable || definition.ApplyStrategy != configschema.ReloadHook {

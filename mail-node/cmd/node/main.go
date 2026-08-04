@@ -32,6 +32,7 @@ import (
 	"github.com/ticket/email-mail-node/internal/handler"
 	"github.com/ticket/email-mail-node/internal/identity"
 	"github.com/ticket/email-mail-node/internal/mailbox"
+	"github.com/ticket/email-mail-node/internal/mailparse"
 	"github.com/ticket/email-mail-node/internal/middleware"
 	"github.com/ticket/email-mail-node/internal/nodedata"
 	nodev1 "github.com/ticket/email-node-contract/gen/mailhub/node/v1"
@@ -97,6 +98,12 @@ func main() {
 	remoteCfg.RegisterApplyHook(forward.ValidateLifecycleConfig)
 	remoteCfg.RegisterApplyHook(filter.ValidateConfig)
 	remoteCfg.RegisterApplyHook(filterdecision.ValidateConfig)
+	remoteCfg.RegisterApplyHook(mailparse.ValidateConfig)
+	remoteCfg.RegisterAfterApplyHook(func(_, _ uint64) {
+		if err := mailparse.ConfigureFromConfig(remoteCfg.Configs()); err != nil {
+			log.Printf("[mime] config apply failed after validation: %v", err)
+		}
+	})
 	if err := remoteCfg.PullAll(); err != nil {
 		log.Printf("[config] WARNING: failed to pull remote config from mgmt: %v — using YAML/local defaults", err)
 	} else {
@@ -403,18 +410,20 @@ func runtimeConfigSnapshotValues(remoteCfg *config.RemoteConfig, engine *filter.
 		filterdecision.AutoQuarantineConfigKey: strconv.FormatBool(
 			remoteCfg.GetBool(filterdecision.AutoQuarantineConfigKey, false),
 		),
-		"filter.quarantine_base":           remoteCfg.GetString("filter.quarantine_base", "/var/mail/mailhub-quarantine"),
-		"forward.scan_interval":            strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
-		"forward.max_email_size":           strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
-		"forward.body_preview_size":        strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),
-		"forward.target_address":           remoteCfg.GetString("forward.target_address", forwardCfg.TargetAddress),
-		"forward.smtp_dial_timeout":        strconv.Itoa(int(remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", forwardCfg.SMTPDialTimeout) / time.Second)),
-		"forward.tls_insecure_skip":        strconv.FormatBool(remoteCfg.GetBool("forward.tls_insecure_skip", forwardCfg.TLSInsecureSkip)),
-		"forward.tls_min_version":          strconv.Itoa(remoteCfg.GetInt("forward.tls_min_version", forwardCfg.TLSMinVersion)),
-		"lifecycle.trash_retention_hours":  strconv.Itoa(int(remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention) / time.Hour)),
-		"lifecycle.gc_interval_minutes":    strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute) / time.Minute)),
-		"lifecycle.drain_timeout_minutes":  strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute) / time.Minute)),
-		"lifecycle.drain_poll_interval_ms": strconv.Itoa(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500)),
+		"filter.quarantine_base":             remoteCfg.GetString("filter.quarantine_base", "/var/mail/mailhub-quarantine"),
+		"forward.scan_interval":              strconv.Itoa(remoteCfg.GetInt("forward.scan_interval", forwardCfg.ScanInterval)),
+		"forward.max_email_size":             strconv.FormatInt(remoteCfg.GetInt64("forward.max_email_size", forwardCfg.MaxEmailSize), 10),
+		"forward.body_preview_size":          strconv.FormatInt(remoteCfg.GetInt64("forward.body_preview_size", forwardCfg.BodyPreviewSize), 10),
+		"forward.target_address":             remoteCfg.GetString("forward.target_address", forwardCfg.TargetAddress),
+		"forward.smtp_dial_timeout":          strconv.Itoa(int(remoteCfg.GetDurationSeconds("forward.smtp_dial_timeout", forwardCfg.SMTPDialTimeout) / time.Second)),
+		"forward.tls_insecure_skip":          strconv.FormatBool(remoteCfg.GetBool("forward.tls_insecure_skip", forwardCfg.TLSInsecureSkip)),
+		"forward.tls_min_version":            strconv.Itoa(remoteCfg.GetInt("forward.tls_min_version", forwardCfg.TLSMinVersion)),
+		mailparse.BodyProjectorModeConfigKey: remoteCfg.GetString(mailparse.BodyProjectorModeConfigKey, string(mailparse.ProjectorLegacy)),
+		mailparse.MaxMessageBytesConfigKey:   strconv.FormatInt(remoteCfg.GetInt64(mailparse.MaxMessageBytesConfigKey, 25*1024*1024), 10),
+		"lifecycle.trash_retention_hours":    strconv.Itoa(int(remoteCfg.GetDurationHours("lifecycle.trash_retention_hours", trashRetention) / time.Hour)),
+		"lifecycle.gc_interval_minutes":      strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.gc_interval_minutes", 60*time.Minute) / time.Minute)),
+		"lifecycle.drain_timeout_minutes":    strconv.Itoa(int(remoteCfg.GetDurationMinutes("lifecycle.drain_timeout_minutes", 5*time.Minute) / time.Minute)),
+		"lifecycle.drain_poll_interval_ms":   strconv.Itoa(remoteCfg.GetInt("lifecycle.drain_poll_interval_ms", 500)),
 	}
 }
 

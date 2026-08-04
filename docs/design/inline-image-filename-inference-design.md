@@ -1,6 +1,8 @@
 # inline 图片文件后缀解析修复设计
 
 > 状态：已实现并完成真实浏览器验收（2026-07-10） | 关联：`docs/design/t8-mime-preprocessing-design.md`、`docs/design/attachment-download-design.md`
+>
+> 后续通用化：图片魔数兜底将由 [`mime-media-detection-and-safe-preview-design.md`](mime-media-detection-and-safe-preview-design.md) 扩展为图片、视频、音频等通用媒体识别，并统一查询、下载、预览与转发策略。
 
 > **实现结果：** safe HTML、CID 映射、iframe sandbox、文件名/后缀和 Content-Type 魔数推断均已落地；SVG 与压缩包维持仅下载降级。
 

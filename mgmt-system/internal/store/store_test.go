@@ -172,6 +172,22 @@ func TestDefaultConfigsSeedFilterRuntimeSafetyDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigsSeedMIMEProjectorDefaults(t *testing.T) {
+	configs := make(map[string]seedConfig)
+	for _, cfg := range defaultConfigs() {
+		configs[cfg.Key] = cfg
+	}
+	for key, want := range map[string]string{
+		"mime.body_projector_mode": "legacy",
+		"mime.max_message_bytes":   "26214400",
+	} {
+		cfg, ok := configs[key]
+		if !ok || cfg.Value != want || cfg.Default != want || !cfg.Reloadable {
+			t.Fatalf("%s seed = %#v, want value/default %q and reloadable", key, cfg, want)
+		}
+	}
+}
+
 func TestBumpAllServerDesiredRevisions(t *testing.T) {
 	st, mock, cleanup := newMockStore(t)
 	defer cleanup()

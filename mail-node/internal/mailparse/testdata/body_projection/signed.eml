@@ -1,0 +1,17 @@
+Message-ID: <signed@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: signed
+MIME-Version: 1.0
+Content-Type: multipart/signed; boundary="signed-boundary"; protocol="application/pkcs7-signature"
+
+--signed-boundary
+Content-Type: text/plain; charset=utf-8
+
+signed body
+--signed-boundary
+Content-Type: application/pkcs7-signature
+Content-Transfer-Encoding: base64
+
+c2lnbmF0dXJl
+--signed-boundary--

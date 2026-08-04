@@ -1,6 +1,9 @@
 package configschema
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestTrashRetentionSchema(t *testing.T) {
 	definition, ok := Get("lifecycle.trash_retention_hours")
@@ -52,6 +55,21 @@ func TestTLSVerificationIsSecureByDefault(t *testing.T) {
 	}
 	if definition.DefaultValue != "false" {
 		t.Fatalf("TLS insecure default = %q, want false", definition.DefaultValue)
+	}
+}
+
+func TestMIMEProjectorSchemaContract(t *testing.T) {
+	mode, ok := Get("mime.body_projector_mode")
+	if !ok || mode.Owner != "mail-node" || mode.DefaultValue != "legacy" || mode.ApplyStrategy != ReadThrough || !mode.NodeOverridable {
+		t.Fatalf("mode definition = %#v", mode)
+	}
+	wantModes := []string{"legacy", "shadow", "enforce"}
+	if !reflect.DeepEqual(mode.AllowedValues, wantModes) {
+		t.Fatalf("mode allowed values = %v, want %v", mode.AllowedValues, wantModes)
+	}
+	maxBytes, ok := Get("mime.max_message_bytes")
+	if !ok || maxBytes.Min != 1048576 || maxBytes.Max != 1073741824 || maxBytes.DefaultValue != "26214400" {
+		t.Fatalf("max bytes definition = %#v", maxBytes)
 	}
 }
 

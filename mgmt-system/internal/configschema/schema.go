@@ -20,6 +20,7 @@ type Definition struct {
 	Unit            string
 	Min             int
 	Max             int
+	AllowedValues   []string
 	NodeOverridable bool
 	ApplyStrategy   ApplyStrategy
 }
@@ -32,6 +33,8 @@ var definitionOrder = []string{
 	"forward.smtp_dial_timeout",
 	"forward.tls_insecure_skip",
 	"forward.tls_min_version",
+	"mime.body_projector_mode",
+	"mime.max_message_bytes",
 	"filter.sync_interval",
 	"filter.engine_mode",
 	"filter.auto_quarantine_enabled",
@@ -71,6 +74,14 @@ var definitions = map[string]Definition{
 	"forward.tls_min_version": {
 		Key: "forward.tls_min_version", Owner: "mail-node", Category: "forward", Label: "TLS 最低版本", Description: "SMTP STARTTLS 最低版本，12 表示 TLS 1.2，13 表示 TLS 1.3",
 		ValueType: "int", DefaultValue: "12", Unit: "版本", Min: 12, Max: 13, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"mime.body_projector_mode": {
+		Key: "mime.body_projector_mode", Owner: "mail-node", Category: "mime", Label: "正文投影模式", Description: "控制 MIME 正文投影的兼容、影子或强制模式",
+		ValueType: "string", DefaultValue: "legacy", Unit: "模式", Min: 6, Max: 7, AllowedValues: []string{"legacy", "shadow", "enforce"}, NodeOverridable: true, ApplyStrategy: ReadThrough,
+	},
+	"mime.max_message_bytes": {
+		Key: "mime.max_message_bytes", Owner: "mail-node", Category: "mime", Label: "MIME 最大邮件大小", Description: "进入 MIME 解析器前允许的原始邮件最大字节数",
+		ValueType: "int", DefaultValue: "26214400", Unit: "字节", Min: 1048576, Max: 1073741824, NodeOverridable: true, ApplyStrategy: ReadThrough,
 	},
 	"filter.sync_interval": {
 		Key: "filter.sync_interval", Owner: "mail-node", Category: "filter", Label: "规则同步间隔", Description: "节点启动时立即同步，配置重载后在线更新周期",

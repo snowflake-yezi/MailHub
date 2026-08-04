@@ -1,0 +1,8 @@
+Message-ID: <fatal-boundary@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: fatal missing boundary
+MIME-Version: 1.0
+Content-Type: multipart/mixed
+
+body without a boundary

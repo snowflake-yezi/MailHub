@@ -214,6 +214,10 @@ func defaultConfigs() []seedConfig {
 		{Key: "forward.tls_min_version", Value: "12", Type: "int", Category: "forward", Label: "TLS 最低版本", Desc: "SMTP STARTTLS 最低 TLS 版本（12=1.2, 13=1.3）", Default: "12", Reloadable: false},
 		{Key: "forward.target_address", Value: "union@example.com", Type: "string", Category: "forward", Label: "转发目标邮箱", Desc: "非垃圾邮件汇总转发的集成邮箱地址（当前生效项，由集成邮箱管理页联动写入）", Default: "union@example.com", Reloadable: true},
 
+		// ── MIME 正文投影 ── mail-node ──
+		{Key: "mime.body_projector_mode", Value: "legacy", Type: "string", Category: "mime", Label: "正文投影模式", Desc: "legacy=兼容输出 / shadow=影子比较 / enforce=新投影接管", Default: "legacy", Reloadable: true},
+		{Key: "mime.max_message_bytes", Value: "26214400", Type: "int", Category: "mime", Label: "MIME 最大邮件大小（字节）", Desc: "进入 MIME 解析器前允许的原始邮件最大字节数，默认 25 MiB", Default: "26214400", Reloadable: true},
+
 		// ── filter（过滤引擎）── mail-node ──
 		{Key: "filter.default_action", Value: "pass", Type: "string", Category: "filter", Label: "默认过滤动作", Desc: "pass=放行转发 / flag=标记后转发 / block=停止转发并保留原件", Default: "pass", Reloadable: true},
 		{Key: "filter.flag_subject_prefix", Value: "[疑似]", Type: "string", Category: "filter", Label: "标记邮件标题前缀", Desc: "filter action=flag 时添加的标题前缀", Default: "[疑似]", Reloadable: true},

@@ -1,0 +1,24 @@
+Message-ID: <related-start@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: related start
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="related-boundary"; start="<selected-root@example.test>"
+
+--related-boundary
+Content-Type: text/html; charset=utf-8
+Content-ID: <decoy-root@example.test>
+
+<p>decoy root</p>
+--related-boundary
+Content-Type: text/html; charset=utf-8
+Content-ID: <selected-root@example.test>
+
+<p>selected root</p>
+--related-boundary
+Content-Type: image/png
+Content-ID: <logo@example.test>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgo=
+--related-boundary--

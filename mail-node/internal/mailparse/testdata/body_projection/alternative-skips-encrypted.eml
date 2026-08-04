@@ -1,0 +1,24 @@
+Message-ID: <alternative-skips-encrypted@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: alternative skips encrypted
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alternative-boundary"
+
+--alternative-boundary
+Content-Type: text/plain; charset=utf-8
+
+safe fallback
+--alternative-boundary
+Content-Type: multipart/encrypted; boundary="encrypted-boundary"; protocol="application/pgp-encrypted"
+
+--encrypted-boundary
+Content-Type: application/pgp-encrypted
+
+Version: 1
+--encrypted-boundary
+Content-Type: application/octet-stream
+
+encrypted
+--encrypted-boundary--
+--alternative-boundary--

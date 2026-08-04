@@ -45,6 +45,7 @@ const common = {
     mailbox: '邮箱',
     milliseconds: '毫秒',
     minutes: '分钟',
+	mode: '模式',
     seconds: '秒',
     switch: '开关',
     version: '版本',
@@ -110,6 +111,7 @@ const pages = {
     loading: '加载系统配置...',
     categories: {
       forward: { label: '邮件转发引擎', desc: '控制 union 转发目标、重试与链路行为。' },
+	  mime: { label: 'MIME 解析', desc: '控制正文投影兼容模式和解析资源边界。' },
       filter: { label: '过滤引擎', desc: '控制规则匹配、默认动作和热加载策略。' },
       lifecycle: { label: '生命周期管理', desc: '控制邮箱禁用、回收与清理节奏。' },
       healthcheck: { label: '健康检查', desc: '控制主动探测、失败阈值和状态降级。' },
@@ -185,6 +187,10 @@ const pages = {
     },
     reloadNodes: '通知节点重载',
     fields: {
+	  mime: {
+		body_projector_mode: { label: '正文投影模式', description: 'legacy 保持兼容输出，shadow 仅比较新投影，enforce 由新投影接管' },
+		max_message_bytes: { label: 'MIME 最大邮件大小', description: '进入 MIME 解析器前允许的原始邮件最大字节数' },
+	  },
       forward: {
         scan_interval: { label: '扫描间隔', description: 'Maildir 新邮件扫描频率' },
         max_email_size: { label: '最大邮件大小', description: '单封邮件最大处理字节数' },
@@ -247,6 +253,7 @@ const pages = {
         default_dkim_selector: { label: '默认 DKIM 选择器', description: '新域名的默认 DKIM selector' },
       },
     },
+	options: { mime: { body_projector_mode: { legacy: '兼容', shadow: '影子比较', enforce: '强制启用' } } },
     node: {
       title: '节点配置',
       categoryTitle: '{{name}} · 节点覆盖',

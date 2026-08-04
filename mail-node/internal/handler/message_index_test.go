@@ -137,6 +137,21 @@ func TestFindMessagePathSupportsFallbackID(t *testing.T) {
 	}
 }
 
+func TestFindMessagePathUsesFallbackForMalformedHeader(t *testing.T) {
+	tmp := t.TempDir()
+	h := newMessageIndexTestHandler(tmp)
+	path := filepath.Join(tmp, "example.com", "user", "new", "message.eml")
+	writeTestFile(t, path, "Malformed header without delimiter")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantID := fallbackMessageID(path, tmp, info)
+	if got, ok := h.findMessagePath("user@example.com", wantID); !ok || got != path {
+		t.Fatalf("malformed-header fallback lookup = %q/%v", got, ok)
+	}
+}
+
 func TestFindMessagePathConcurrentAccess(t *testing.T) {
 	tmp := t.TempDir()
 	h := newMessageIndexTestHandler(tmp)

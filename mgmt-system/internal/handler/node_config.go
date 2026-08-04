@@ -27,6 +27,7 @@ type nodeConfigItem struct {
 	Unit            string     `json:"unit"`
 	Min             int        `json:"min"`
 	Max             int        `json:"max"`
+	AllowedValues   []string   `json:"allowed_values,omitempty"`
 	GlobalValue     string     `json:"global_value"`
 	OverrideValue   *string    `json:"override_value"`
 	EffectiveValue  *string    `json:"effective_value"`
@@ -137,6 +138,18 @@ func validateNodeConfigValue(definition configschema.Definition, value string) e
 		if len(value) < definition.Min || len(value) > definition.Max {
 			return fmt.Errorf("value length must be between %d and %d", definition.Min, definition.Max)
 		}
+		if len(definition.AllowedValues) > 0 {
+			allowed := false
+			for _, candidate := range definition.AllowedValues {
+				if value == candidate {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("value must be one of %s", strings.Join(definition.AllowedValues, ", "))
+			}
+		}
 		if definition.Key == "forward.target_address" {
 			address, err := mail.ParseAddress(value)
 			if err != nil || address.Address != value {
@@ -243,7 +256,8 @@ func (h *ConfigHandler) nodeConfigItems(serverID uint64) ([]nodeConfigItem, erro
 		item := nodeConfigItem{
 			Key: definition.Key, Category: definition.Category, Label: definition.Label, Description: definition.Description,
 			ValueType: definition.ValueType, DefaultValue: definition.DefaultValue, Unit: definition.Unit, Min: definition.Min, Max: definition.Max,
-			GlobalValue: global, Source: "unknown", Status: "unreported", Reloadable: definition.Reloadable(), RequiresRestart: definition.RequiresRestart(),
+			AllowedValues: append([]string(nil), definition.AllowedValues...),
+			GlobalValue:   global, Source: "unknown", Status: "unreported", Reloadable: definition.Reloadable(), RequiresRestart: definition.RequiresRestart(),
 		}
 		if override, err := h.store.GetServerConfigOverride(serverID, definition.Key); err == nil {
 			item.OverrideValue = &override.ConfigValue

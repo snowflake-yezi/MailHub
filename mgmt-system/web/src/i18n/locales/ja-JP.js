@@ -39,7 +39,7 @@ const common = {
     noDescription: '説明はありません',
   },
   units: {
-    bytes: 'バイト', days: '日', hours: '時間', mailbox: 'メールボックス', milliseconds: 'ミリ秒', minutes: '分', seconds: '秒', switch: 'スイッチ', version: 'バージョン',
+	bytes: 'バイト', days: '日', hours: '時間', mailbox: 'メールボックス', milliseconds: 'ミリ秒', minutes: '分', mode: 'モード', seconds: '秒', switch: 'スイッチ', version: 'バージョン',
   },
 }
 
@@ -102,6 +102,7 @@ const pages = {
     loading: 'システム設定を読み込み中...',
     categories: {
       forward: { label: 'メール転送エンジン', desc: 'union の転送先、再試行、配送動作を制御します。' },
+	  mime: { label: 'MIME 解析', desc: '本文投影の互換モードと解析リソース上限を制御します。' },
       filter: { label: 'フィルターエンジン', desc: 'ルール照合、デフォルト動作、ホットリロードを制御します。' },
       lifecycle: { label: 'ライフサイクル管理', desc: 'メールボックスの無効化、回収、削除スケジュールを制御します。' },
       healthcheck: { label: 'ヘルスチェック', desc: 'アクティブプローブ、失敗しきい値、状態低下を制御します。' },
@@ -123,6 +124,10 @@ const pages = {
     messages: { accountLoadFailed: '管理者アカウントの読み込みに失敗しました：{{message}}', configLoadFailed: '設定の読み込みに失敗しました：{{message}}', nodeLoadFailed: 'ノード設定の読み込みに失敗しました：{{message}}', operationFailed: '操作に失敗しました：{{message}}', reloadSent: 'すべてのノードに設定の再読み込みを通知しました', resetDone: 'デフォルト値に戻しました', resetFailed: '復元に失敗しました：{{message}}', saved: '{{count}} 件の設定を保存しました' },
     reloadNodes: 'ノードを再読み込み',
     fields: {
+	  mime: {
+		body_projector_mode: { label: '本文投影モード', description: 'legacy は互換出力を維持し、shadow は新投影を比較し、enforce は新投影を配信します' },
+		max_message_bytes: { label: 'MIME 最大メールサイズ', description: 'MIME 解析前に許可する元メールの最大バイト数' },
+	  },
       forward: {
         scan_interval: { label: 'スキャン間隔', description: 'Maildir で新着メールをスキャンする間隔' }, max_email_size: { label: '最大メールサイズ', description: '1通のメールで処理する最大バイト数' }, body_preview_size: { label: '本文プレビューサイズ', description: 'フィルター時に読み込む本文の上限' }, target_address: { label: '転送先メールボックス', description: '迷惑メール以外を集約転送する宛先' }, smtp_dial_timeout: { label: 'SMTP 接続タイムアウト', description: 'SMTP サーバーへの接続タイムアウト' }, tls_insecure_skip: { label: 'TLS 証明書検証をスキップ', description: '管理された自己署名証明書の場合のみ有効にします' }, tls_min_version: { label: 'TLS 最小バージョン', description: 'SMTP STARTTLS の最小バージョン。12 は TLS 1.2、13 は TLS 1.3' },
       },
@@ -137,6 +142,7 @@ const pages = {
       maildir: { vmail_uid: { label: '仮想ユーザー UID', description: 'Maildir ファイル所有者の UID' }, vmail_gid: { label: '仮想ユーザー GID', description: 'Maildir ファイルグループの GID' } },
       general: { default_retention_days: { label: '全体のメール保持日数', description: '既存・新規の全メールボックスに適用し、次回のライフサイクル処理でファイル時刻に基づいて削除します。再起動は不要です' }, default_page_size: { label: 'デフォルトページサイズ', description: '一覧 API のデフォルト表示件数' }, max_page_size: { label: '最大ページサイズ', description: '一覧 API の最大表示件数' }, password_min_length: { label: 'パスワード最小長', description: 'メールボックスのパスワード最小文字数' }, password_length: { label: '生成パスワード長', description: '自動生成するパスワードの文字数' }, default_server_capacity: { label: 'デフォルトサーバー容量', description: '新規登録 mail-node のデフォルトメールボックス容量' }, default_dkim_selector: { label: 'デフォルト DKIM セレクター', description: '新規ドメインのデフォルト DKIM selector' } },
     },
+	options: { mime: { body_projector_mode: { legacy: '互換', shadow: 'シャドー', enforce: '強制' } } },
     node: {
       title: 'ノード設定', categoryTitle: '{{name}} · ノード上書き', loading: '設定を読み込み中...', version: 'リビジョン {{applied}} / {{desired}}', started: '起動 {{date}}', bootId: 'Boot ID {{value}}', dirty: '未保存 {{count}} 件', noChanges: '未保存の変更なし', priorityHint: 'ノード上書きはグローバルデフォルトより優先されます', mailboxRetention: 'メールボックスの retention_days を使用', resetGlobal: 'グローバルデフォルトに戻す', globalDefault: 'グローバルデフォルト', nodeOverride: 'ノード上書き', effective: '適用値', source: '設定元', useMailboxSetting: 'メールボックス設定を使用', none: 'なし', lifecycleRuntimeHint: '管理サービスが実行時に読み込み、次回のライフサイクル処理から反映されます', recentChanges: '最近の設定変更', noAudits: 'ノード設定の変更履歴はありません', auditReset: 'グローバルに戻す', auditOverride: '上書きを設定', noOverride: '上書きなし', saveOverrides: '上書きを保存', savedOverrides: '{{count}} 件のノード上書きを保存しました', resetDone: '「{{name}}」をグローバル設定に戻しました', loadFailed: 'ノード設定の読み込みに失敗しました：{{message}}', toastRestart: '{{message}}。反映にはノードの再起動が必要です', toastReload: '{{message}}。ノードにホットリロードを通知しました', toastRetry: '{{message}}。ノードへの通知に失敗したため、定期取得で再試行します',
       sources: { server_override: 'ノード上書き', global: 'グローバル設定', local_config: 'ローカル設定', unknown: '不明' },

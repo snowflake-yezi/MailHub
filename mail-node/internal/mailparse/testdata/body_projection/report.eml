@@ -1,0 +1,18 @@
+Message-ID: <report@example.test>
+From: Mailer Daemon <mailer-daemon@example.test>
+To: Inbox <inbox@example.test>
+Subject: report
+MIME-Version: 1.0
+Content-Type: multipart/report; boundary="report-boundary"; report-type="delivery-status"
+
+--report-boundary
+Content-Type: text/plain; charset=utf-8
+
+Delivery failed
+--report-boundary
+Content-Type: message/delivery-status
+
+Final-Recipient: rfc822; missing@example.test
+Action: failed
+Status: 5.1.1
+--report-boundary--

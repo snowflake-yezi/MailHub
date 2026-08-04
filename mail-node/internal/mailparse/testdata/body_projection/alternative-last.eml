@@ -1,0 +1,20 @@
+Message-ID: <alternative-last@example.test>
+From: Sender <sender@example.test>
+To: Inbox <inbox@example.test>
+Subject: alternative last
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alternative-boundary"
+
+--alternative-boundary
+Content-Type: text/plain; charset=utf-8
+
+plain version
+--alternative-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>stale html</p>
+--alternative-boundary
+Content-Type: text/html; charset=utf-8
+
+<p>selected html</p>
+--alternative-boundary--
