@@ -45,6 +45,7 @@ assert.match(emails, /partitionEmailAttachments\(detail\)/, 'message details mus
 assert.match(emails, /messages\.reduce\(\(sum, msg\) => sum \+ countFileAttachments\(msg\)/, 'email list counts must exclude inline body images')
 assert.match(emails, /emailPresentation\.trailingInlineImages\.map/, 'unplaced inline images must render with the message body')
 assert.match(emails, /emailPresentation\.fileAttachments\.map/, 'the attachment list must only render file attachments')
+assert.match(emails, /buildEmailPreviewCSP\(window\.location\.origin\)/, 'srcdoc CSP must allow the current admin origin for CID images')
 assert.match(emails, /emailAPI\.rawUrl\(detail\.message_id, query\)/, 'email details cannot download the original EML')
 assert.doesNotMatch(emails, /\['html', 'HTML'\]|rawMeta/, 'legacy Text/HTML/Raw metadata tabs are still exposed')
 

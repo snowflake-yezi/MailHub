@@ -7,6 +7,24 @@ const INLINE_IMAGE_CONTENT_TYPES = new Set([
   'image/webp',
 ])
 
+const EMAIL_PREVIEW_CSP_PREFIX = "default-src 'none';"
+const EMAIL_PREVIEW_CSP_SUFFIX = "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"
+
+export function buildEmailPreviewCSP(origin) {
+  let httpOrigin = ''
+  try {
+    const parsed = new URL(String(origin || ''))
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      httpOrigin = parsed.origin
+    }
+  } catch {
+    // Invalid origins are omitted so the preview remains closed by default.
+  }
+
+  const imageSources = ["'self'", ...(httpOrigin ? [httpOrigin] : []), 'data:', 'blob:']
+  return `${EMAIL_PREVIEW_CSP_PREFIX} img-src ${imageSources.join(' ')}; ${EMAIL_PREVIEW_CSP_SUFFIX}`
+}
+
 export function normalizeContentType(value) {
   return String(value || '').split(';')[0].trim().toLowerCase()
 }

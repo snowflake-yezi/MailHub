@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict'
-import { countFileAttachments, isInlineBodyImage, partitionEmailAttachments } from '../src/emailPresentation.js'
+import { buildEmailPreviewCSP, countFileAttachments, isInlineBodyImage, partitionEmailAttachments } from '../src/emailPresentation.js'
+
+const productionPreviewCSP = buildEmailPreviewCSP('https://mail.asadad.bond')
+assert.match(
+  productionPreviewCSP,
+  /img-src 'self' https:\/\/mail\.asadad\.bond data: blob:/,
+  'srcdoc previews must explicitly allow the current admin origin',
+)
+assert.doesNotMatch(buildEmailPreviewCSP('javascript:alert(1)'), /javascript:/, 'non-HTTP origins must remain blocked')
+assert.doesNotMatch(buildEmailPreviewCSP('not a URL'), /not a URL/, 'invalid origins must remain blocked')
 
 const inlineLogo = { index: 2, inline: true, content_type: 'Image/PNG; name="logo.png"' }
 const inlineAVIF = { index: 3, inline: true, content_type: 'image/avif' }

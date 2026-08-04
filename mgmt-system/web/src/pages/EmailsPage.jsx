@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
-import { countFileAttachments, isInlineBodyImage, normalizeContentType, partitionEmailAttachments } from '../emailPresentation'
+import { buildEmailPreviewCSP, countFileAttachments, isInlineBodyImage, normalizeContentType, partitionEmailAttachments } from '../emailPresentation'
 import { formatDateTime } from '../i18n'
 
 function normalizeContentID(value) {
@@ -76,6 +76,7 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
     element.remove()
   }
   sanitizeURLAttributes(doc)
+  const previewCSP = buildEmailPreviewCSP(window.location.origin)
 
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') || ''
@@ -98,7 +99,7 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
 <html>
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="${previewCSP}">
 <style>
   body { margin: 0; padding: 12px; color: #334155; font: 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }
   img { max-width: 100%; height: auto; }
