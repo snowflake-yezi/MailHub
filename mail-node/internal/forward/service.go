@@ -414,10 +414,20 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 		return nil
 	}
 
-	// 5. Forward (pass or flag) via SMTP
-	newSubject := buildSubject(s.cfg.SubjectPrefix, sourceAddr, result.Action, headers["subject"])
-
+	// 5. Forward (pass or flag) via SMTP. The active integrated mailbox is
+	// also scanned, so sending it to itself would create one duplicate.
 	target := s.currentTarget()
+	if sameMailboxAddress(sourceAddr, target) {
+		if err := moveToCur(filePath); err != nil {
+			s.completeDecision(decisionKey, attemptedAction, legacyContractAction(result.Action), err)
+			return fmt.Errorf("self-target message move to cur: %w", err)
+		}
+		s.completeDecision(decisionKey, attemptedAction, legacyContractAction(result.Action), nil)
+		log.Printf("[forward] skipped (self target): %s -> %s", sourceAddr, target)
+		return nil
+	}
+
+	newSubject := buildSubject(s.cfg.SubjectPrefix, sourceAddr, result.Action, headers["subject"])
 	smtpUser, smtpPass := s.currentSMTPAuth()
 	if err := streamToSMTP(s.currentSMTPConfig(), filePath, newSubject, sourceAddr, target, smtpUser, smtpPass); err != nil {
 		// SMTP failed → leave in new/ for next-scan retry (natural backoff)
@@ -437,6 +447,12 @@ func (s *Service) processFile(filePath, sourceAddr string) error {
 		sourceAddr, target, result.Action, result.RuleID, elapsed)
 
 	return nil
+}
+
+func sameMailboxAddress(source, target string) bool {
+	source = strings.TrimSpace(source)
+	target = strings.TrimSpace(target)
+	return source != "" && target != "" && strings.EqualFold(source, target)
 }
 
 func (s *Service) currentEngineMode() string {

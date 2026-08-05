@@ -36,6 +36,71 @@ func TestScannerSkipsDeliveredQuarantine(t *testing.T) {
 	}
 }
 
+func TestScannerSkipsSelfTargetWithoutSMTP(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+	}{
+		{name: "exact address", target: "se@example.com"},
+		{name: "case insensitive address", target: "SE@EXAMPLE.COM"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			base := t.TempDir()
+			newDir := filepath.Join(base, "example.com", "se", "new")
+			if err := os.MkdirAll(newDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			messagePath := filepath.Join(newDir, "message")
+			message := "From: sender@example.net\r\nTo: se@example.com\r\nSubject: direct mail\r\nMessage-ID: <self-target@example.net>\r\n\r\nbody"
+			if err := os.WriteFile(messagePath, []byte(message), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			mgr := mailbox.NewManagerWithFiles(base, 0, 0, filepath.Join(base, "users"), filepath.Join(base, "vmailbox"))
+			service := New(ForwardConfig{TargetAddress: tt.target}, filter.New(filter.ActionPass, ""), mgr, nil)
+			processed, errors := service.ScanOnce()
+			if processed != 1 || errors != 0 {
+				t.Fatalf("self-target scan = processed %d errors %d, want 1/0", processed, errors)
+			}
+			if _, err := os.Stat(messagePath); !os.IsNotExist(err) {
+				t.Fatalf("self-target message remains in new: %v", err)
+			}
+			curEntries, err := os.ReadDir(filepath.Join(base, "example.com", "se", "cur"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(curEntries) != 1 {
+				t.Fatalf("cur entries = %d, want 1", len(curEntries))
+			}
+		})
+	}
+}
+
+func TestSameMailboxAddress(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		target string
+		want   bool
+	}{
+		{name: "exact", source: "se@example.com", target: "se@example.com", want: true},
+		{name: "case and spaces", source: " se@example.com ", target: "SE@EXAMPLE.COM", want: true},
+		{name: "different mailbox", source: "orders@example.com", target: "se@example.com", want: false},
+		{name: "empty source", source: "", target: "se@example.com", want: false},
+		{name: "empty target", source: "se@example.com", target: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := sameMailboxAddress(tt.source, tt.target); got != tt.want {
+				t.Fatalf("sameMailboxAddress(%q, %q) = %v, want %v", tt.source, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDeliveredCommitFailureIsQuarantined(t *testing.T) {
 	maildir := t.TempDir()
 	newDir := filepath.Join(maildir, "new")
