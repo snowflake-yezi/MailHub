@@ -6,7 +6,6 @@ import {
   Download,
   Eye,
   FileText,
-  Image as ImageIcon,
   Inbox,
   MailOpen,
   Paperclip,
@@ -90,31 +89,20 @@ function sanitizeEmailLinks(doc) {
   }
 }
 
-function sanitizeLegacyBackgroundImages(doc, allowRemoteImages) {
-  let hasRemoteImages = false
+function sanitizeLegacyBackgroundImages(doc) {
   for (const element of Array.from(doc.querySelectorAll('[background]'))) {
     const remoteURL = normalizeRemoteImageURL(element.getAttribute('background'))
-    if (remoteURL) hasRemoteImages = true
-    if (remoteURL && allowRemoteImages) {
+    if (remoteURL) {
       element.setAttribute('background', remoteURL)
     } else {
       element.removeAttribute('background')
     }
   }
-  return hasRemoteImages
 }
 
-function hasRemoteStyleImages(doc) {
-  const styleValues = [
-    ...Array.from(doc.querySelectorAll('[style]'), element => element.getAttribute('style') || ''),
-    ...Array.from(doc.querySelectorAll('style'), element => element.textContent || ''),
-  ]
-  return styleValues.some(value => /url\(\s*['"]?(?:https?:)?\/\//i.test(value))
-}
-
-function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteImages) {
+function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
   const html = String(detail?.html_body || '').trim()
-  if (!html) return { html: '', hasRemoteImages: false }
+  if (!html) return ''
 
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
@@ -125,8 +113,8 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteI
   }
   sanitizeURLAttributes(doc)
   sanitizeEmailLinks(doc)
-  let hasRemoteImages = sanitizeLegacyBackgroundImages(doc, allowRemoteImages) || hasRemoteStyleImages(doc)
-  const previewCSP = buildEmailPreviewCSP(window.location.origin, allowRemoteImages)
+  sanitizeLegacyBackgroundImages(doc)
+  const previewCSP = buildEmailPreviewCSP(window.location.origin)
 
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') || ''
@@ -141,8 +129,7 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteI
       }
     } else if (!/^\s*data:image\/(?:avif|bmp|gif|jpeg|png|webp)(?:;[^,]*)?,/i.test(src)) {
       const remoteURL = normalizeRemoteImageURL(src)
-      if (remoteURL) hasRemoteImages = true
-      if (remoteURL && allowRemoteImages) {
+      if (remoteURL) {
         img.setAttribute('src', remoteURL)
         img.setAttribute('referrerpolicy', 'no-referrer')
         img.setAttribute('loading', 'lazy')
@@ -153,9 +140,7 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteI
     img.removeAttribute('srcset')
   }
 
-  return {
-    hasRemoteImages,
-    html: `<!doctype html>
+  return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -168,8 +153,7 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteI
 </style>
 </head>
 <body>${doc.body.innerHTML}</body>
-</html>`,
-  }
+</html>`
 }
 
 function formatBytes(value) {
@@ -308,7 +292,6 @@ export default function EmailsPage() {
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [bodyView, setBodyView] = useState('preview')
-  const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -321,20 +304,15 @@ export default function EmailsPage() {
   const emailPresentation = useMemo(() => {
     const renderedInlineIndexes = new Set()
     const { inlineImages, fileAttachments } = partitionEmailAttachments(detail)
-    const preview = detail?.html_body
-      ? buildSafeEmailHtml(detail, query, renderedInlineIndexes, remoteImagesAllowed)
-      : { html: '', hasRemoteImages: false }
+    const safeHTML = detail?.html_body
+      ? buildSafeEmailHtml(detail, query, renderedInlineIndexes)
+      : ''
     return {
       fileAttachments,
-      hasRemoteImages: preview.hasRemoteImages,
-      safeHTML: preview.html,
+      safeHTML,
       trailingInlineImages: inlineImages.filter(image => !renderedInlineIndexes.has(image.index)),
     }
-  }, [detail, query, remoteImagesAllowed])
-
-  useEffect(() => {
-    setRemoteImagesAllowed(false)
-  }, [detail?.message_id])
+  }, [detail, query])
 
   const fetchMessages = useCallback(async (targetMailbox, targetPage = 1, targetSize = size) => {
     const normalizedMailbox = String(targetMailbox || '').trim()
@@ -677,14 +655,7 @@ export default function EmailsPage() {
 
               {bodyView === 'preview' && (
                 <div className="email-body-card">
-                  <div className="email-body-card-head">
-                    <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.previewTitle')}</div>
-                    {emailPresentation.hasRemoteImages && !remoteImagesAllowed && (
-                      <button className="btn btn-sm btn-outline" type="button" onClick={() => setRemoteImagesAllowed(true)}>
-                        <ImageIcon size={14} /> {t('emails.detail.loadRemoteImages')}
-                      </button>
-                    )}
-                  </div>
+                  <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.previewTitle')}</div>
                   {detail.html_body ? (
                     <iframe
                       title={t('emails.detail.previewAria')}

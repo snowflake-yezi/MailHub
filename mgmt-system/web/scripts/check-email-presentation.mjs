@@ -11,16 +11,12 @@ import {
 const productionPreviewCSP = buildEmailPreviewCSP('https://mail.asadad.bond')
 assert.match(
   productionPreviewCSP,
-  /img-src 'self' https:\/\/mail\.asadad\.bond data: blob:/,
-  'srcdoc previews must explicitly allow the current admin origin',
+  /img-src 'self' https:\/\/mail\.asadad\.bond https: data: blob:/,
+  'srcdoc previews must allow the current admin origin and HTTPS images',
 )
 assert.doesNotMatch(buildEmailPreviewCSP('javascript:alert(1)'), /javascript:/, 'non-HTTP origins must remain blocked')
 assert.doesNotMatch(buildEmailPreviewCSP('not a URL'), /not a URL/, 'invalid origins must remain blocked')
-assert.doesNotMatch(productionPreviewCSP, / https: data:/, 'remote images must remain blocked by default')
-
-const remoteImageCSP = buildEmailPreviewCSP('https://mail.asadad.bond', true)
-assert.match(remoteImageCSP, / https: data:/, 'remote image loading must explicitly allow HTTPS images')
-assert.match(remoteImageCSP, /upgrade-insecure-requests/, 'legacy HTTP image URLs must be upgraded')
+assert.match(productionPreviewCSP, /upgrade-insecure-requests/, 'legacy HTTP image URLs must be upgraded automatically')
 
 assert.equal(normalizeRemoteImageURL('http://www.gstatic.com/image.png'), 'https://www.gstatic.com/image.png')
 assert.equal(normalizeRemoteImageURL('//www.gstatic.com/image.png'), 'https://www.gstatic.com/image.png')
