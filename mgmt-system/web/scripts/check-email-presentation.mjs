@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict'
-import { buildEmailPreviewCSP, countFileAttachments, isInlineBodyImage, partitionEmailAttachments } from '../src/emailPresentation.js'
+import {
+  buildEmailPreviewCSP,
+  countFileAttachments,
+  isInlineBodyImage,
+  normalizeEmailLinkURL,
+  normalizeRemoteImageURL,
+  partitionEmailAttachments,
+} from '../src/emailPresentation.js'
 
 const productionPreviewCSP = buildEmailPreviewCSP('https://mail.asadad.bond')
 assert.match(
@@ -9,6 +16,20 @@ assert.match(
 )
 assert.doesNotMatch(buildEmailPreviewCSP('javascript:alert(1)'), /javascript:/, 'non-HTTP origins must remain blocked')
 assert.doesNotMatch(buildEmailPreviewCSP('not a URL'), /not a URL/, 'invalid origins must remain blocked')
+assert.doesNotMatch(productionPreviewCSP, / https: data:/, 'remote images must remain blocked by default')
+
+const remoteImageCSP = buildEmailPreviewCSP('https://mail.asadad.bond', true)
+assert.match(remoteImageCSP, / https: data:/, 'remote image loading must explicitly allow HTTPS images')
+assert.match(remoteImageCSP, /upgrade-insecure-requests/, 'legacy HTTP image URLs must be upgraded')
+
+assert.equal(normalizeRemoteImageURL('http://www.gstatic.com/image.png'), 'https://www.gstatic.com/image.png')
+assert.equal(normalizeRemoteImageURL('//www.gstatic.com/image.png'), 'https://www.gstatic.com/image.png')
+assert.equal(normalizeRemoteImageURL('data:image/png;base64,AA=='), '')
+assert.equal(normalizeRemoteImageURL('javascript:alert(1)'), '')
+assert.equal(normalizeEmailLinkURL('https://accounts.google.com/path'), 'https://accounts.google.com/path')
+assert.equal(normalizeEmailLinkURL('mailto:ops@example.com'), 'mailto:ops@example.com')
+assert.equal(normalizeEmailLinkURL('javascript:alert(1)'), '')
+assert.equal(normalizeEmailLinkURL('/admin/config'), '', 'relative links must not navigate inside the admin application')
 
 const inlineLogo = { index: 2, inline: true, content_type: 'Image/PNG; name="logo.png"' }
 const inlineAVIF = { index: 3, inline: true, content_type: 'image/avif' }

@@ -6,6 +6,7 @@ import {
   Download,
   Eye,
   FileText,
+  Image as ImageIcon,
   Inbox,
   MailOpen,
   Paperclip,
@@ -16,7 +17,15 @@ import {
   X,
 } from 'lucide-react'
 import { emailAPI } from '../api'
-import { buildEmailPreviewCSP, countFileAttachments, isInlineBodyImage, normalizeContentType, partitionEmailAttachments } from '../emailPresentation'
+import {
+  buildEmailPreviewCSP,
+  countFileAttachments,
+  isInlineBodyImage,
+  normalizeContentType,
+  normalizeEmailLinkURL,
+  normalizeRemoteImageURL,
+  partitionEmailAttachments,
+} from '../emailPresentation'
 import { formatDateTime } from '../i18n'
 
 function normalizeContentID(value) {
@@ -64,9 +73,48 @@ function sanitizeURLAttributes(doc) {
   }
 }
 
-function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
+function sanitizeEmailLinks(doc) {
+  for (const link of Array.from(doc.querySelectorAll('a[href], area[href]'))) {
+    const href = normalizeEmailLinkURL(link.getAttribute('href'))
+    link.removeAttribute('ping')
+    link.removeAttribute('download')
+    if (!href) {
+      link.removeAttribute('href')
+      link.removeAttribute('target')
+      link.removeAttribute('rel')
+      continue
+    }
+    link.setAttribute('href', href)
+    link.setAttribute('target', '_blank')
+    link.setAttribute('rel', 'noopener noreferrer')
+  }
+}
+
+function sanitizeLegacyBackgroundImages(doc, allowRemoteImages) {
+  let hasRemoteImages = false
+  for (const element of Array.from(doc.querySelectorAll('[background]'))) {
+    const remoteURL = normalizeRemoteImageURL(element.getAttribute('background'))
+    if (remoteURL) hasRemoteImages = true
+    if (remoteURL && allowRemoteImages) {
+      element.setAttribute('background', remoteURL)
+    } else {
+      element.removeAttribute('background')
+    }
+  }
+  return hasRemoteImages
+}
+
+function hasRemoteStyleImages(doc) {
+  const styleValues = [
+    ...Array.from(doc.querySelectorAll('[style]'), element => element.getAttribute('style') || ''),
+    ...Array.from(doc.querySelectorAll('style'), element => element.textContent || ''),
+  ]
+  return styleValues.some(value => /url\(\s*['"]?(?:https?:)?\/\//i.test(value))
+}
+
+function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes, allowRemoteImages) {
   const html = String(detail?.html_body || '').trim()
-  if (!html) return ''
+  if (!html) return { html: '', hasRemoteImages: false }
 
   const parser = new DOMParser()
   const doc = parser.parseFromString(html, 'text/html')
@@ -76,7 +124,9 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
     element.remove()
   }
   sanitizeURLAttributes(doc)
-  const previewCSP = buildEmailPreviewCSP(window.location.origin)
+  sanitizeEmailLinks(doc)
+  let hasRemoteImages = sanitizeLegacyBackgroundImages(doc, allowRemoteImages) || hasRemoteStyleImages(doc)
+  const previewCSP = buildEmailPreviewCSP(window.location.origin, allowRemoteImages)
 
   for (const img of Array.from(doc.querySelectorAll('img'))) {
     const src = img.getAttribute('src') || ''
@@ -90,15 +140,26 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
         img.setAttribute('alt', img.getAttribute('alt') || 'inline image not found')
       }
     } else if (!/^\s*data:image\/(?:avif|bmp|gif|jpeg|png|webp)(?:;[^,]*)?,/i.test(src)) {
-      img.removeAttribute('src')
+      const remoteURL = normalizeRemoteImageURL(src)
+      if (remoteURL) hasRemoteImages = true
+      if (remoteURL && allowRemoteImages) {
+        img.setAttribute('src', remoteURL)
+        img.setAttribute('referrerpolicy', 'no-referrer')
+        img.setAttribute('loading', 'lazy')
+      } else {
+        img.removeAttribute('src')
+      }
     }
     img.removeAttribute('srcset')
   }
 
-  return `<!doctype html>
+  return {
+    hasRemoteImages,
+    html: `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
 <meta http-equiv="Content-Security-Policy" content="${previewCSP}">
 <style>
   body { margin: 0; padding: 12px; color: #334155; font: 14px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }
@@ -107,7 +168,8 @@ function buildSafeEmailHtml(detail, mailbox, renderedInlineIndexes) {
 </style>
 </head>
 <body>${doc.body.innerHTML}</body>
-</html>`
+</html>`,
+  }
 }
 
 function formatBytes(value) {
@@ -246,6 +308,7 @@ export default function EmailsPage() {
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [bodyView, setBodyView] = useState('preview')
+  const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false)
   const [attachmentPreview, setAttachmentPreview] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -258,15 +321,20 @@ export default function EmailsPage() {
   const emailPresentation = useMemo(() => {
     const renderedInlineIndexes = new Set()
     const { inlineImages, fileAttachments } = partitionEmailAttachments(detail)
-    const safeHTML = detail?.html_body
-      ? buildSafeEmailHtml(detail, query, renderedInlineIndexes)
-      : ''
+    const preview = detail?.html_body
+      ? buildSafeEmailHtml(detail, query, renderedInlineIndexes, remoteImagesAllowed)
+      : { html: '', hasRemoteImages: false }
     return {
       fileAttachments,
-      safeHTML,
+      hasRemoteImages: preview.hasRemoteImages,
+      safeHTML: preview.html,
       trailingInlineImages: inlineImages.filter(image => !renderedInlineIndexes.has(image.index)),
     }
-  }, [detail, query])
+  }, [detail, query, remoteImagesAllowed])
+
+  useEffect(() => {
+    setRemoteImagesAllowed(false)
+  }, [detail?.message_id])
 
   const fetchMessages = useCallback(async (targetMailbox, targetPage = 1, targetSize = size) => {
     const normalizedMailbox = String(targetMailbox || '').trim()
@@ -609,11 +677,19 @@ export default function EmailsPage() {
 
               {bodyView === 'preview' && (
                 <div className="email-body-card">
-                  <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.previewTitle')}</div>
+                  <div className="email-body-card-head">
+                    <div className="body-card-title"><ShieldCheck size={15} /> {t('emails.detail.previewTitle')}</div>
+                    {emailPresentation.hasRemoteImages && !remoteImagesAllowed && (
+                      <button className="btn btn-sm btn-outline" type="button" onClick={() => setRemoteImagesAllowed(true)}>
+                        <ImageIcon size={14} /> {t('emails.detail.loadRemoteImages')}
+                      </button>
+                    )}
+                  </div>
                   {detail.html_body ? (
                     <iframe
                       title={t('emails.detail.previewAria')}
-                      sandbox="allow-same-origin"
+                      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                      referrerPolicy="no-referrer"
                       srcDoc={emailPresentation.safeHTML}
                     />
                   ) : detail.text_body ? (

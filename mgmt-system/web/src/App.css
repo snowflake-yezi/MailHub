@@ -2993,6 +2993,15 @@ textarea {
   font-weight: 750;
 }
 
+.email-body-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .email-body-card pre {
   width: 100%;
   min-width: 0;

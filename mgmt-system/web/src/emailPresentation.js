@@ -9,8 +9,9 @@ const INLINE_IMAGE_CONTENT_TYPES = new Set([
 
 const EMAIL_PREVIEW_CSP_PREFIX = "default-src 'none';"
 const EMAIL_PREVIEW_CSP_SUFFIX = "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'"
+const SAFE_EMAIL_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:'])
 
-export function buildEmailPreviewCSP(origin) {
+export function buildEmailPreviewCSP(origin, allowRemoteImages = false) {
   let httpOrigin = ''
   try {
     const parsed = new URL(String(origin || ''))
@@ -21,8 +22,35 @@ export function buildEmailPreviewCSP(origin) {
     // Invalid origins are omitted so the preview remains closed by default.
   }
 
-  const imageSources = ["'self'", ...(httpOrigin ? [httpOrigin] : []), 'data:', 'blob:']
-  return `${EMAIL_PREVIEW_CSP_PREFIX} img-src ${imageSources.join(' ')}; ${EMAIL_PREVIEW_CSP_SUFFIX}`
+  const imageSources = ["'self'", ...(httpOrigin ? [httpOrigin] : []), ...(allowRemoteImages ? ['https:'] : []), 'data:', 'blob:']
+  const upgradeDirective = allowRemoteImages ? ' upgrade-insecure-requests;' : ''
+  return `${EMAIL_PREVIEW_CSP_PREFIX} img-src ${imageSources.join(' ')};${upgradeDirective} ${EMAIL_PREVIEW_CSP_SUFFIX}`
+}
+
+export function normalizeRemoteImageURL(value) {
+  const candidate = String(value || '').trim()
+  if (!candidate) return ''
+
+  try {
+    const parsed = new URL(candidate.startsWith('//') ? `https:${candidate}` : candidate)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+    parsed.protocol = 'https:'
+    return parsed.href
+  } catch {
+    return ''
+  }
+}
+
+export function normalizeEmailLinkURL(value) {
+  const candidate = String(value || '').trim()
+  if (!candidate) return ''
+
+  try {
+    const parsed = new URL(candidate.startsWith('//') ? `https:${candidate}` : candidate)
+    return SAFE_EMAIL_LINK_PROTOCOLS.has(parsed.protocol) ? parsed.href : ''
+  } catch {
+    return ''
+  }
 }
 
 export function normalizeContentType(value) {

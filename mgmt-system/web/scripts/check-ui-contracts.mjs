@@ -45,7 +45,10 @@ assert.match(emails, /partitionEmailAttachments\(detail\)/, 'message details mus
 assert.match(emails, /messages\.reduce\(\(sum, msg\) => sum \+ countFileAttachments\(msg\)/, 'email list counts must exclude inline body images')
 assert.match(emails, /emailPresentation\.trailingInlineImages\.map/, 'unplaced inline images must render with the message body')
 assert.match(emails, /emailPresentation\.fileAttachments\.map/, 'the attachment list must only render file attachments')
-assert.match(emails, /buildEmailPreviewCSP\(window\.location\.origin\)/, 'srcdoc CSP must allow the current admin origin for CID images')
+assert.match(emails, /buildEmailPreviewCSP\(window\.location\.origin, allowRemoteImages\)/, 'srcdoc CSP must keep remote image loading explicit')
+assert.match(emails, /allow-popups allow-popups-to-escape-sandbox/, 'safe email links must open outside the preview sandbox')
+assert.match(emails, /setAttribute\('rel', 'noopener noreferrer'\)/, 'email links must not retain an opener or referrer')
+assert.match(emails, /emails\.detail\.loadRemoteImages/, 'remote images need an explicit per-message loading control')
 assert.match(emails, /emailAPI\.rawUrl\(detail\.message_id, query\)/, 'email details cannot download the original EML')
 assert.doesNotMatch(emails, /\['html', 'HTML'\]|rawMeta/, 'legacy Text/HTML/Raw metadata tabs are still exposed')
 
