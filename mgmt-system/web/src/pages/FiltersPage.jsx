@@ -31,6 +31,17 @@ const OPERATORS = {
 const BOOLEAN_FIELDS = new Set(['has_attachment', 'list_unsubscribe', 'from_reply_to_domain_match'])
 const NUMBER_FIELDS = new Set(['size_bytes', 'url_count', 'tracking_pixel_count'])
 
+function optionLabel(t, group, value) {
+  const key = String(value).replaceAll('.', '_')
+  const prefix = group === 'quarantineStatus' ? 'filterPolicy.quarantineStatus' : `filterPolicy.options.${group}`
+  return t(`${prefix}.${key}`, { defaultValue: value })
+}
+
+function conditionSummary(t, condition) {
+  const summary = `${optionLabel(t, 'fields', condition.field)} ${optionLabel(t, 'operators', condition.operator)}`
+  return condition.negated ? t('filterPolicy.negatedCondition', { condition: summary }) : summary
+}
+
 function Toast({ toast, onClose }) {
   useEffect(() => {
     const timer = setTimeout(onClose, 3500)
@@ -48,11 +59,12 @@ function SummaryTile({ icon: Icon, label, value, tone = 'brand' }) {
   )
 }
 
-function StatusTag({ value }) {
+function StatusTag({ value, group = 'statuses' }) {
+  const { t } = useTranslation('pages')
   const tone = value === 'published' || value === 'healthy' ? 'tag-success'
     : value === 'draft' || value === 'tag' ? 'tag-warning'
       : value === 'quarantine' || value === 'error' ? 'tag-danger' : 'tag-info'
-  return <span className={`tag ${tone}`}>{value || '-'}</span>
+  return <span className={`tag ${tone}`}>{value ? optionLabel(t, group, value) : '-'}</span>
 }
 
 function RevisionToolbar({ kind, revisions, selected, detail, busy, onSelect, onCreate, onClone, onValidate, onPublish }) {
@@ -64,7 +76,7 @@ function RevisionToolbar({ kind, revisions, selected, detail, busy, onSelect, on
         <label>{t('filterPolicy.revision')}</label>
         <select value={selected || ''} onChange={event => onSelect(Number(event.target.value))}>
           <option value="">{t('filterPolicy.selectRevision')}</option>
-          {revisions.map(item => <option value={item.revision} key={item.revision}>#{item.revision} · {item.status}</option>)}
+          {revisions.map(item => <option value={item.revision} key={item.revision}>#{item.revision} · {optionLabel(t, 'statuses', item.status)}</option>)}
         </select>
       </div>
       {detail && <div className="revision-facts"><StatusTag value={detail.status} /><code>{detail.checksum || t('filterPolicy.notPublished')}</code></div>}
@@ -156,11 +168,11 @@ function ConditionEditor({ policyKind, conditions, onChange }) {
         return (
           <div className="condition-row" key={`${index}-${condition.field}`}>
             <select value={condition.field} onChange={event => update(index, { field: event.target.value, operator: OPERATORS[event.target.value][0], value: event.target.value === 'list_id' ? null : '' })}>
-              {fields.map(field => <option key={field} value={field}>{field}</option>)}
+              {fields.map(field => <option key={field} value={field}>{optionLabel(t, 'fields', field)}</option>)}
             </select>
-            <select value={condition.operator} onChange={event => update(index, { operator: event.target.value })}>{operators.map(operator => <option value={operator} key={operator}>{operator}</option>)}</select>
-            {condition.field === 'list_id' ? <input value="null" disabled />
-              : BOOLEAN_FIELDS.has(condition.field) ? <select value={String(condition.value)} onChange={event => update(index, { value: event.target.value === 'true' })}><option value="true">true</option><option value="false">false</option></select>
+            <select value={condition.operator} onChange={event => update(index, { operator: event.target.value })}>{operators.map(operator => <option value={operator} key={operator}>{optionLabel(t, 'operators', operator)}</option>)}</select>
+            {condition.field === 'list_id' ? <input value={t('filterPolicy.notApplicable')} disabled />
+              : BOOLEAN_FIELDS.has(condition.field) ? <select value={String(condition.value)} onChange={event => update(index, { value: event.target.value === 'true' })}><option value="true">{optionLabel(t, 'booleanValues', 'true')}</option><option value="false">{optionLabel(t, 'booleanValues', 'false')}</option></select>
                 : <input type={NUMBER_FIELDS.has(condition.field) ? 'number' : 'text'} value={condition.value ?? ''} onChange={event => update(index, { value: event.target.value })} required />}
             <label className="condition-negated"><input type="checkbox" checked={condition.negated} onChange={event => update(index, { negated: event.target.checked })} />{t('filterPolicy.negated')}</label>
             <button className="icon-button compact danger" type="button" title={t('common:actions.delete')} onClick={() => remove(index)} disabled={conditions.length === 1}><Trash2 size={14} /></button>
@@ -179,28 +191,28 @@ function PolicyDrawer({ editor, saving, onChange, onSave, onClose }) {
   return (
     <div className="drawer-overlay" onClick={onClose}>
       <aside className="drawer drawer-wide" onClick={event => event.stopPropagation()} aria-label={t('filterPolicy.editor')}>
-        <div className="drawer-header"><div><div className="drawer-kicker">{editor.type}</div><h2>{editor.mode === 'edit' ? t('filterPolicy.editItem') : t('filterPolicy.addItem')}</h2></div><button className="icon-button" type="button" onClick={onClose} title={t('common:actions.close')}><X size={18} /></button></div>
+        <div className="drawer-header"><div><div className="drawer-kicker">{optionLabel(t, 'editorTypes', editor.type)}</div><h2>{editor.mode === 'edit' ? t('filterPolicy.editItem') : t('filterPolicy.addItem')}</h2></div><button className="icon-button" type="button" onClick={onClose} title={t('common:actions.close')}><X size={18} /></button></div>
         <form className="drawer-body" onSubmit={onSave}>
           <div className="field-grid">
             <div className="form-group"><label>{t('filterPolicy.logicalId')}</label><input value={data.logical_id} onChange={event => set({ logical_id: event.target.value })} required /></div>
             <div className="form-group"><label>{t('filterPolicy.name')}</label><input value={data.name} onChange={event => set({ name: event.target.value })} required /></div>
           </div>
           {editor.type === 'manual' && <div className="field-grid field-grid-3">
-            <div className="form-group"><label>{t('filterPolicy.action')}</label><select value={data.action} onChange={event => set({ action: event.target.value })}>{ACTIONS.map(value => <option key={value}>{value}</option>)}</select></div>
-            <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value}>{value}</option>)}</select></div>
+            <div className="form-group"><label>{t('filterPolicy.action')}</label><select value={data.action} onChange={event => set({ action: event.target.value })}>{ACTIONS.map(value => <option key={value} value={value}>{optionLabel(t, 'actions', value)}</option>)}</select></div>
+            <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value} value={value}>{optionLabel(t, 'modes', value)}</option>)}</select></div>
             <div className="form-group"><label>{t('filterPolicy.priority')}</label><input type="number" min="0" value={data.priority} onChange={event => set({ priority: Number(event.target.value) })} /></div>
           </div>}
           {editor.type === 'detector' && <div className="field-grid">
             <div className="form-group"><label>{t('filterPolicy.symbol')}</label><input value={data.symbol} onChange={event => set({ symbol: event.target.value.toUpperCase() })} required /></div>
-            <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value}>{value}</option>)}</select></div>
+            <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value} value={value}>{optionLabel(t, 'modes', value)}</option>)}</select></div>
           </div>}
           {isComposite && <>
             <div className="field-grid field-grid-3">
               <div className="form-group"><label>{t('filterPolicy.symbol')}</label><input value={data.symbol} onChange={event => set({ symbol: event.target.value.toUpperCase() })} required /></div>
-              <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value}>{value}</option>)}</select></div>
-              <div className="form-group"><label>{t('filterPolicy.scorePolicy')}</label><select value={data.score_policy} onChange={event => set({ score_policy: event.target.value })}><option value="keep_inputs">keep_inputs</option><option value="suppress_direct_inputs">suppress_direct_inputs</option></select></div>
+              <div className="form-group"><label>{t('filterPolicy.mode')}</label><select value={data.mode} onChange={event => set({ mode: event.target.value })}>{MODES.map(value => <option key={value} value={value}>{optionLabel(t, 'modes', value)}</option>)}</select></div>
+              <div className="form-group"><label>{t('filterPolicy.scorePolicy')}</label><select value={data.score_policy} onChange={event => set({ score_policy: event.target.value })}><option value="keep_inputs">{optionLabel(t, 'scorePolicies', 'keep_inputs')}</option><option value="suppress_direct_inputs">{optionLabel(t, 'scorePolicies', 'suppress_direct_inputs')}</option></select></div>
             </div>
-            {['all_of', 'any_of', 'none_of'].map(field => <div className="form-group" key={field}><label>{field}</label><input value={(data[field] || []).join(', ')} onChange={event => set({ [field]: event.target.value.split(',').map(value => value.trim()).filter(Boolean) })} /></div>)}
+            {['all_of', 'any_of', 'none_of'].map(field => <div className="form-group" key={field}><label>{optionLabel(t, 'groups', field)}</label><input value={(data[field] || []).join(', ')} onChange={event => set({ [field]: event.target.value.split(',').map(value => value.trim()).filter(Boolean) })} /></div>)}
           </>}
           {!isComposite && <ConditionEditor policyKind={editor.type === 'manual' ? 'manual' : 'ad'} conditions={data.conditions} onChange={conditions => set({ conditions })} />}
           <div className="drawer-footer"><button className="btn btn-outline" type="button" onClick={onClose}>{t('common:actions.cancel')}</button><button className="btn btn-primary" type="submit" disabled={saving}><Save size={16} />{t('common:actions.save')}</button></div>
@@ -221,7 +233,7 @@ function OverviewPanel({ status, manualRevisions, adRevisions }) {
       <SummaryTile icon={History} label={t('filterPolicy.manualVersions')} value={manualRevisions.length} tone="warning" />
       <SummaryTile icon={FileClock} label={t('filterPolicy.adVersions')} value={adRevisions.length} tone="danger" />
     </div>
-    <section className="section data-section"><div className="panel-header"><div><h3>{t('filterPolicy.nodeConvergence')}</h3></div></div><div className="table-wrap"><table className="data-table policy-state-table"><thead><tr><th>{t('filterPolicy.node')}</th><th>{t('filterPolicy.kind')}</th><th>desired / applied</th><th>checksum</th><th>{t('filterPolicy.lastError')}</th><th>{t('filterPolicy.updated')}</th></tr></thead><tbody>{nodes.map(item => <tr key={`${item.node_id}-${item.policy_kind}`}><td>#{item.node_id}</td><td>{item.policy_kind}</td><td><strong>{item.desired_revision} / {item.applied_revision}</strong></td><td><code>{item.checksum || '-'}</code></td><td>{item.last_error || '-'}</td><td>{formatDateTime(item.updated_at)}</td></tr>)}{nodes.length === 0 && <tr><td colSpan="6"><div className="empty-state"><Activity size={26} /><strong>{t('filterPolicy.noNodeState')}</strong></div></td></tr>}</tbody></table></div></section>
+    <section className="section data-section"><div className="panel-header"><div><h3>{t('filterPolicy.nodeConvergence')}</h3></div></div><div className="table-wrap"><table className="data-table policy-state-table"><thead><tr><th>{t('filterPolicy.node')}</th><th>{t('filterPolicy.kind')}</th><th>{t('filterPolicy.desiredApplied')}</th><th>{t('filterPolicy.checksum')}</th><th>{t('filterPolicy.lastError')}</th><th>{t('filterPolicy.updated')}</th></tr></thead><tbody>{nodes.map(item => <tr key={`${item.node_id}-${item.policy_kind}`}><td>#{item.node_id}</td><td>{optionLabel(t, 'policyKinds', item.policy_kind)}</td><td><strong>{item.desired_revision} / {item.applied_revision}</strong></td><td><code>{item.checksum || '-'}</code></td><td>{item.last_error || '-'}</td><td>{formatDateTime(item.updated_at)}</td></tr>)}{nodes.length === 0 && <tr><td colSpan="6"><div className="empty-state"><Activity size={26} /><strong>{t('filterPolicy.noNodeState')}</strong></div></td></tr>}</tbody></table></div></section>
   </>
 }
 
@@ -232,7 +244,7 @@ function ManualPanel({ revisions, selected, detail, base, validation, busy, onSe
   return <>
     <RevisionToolbar kind="manual" revisions={revisions} selected={selected} detail={detail} busy={busy} onSelect={onSelect} onCreate={() => onAction('create')} onClone={() => onAction('clone')} onValidate={() => onAction('validate')} onPublish={() => onAction('publish')} />
     <RevisionInsights kind="manual" detail={detail} base={base} validation={validation} />
-    <section className="section data-section"><div className="panel-header"><div><h3>{t('filterPolicy.manualRules')}</h3><div className="panel-caption">{t('filterPolicy.manualCaption')}</div></div>{editable && <button className="btn btn-primary" type="button" onClick={() => onEdit('manual')}><Plus size={16} />{t('filterPolicy.addRule')}</button>}</div><div className="table-wrap"><table className="data-table filters-table"><thead><tr><th>{t('filterPolicy.priority')}</th><th>{t('filterPolicy.name')}</th><th>{t('filterPolicy.action')}</th><th>{t('filterPolicy.mode')}</th><th>{t('filterPolicy.conditions')}</th><th>{t('filterPolicy.operations')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.logical_id}><td>{rule.priority}</td><td><strong>{rule.name}</strong><small>{rule.logical_id}</small></td><td><StatusTag value={rule.action} /></td><td><StatusTag value={rule.mode} /></td><td><code>{rule.conditions.map(condition => `${condition.field} ${condition.operator}`).join(' AND ')}</code></td><td><div className="row-actions"><button className="icon-button compact" type="button" disabled={!editable} onClick={() => onEdit('manual', rule)}><Pencil size={14} /></button><button className="icon-button compact danger" type="button" disabled={!editable} onClick={() => onAction('delete-rule', rule)}><Trash2 size={14} /></button></div></td></tr>)}{rules.length === 0 && <tr><td colSpan="6"><div className="empty-state"><AlertTriangle size={26} /><strong>{t('filterPolicy.noRules')}</strong></div></td></tr>}</tbody></table></div></section>
+    <section className="section data-section"><div className="panel-header"><div><h3>{t('filterPolicy.manualRules')}</h3><div className="panel-caption">{t('filterPolicy.manualCaption')}</div></div>{editable && <button className="btn btn-primary" type="button" onClick={() => onEdit('manual')}><Plus size={16} />{t('filterPolicy.addRule')}</button>}</div><div className="table-wrap"><table className="data-table filters-table"><thead><tr><th>{t('filterPolicy.priority')}</th><th>{t('filterPolicy.name')}</th><th>{t('filterPolicy.action')}</th><th>{t('filterPolicy.mode')}</th><th>{t('filterPolicy.conditions')}</th><th>{t('filterPolicy.operations')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.logical_id}><td>{rule.priority}</td><td><strong>{rule.name}</strong><small>{rule.logical_id}</small></td><td><StatusTag value={rule.action} group="actions" /></td><td><StatusTag value={rule.mode} group="modes" /></td><td><code>{rule.conditions.map(condition => conditionSummary(t, condition)).join(t('filterPolicy.conditionJoiner'))}</code></td><td><div className="row-actions"><button className="icon-button compact" type="button" disabled={!editable} onClick={() => onEdit('manual', rule)}><Pencil size={14} /></button><button className="icon-button compact danger" type="button" disabled={!editable} onClick={() => onAction('delete-rule', rule)}><Trash2 size={14} /></button></div></td></tr>)}{rules.length === 0 && <tr><td colSpan="6"><div className="empty-state"><AlertTriangle size={26} /><strong>{t('filterPolicy.noRules')}</strong></div></td></tr>}</tbody></table></div></section>
   </>
 }
 
@@ -244,8 +256,8 @@ function AdPanel({ revisions, selected, detail, base, validation, busy, weightDr
     <RevisionInsights kind="ad" detail={detail} base={base} validation={validation} />
     {detail && <section className="filter-threshold-band"><div className="form-group"><label>{t('filterPolicy.tagThreshold')}</label><input type="number" step="0.001" value={detail.tag_threshold} disabled={!editable} onChange={event => onAction('threshold-local', { field: 'tag_threshold', value: event.target.value })} /></div><div className="form-group"><label>{t('filterPolicy.quarantineThreshold')}</label><input type="number" step="0.001" value={detail.quarantine_threshold} disabled={!editable} onChange={event => onAction('threshold-local', { field: 'quarantine_threshold', value: event.target.value })} /></div><button className="btn btn-outline" type="button" disabled={!editable || busy} onClick={() => onAction('save-thresholds')}><Save size={15} />{t('common:actions.save')}</button></section>}
     <div className="filter-policy-columns">
-      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.detectors')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('detector')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.detectors || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('detector', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-detector', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
-      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.composites')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('composite')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.composites || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('composite', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-composite', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
+      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.detectors')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('detector')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.detectors || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} group="modes" /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('detector', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-detector', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
+      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.composites')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('composite')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.composites || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} group="modes" /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('composite', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-composite', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
     </div>
     <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.weights')}</h3>{editable && <div className="weight-editor"><input placeholder="AD_SYMBOL" value={weightDraft.symbol} onChange={event => onWeightDraft({ ...weightDraft, symbol: event.target.value.toUpperCase() })} /><input type="number" step="0.001" value={weightDraft.score} onChange={event => onWeightDraft({ ...weightDraft, score: event.target.value })} /><button className="btn btn-outline btn-sm" type="button" onClick={() => onAction('save-weight', weightDraft)}><Save size={14} />{t('common:actions.save')}</button></div>}</div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('filterPolicy.symbol')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.operations')}</th></tr></thead><tbody>{(detail?.weights || []).map(item => <tr key={item.symbol}><td><code>{item.symbol}</code></td><td>{item.score}</td><td><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-weight', item)}><Trash2 size={14} /></button></td></tr>)}</tbody></table></div></section>
   </>
@@ -255,9 +267,9 @@ function DecisionsPanel({ page, action, selected, onAction, onSelect }) {
   const { t } = useTranslation('pages')
   const items = page.items || []
   return <>
-    <div className="filter-decision-toolbar"><select value={action} onChange={event => onAction(event.target.value)}><option value="">{t('filterPolicy.allActions')}</option>{ACTIONS.map(value => <option key={value}>{value}</option>)}</select><span>{t('filterPolicy.totalDecisions', { count: page.total || 0 })}</span></div>
-    <section className="section data-section"><div className="table-wrap"><table className="data-table filter-decisions-table"><thead><tr><th>{t('filterPolicy.evaluated')}</th><th>{t('filterPolicy.mailbox')}</th><th>{t('filterPolicy.node')}</th><th>revision</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.action')}</th></tr></thead><tbody>{items.map(item => <tr key={item.decision_key} className="clickable-row" onClick={() => onSelect(item.decision_key)}><td>{formatDateTime(item.evaluated_at)}</td><td>{item.mailbox || `#${item.mailbox_account_id}`}</td><td>#{item.node_id}</td><td>{item.manual_revision} / {item.ad_revision}</td><td>{item.ad_score}</td><td><StatusTag value={item.final_action} /></td></tr>)}{items.length === 0 && <tr><td colSpan="6"><div className="empty-state"><Clock3 size={26} /><strong>{t('filterPolicy.noDecisions')}</strong></div></td></tr>}</tbody></table></div></section>
-    {selected && <div className="drawer-overlay" onClick={() => onSelect(null)}><aside className="drawer drawer-wide" onClick={event => event.stopPropagation()}><div className="drawer-header"><div><div className="drawer-kicker">decision</div><h2>{selected.decision_key}</h2></div><button className="icon-button" onClick={() => onSelect(null)}><X size={18} /></button></div><div className="drawer-body decision-detail"><div className="revision-facts"><StatusTag value={selected.final_action} /><strong>{selected.ad_score}</strong><span>{selected.mailbox}</span></div><h3>{t('filterPolicy.reasons')}</h3><pre>{JSON.stringify(selected.reasons, null, 2)}</pre><h3>{t('filterPolicy.symbols')}</h3><pre>{JSON.stringify(selected.ad_symbols, null, 2)}</pre><h3>{t('filterPolicy.shadowResults')}</h3><pre>{JSON.stringify(selected.shadow_results, null, 2)}</pre><h3>{t('filterPolicy.parseWarnings')}</h3><pre>{JSON.stringify(selected.parse_warnings, null, 2)}</pre></div></aside></div>}
+    <div className="filter-decision-toolbar"><select value={action} onChange={event => onAction(event.target.value)}><option value="">{t('filterPolicy.allActions')}</option>{ACTIONS.map(value => <option key={value} value={value}>{optionLabel(t, 'actions', value)}</option>)}</select><span>{t('filterPolicy.totalDecisions', { count: page.total || 0 })}</span></div>
+    <section className="section data-section"><div className="table-wrap"><table className="data-table filter-decisions-table"><thead><tr><th>{t('filterPolicy.evaluated')}</th><th>{t('filterPolicy.mailbox')}</th><th>{t('filterPolicy.node')}</th><th>{t('filterPolicy.revision')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.action')}</th></tr></thead><tbody>{items.map(item => <tr key={item.decision_key} className="clickable-row" onClick={() => onSelect(item.decision_key)}><td>{formatDateTime(item.evaluated_at)}</td><td>{item.mailbox || `#${item.mailbox_account_id}`}</td><td>#{item.node_id}</td><td>{item.manual_revision} / {item.ad_revision}</td><td>{item.ad_score}</td><td><StatusTag value={item.final_action} group="actions" /></td></tr>)}{items.length === 0 && <tr><td colSpan="6"><div className="empty-state"><Clock3 size={26} /><strong>{t('filterPolicy.noDecisions')}</strong></div></td></tr>}</tbody></table></div></section>
+    {selected && <div className="drawer-overlay" onClick={() => onSelect(null)}><aside className="drawer drawer-wide" onClick={event => event.stopPropagation()}><div className="drawer-header"><div><div className="drawer-kicker">{t('filterPolicy.decision')}</div><h2>{selected.decision_key}</h2></div><button className="icon-button" onClick={() => onSelect(null)}><X size={18} /></button></div><div className="drawer-body decision-detail"><div className="revision-facts"><StatusTag value={selected.final_action} group="actions" /><strong>{selected.ad_score}</strong><span>{selected.mailbox}</span></div><h3>{t('filterPolicy.reasons')}</h3><pre>{JSON.stringify(selected.reasons, null, 2)}</pre><h3>{t('filterPolicy.symbols')}</h3><pre>{JSON.stringify(selected.ad_symbols, null, 2)}</pre><h3>{t('filterPolicy.shadowResults')}</h3><pre>{JSON.stringify(selected.shadow_results, null, 2)}</pre><h3>{t('filterPolicy.parseWarnings')}</h3><pre>{JSON.stringify(selected.parse_warnings, null, 2)}</pre></div></aside></div>}
   </>
 }
 
@@ -279,13 +291,13 @@ function QuarantinesPanel({ page, status, selected, message, busy, onStatus, onS
     <section className="section data-section"><div className="table-wrap"><table className="data-table filter-decisions-table"><thead><tr>
       <th>{t('filterPolicy.evaluated')}</th><th>{t('filterPolicy.mailbox')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.quarantineState')}</th><th>{t('filterPolicy.expires')}</th>
     </tr></thead><tbody>
-      {items.map(item => <tr key={item.quarantine_key} className="clickable-row" onClick={() => onSelect(item.quarantine_key)}><td>{formatDateTime(item.evaluated_at)}</td><td>{item.mailbox}</td><td>{item.ad_score_milli / 1000}</td><td><StatusTag value={item.status} /></td><td>{formatDateTime(item.expires_at)}</td></tr>)}
+      {items.map(item => <tr key={item.quarantine_key} className="clickable-row" onClick={() => onSelect(item.quarantine_key)}><td>{formatDateTime(item.evaluated_at)}</td><td>{item.mailbox}</td><td>{item.ad_score_milli / 1000}</td><td><StatusTag value={item.status} group="quarantineStatus" /></td><td>{formatDateTime(item.expires_at)}</td></tr>)}
       {items.length === 0 && <tr><td colSpan="5"><div className="empty-state"><ShieldCheck size={26} /><strong>{t('filterPolicy.noQuarantines')}</strong></div></td></tr>}
     </tbody></table></div></section>
     {selected && <div className="drawer-overlay" onClick={() => onSelect(null)}><aside className="drawer drawer-wide quarantine-review-drawer" onClick={event => event.stopPropagation()}>
-      <div className="drawer-header"><div><div className="drawer-kicker">quarantine</div><h2>{parsed?.subject || selected.quarantine_key}</h2></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => onSelect(null)}><X size={18} /></button></div>
+      <div className="drawer-header"><div><div className="drawer-kicker">{t('filterPolicy.quarantine')}</div><h2>{parsed?.subject || selected.quarantine_key}</h2></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={() => onSelect(null)}><X size={18} /></button></div>
       <div className="drawer-body decision-detail quarantine-review-detail">
-        <div className="revision-facts"><StatusTag value={selected.status} /><span>{selected.mailbox}</span><strong>{selected.ad_score_milli / 1000}</strong></div>
+        <div className="revision-facts"><StatusTag value={selected.status} group="quarantineStatus" /><span>{selected.mailbox}</span><strong>{selected.ad_score_milli / 1000}</strong></div>
         {parsed ? <>
           <dl className="quarantine-message-facts"><div><dt>{t('filterPolicy.sender')}</dt><dd>{parsed.from || '-'}</dd></div><div><dt>{t('filterPolicy.messageId')}</dt><dd>{parsed.message_id || selected.message_id || '-'}</dd></div></dl>
           <h3>{t('filterPolicy.messageBody')}</h3><pre>{parsed.text || parsed.body || t('filterPolicy.noMessageBody')}</pre>

@@ -10,13 +10,14 @@ async function source(relativePath) {
   return readFile(path.join(sourceDirectory, relativePath), 'utf8')
 }
 
-const [api, servers, externalAccess, mailboxes, emails, filters] = await Promise.all([
+const [api, servers, externalAccess, mailboxes, emails, filters, legacyFilters] = await Promise.all([
   source('api.js'),
   source('pages/ServersPage.jsx'),
   source('pages/ExternalAccessPage.jsx'),
   source('pages/MailboxesPage.jsx'),
   source('pages/EmailsPage.jsx'),
   source('pages/FiltersPage.jsx'),
+  source('pages/LegacyFiltersPage.jsx'),
 ])
 
 for (const field of ['smtp_host', 'imap_host', 'public_host', 'mail_public_ips']) {
@@ -69,6 +70,13 @@ assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', '
 assert.match(filters, /<LegacyFiltersPage \/>/, 'legacy filter panel is missing')
 assert.match(filters, /function RevisionInsights/, 'revision diff and validation panel is missing')
 assert.match(filters, /filterPolicy\.adActionPreview/, 'pre-publish action surface preview is missing')
+for (const group of ['fields', 'operators', 'actions', 'modes', 'booleanValues', 'scorePolicies', 'groups']) {
+  assert.match(filters, new RegExp(`optionLabel\\(t, '${group}'`), `filter policy ${group} are not localized`)
+}
+assert.match(filters, /<option key=\{value\} value=\{value\}>\{optionLabel\(t, 'actions', value\)\}<\/option>/, 'localized action labels must preserve API values')
+assert.match(filters, /conditionSummary\(t, condition\)/, 'condition summaries are not localized')
+assert.doesNotMatch(filters, /<option key=\{value\}>\{value\}<\/option>/, 'filter policy still exposes raw enum options')
+assert.match(legacyFilters, /filters\.actionLabels\.\$\{rule\.action\}/, 'legacy rule actions are not localized')
 for (const method of ['manualRevisions', 'createManual', 'validateManual', 'publishManual', 'adRevisions', 'createAd', 'validateAd', 'publishAd', 'decisions', 'decision', 'quarantines', 'quarantineMessage', 'releaseQuarantine', 'allowAndReleaseQuarantine', 'confirmQuarantineAd']) {
   assert.match(api, new RegExp(`\\b${method}\\(`), `filter policy API is missing ${method}`)
 }

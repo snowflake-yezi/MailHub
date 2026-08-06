@@ -91,7 +91,7 @@ function FilterDrawer({ modal, saving, onChange, onSave, onClose }) {
           <div className="drawer-title-with-icon">
             <span className="module-icon"><SlidersHorizontal size={18} /></span>
             <div>
-              <div className="drawer-kicker">Filter policy</div>
+              <div className="drawer-kicker">{t('filters.drawer.kicker')}</div>
               <h2>{modal.mode === 'add' ? t('filters.drawer.addTitle') : t('filters.drawer.editTitle', { name: modal.data.name || `#${modal.data.id}` })}</h2>
             </div>
           </div>
@@ -321,7 +321,7 @@ export default function LegacyFiltersPage() {
                   </td>
                   <td><span className={`tag ${TYPE_TAG[rule.rule_type] || 'tag-info'}`}>{t(`filters.ruleTypes.${rule.rule_type}`, { defaultValue: rule.rule_type })}</span></td>
                   <td><code>{rule.pattern}</code></td>
-                  <td><span className={`tag ${ACTION_TAG[rule.action] || 'tag-info'}`}>{rule.action}</span></td>
+                  <td><span className={`tag ${ACTION_TAG[rule.action] || 'tag-info'}`}>{t(`filters.actionLabels.${rule.action}`, { defaultValue: rule.action })}</span></td>
                   <td>
                     <label className="switch-row compact-switch">
                       <span className="toggle">
