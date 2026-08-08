@@ -55,7 +55,7 @@ assert.doesNotMatch(emails, /remoteImagesAllowed|loadRemoteImages/, 'remote imag
 assert.match(emails, /emailAPI\.rawUrl\(detail\.message_id, query\)/, 'email details cannot download the original EML')
 assert.doesNotMatch(emails, /\['html', 'HTML'\]|rawMeta/, 'legacy Text/HTML/Raw metadata tabs are still exposed')
 
-for (const method of ['invitations', 'createInvitation', 'revokeInvitation', 'requests', 'approve', 'reject', 'credentials', 'rotateCredential', 'revokeCredentials']) {
+for (const method of ['invitations', 'createInvitation', 'revokeInvitation', 'deleteInvitation', 'requests', 'approve', 'reject', 'credentials', 'rotateCredential', 'revokeCredentials', 'disconnect']) {
   assert.match(api, new RegExp(`\\b${method}\\(`), `node enrollment API is missing ${method}`)
 }
 for (const component of ['InvitationDrawer', 'RequestDialog', 'CredentialDialog', 'SecretDialog']) {
@@ -64,6 +64,10 @@ for (const component of ['InvitationDrawer', 'RequestDialog', 'CredentialDialog'
 assert.match(servers, /nodeEnrollmentAPI\.createInvitation/, 'server pool cannot create enrollment invitations')
 assert.match(servers, /nodeEnrollmentAPI\.approve/, 'server pool cannot approve enrollment requests')
 assert.match(servers, /nodeEnrollmentAPI\.rotateCredential/, 'server pool cannot rotate node credentials')
+assert.match(servers, /nodeEnrollmentAPI\.deleteInvitation/, 'server pool cannot delete revoked enrollment invitations')
+assert.match(servers, /invitation\.state === 'revoked'/, 'invitation deletion must be limited to revoked invitations')
+assert.match(servers, /nodeEnrollmentAPI\.disconnect/, 'server pool cannot disconnect an active node session')
+assert.match(servers, /server\.connection_state !== 'connected'/, 'node disconnect action must be disabled without an active session')
 assert.doesNotMatch(servers, /setInvitations\([^)]*\.token/, 'one-time enrollment token must not enter invitation list state')
 
 assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', 'quarantines', 'legacy'\]/, 'policy page must expose all six tabs')

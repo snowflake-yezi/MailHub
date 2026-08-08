@@ -18,6 +18,7 @@ import {
   Server,
   ShieldCheck,
   Trash2,
+  Unplug,
   UserCheck,
   UserX,
   X,
@@ -515,6 +516,23 @@ export default function ServersPage() {
     onCancel: () => setConfirm(null),
   })
 
+  const deleteInvitation = (invitation) => setConfirm({
+    title: t('servers.enrollment.deleteTitle'),
+    message: t('servers.enrollment.deleteMessage', { name: invitation.name }),
+    confirmLabel: t('servers.enrollment.delete'),
+    onConfirm: async () => {
+      try {
+        await nodeEnrollmentAPI.deleteInvitation(invitation.id)
+        setToast({ type: 'success', message: t('servers.enrollment.deleted') })
+        load(true)
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      }
+      setConfirm(null)
+    },
+    onCancel: () => setConfirm(null),
+  })
+
   const openRequest = async (requestID) => {
     setEnrollmentBusy(true)
     try {
@@ -587,6 +605,23 @@ export default function ServersPage() {
         setEnrollmentBusy(false)
         setConfirm(null)
       }
+    },
+    onCancel: () => setConfirm(null),
+  })
+
+  const disconnectNode = (server) => setConfirm({
+    title: t('servers.connection.disconnectTitle'),
+    message: t('servers.connection.disconnectMessage', { name: server.name }),
+    confirmLabel: t('servers.connection.disconnect'),
+    onConfirm: async () => {
+      try {
+        await nodeEnrollmentAPI.disconnect(server.id)
+        setToast({ type: 'success', message: t('servers.connection.disconnected') })
+        load(true)
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      }
+      setConfirm(null)
     },
     onCancel: () => setConfirm(null),
   })
@@ -710,7 +745,11 @@ export default function ServersPage() {
               <td>{invitation.purpose === 'recovery' ? t('servers.enrollment.recovery') : invitation.purpose === 'migration' ? t('servers.enrollment.migration') : invitation.expected_node_uuid ? t('servers.enrollment.prebound') : t('servers.enrollment.standard')}<div className="muted-text">{[invitation.environment, invitation.region].filter(Boolean).join(' · ') || '-'}</div></td>
               <td>{invitation.used_count} / {invitation.max_uses}</td><td>{formatDateTime(invitation.expires_at)}</td>
               <td><span className={`tag tag-${INVITATION_STATE_TONE[invitation.state] || 'info'}`}>{t(`servers.enrollment.invitationState.${invitation.state}`)}</span></td>
-              <td><button className="icon-button compact danger" type="button" disabled={!['active', 'used'].includes(invitation.state)} title={t('servers.enrollment.revoke')} onClick={() => revokeInvitation(invitation)}><UserX size={15} /></button></td>
+              <td>
+                {invitation.state === 'revoked'
+                  ? <button className="icon-button compact danger" type="button" title={t('servers.enrollment.delete')} onClick={() => deleteInvitation(invitation)}><Trash2 size={15} /></button>
+                  : <button className="icon-button compact danger" type="button" disabled={!['active', 'used'].includes(invitation.state)} title={t('servers.enrollment.revoke')} onClick={() => revokeInvitation(invitation)}><UserX size={15} /></button>}
+              </td>
             </tr>)}
             {invitations.length === 0 && <tr><td colSpan={6}><div className="enrollment-empty">{t('servers.enrollment.noInvitations')}</div></td></tr>}
           </tbody></table></div>
@@ -829,6 +868,7 @@ export default function ServersPage() {
                         <button className="icon-button compact" type="button" title={t('servers.list.domainPool')} onClick={() => navigate(`/servers/${server.id}/domains`)}><Globe2 size={15} /></button>
                         <button className="icon-button compact" type="button" title={t('servers.list.config')} onClick={() => navigate(`/config?server_id=${server.id}`)}><Settings2 size={15} /></button>
                         {server.node_uuid && <button className="icon-button compact" type="button" title={t('servers.credentials.manage')} onClick={() => openCredentials(server)}><KeyRound size={15} /></button>}
+                        <button className="icon-button compact danger" type="button" disabled={server.connection_state !== 'connected'} title={t(server.connection_state === 'connected' ? 'servers.connection.disconnect' : 'servers.connection.unavailable')} onClick={() => disconnectNode(server)}><Unplug size={15} /></button>
                         <button className="icon-button compact" type="button" title={t('common:actions.edit')} onClick={() => openEdit(server)}>
                           <Pencil size={15} />
                         </button>

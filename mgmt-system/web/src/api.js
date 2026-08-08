@@ -62,6 +62,7 @@ export const nodeEnrollmentAPI = {
   invitations() { return get('/node-enrollments'); },
   createInvitation(data) { return request('/node-enrollments', { method: 'POST', body: JSON.stringify(data) }); },
   revokeInvitation(id) { return request(`/node-enrollments/${id}/revoke`, { method: 'POST' }); },
+  deleteInvitation(id) { return request(`/node-enrollments/${id}`, { method: 'DELETE' }); },
   requests(state = '') { return get('/node-enrollment-requests', { state }); },
   request(id) { return get(`/node-enrollment-requests/${id}`); },
   approve(id, note = '') { return request(`/node-enrollment-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ note }) }); },
@@ -69,6 +70,7 @@ export const nodeEnrollmentAPI = {
   credentials(serverId) { return get(`/servers/${serverId}/credentials`); },
   rotateCredential(serverId) { return request(`/servers/${serverId}/credentials/rotate`, { method: 'POST' }); },
   revokeCredentials(serverId) { return request(`/servers/${serverId}/credentials/revoke`, { method: 'POST' }); },
+  disconnect(serverId) { return request(`/servers/${serverId}/disconnect`, { method: 'POST' }); },
 };
 
 // ─── Integrated Mailboxes (转发目标池) ───────────────────

@@ -215,6 +215,50 @@ func TestNodeEnrollmentStandardLifecycleAndCredentialRevocation(t *testing.T) {
 	}
 }
 
+func TestRevokedEnrollmentInvitationCanBeSoftDeleted(t *testing.T) {
+	service, db, _ := newEnrollmentTestService(t)
+	created, err := service.CreateEnrollment(CreateEnrollmentInput{
+		Name: "deletable invitation", ExpiresIn: 30 * time.Minute, MaxUses: 1, Actor: "admin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.Claim(EnrollmentClaimInput{
+		Token: created.Token, NodeUUID: testNodeUUIDA, Name: "mail-node-a",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteEnrollment(created.Invitation.ID, "admin", "127.0.0.1"); !errors.Is(err, ErrEnrollmentInvalidState) {
+		t.Fatalf("delete active invitation error = %v", err)
+	}
+	if err := service.RevokeEnrollment(created.Invitation.ID, "admin", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteEnrollment(created.Invitation.ID, "admin", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var visible int64
+	if err := db.Model(&model.NodeEnrollmentToken{}).Where("id = ?", created.Invitation.ID).Count(&visible).Error; err != nil || visible != 0 {
+		t.Fatalf("visible invitation count = %d, error = %v", visible, err)
+	}
+	var deleted model.NodeEnrollmentToken
+	if err := db.Unscoped().First(&deleted, created.Invitation.ID).Error; err != nil || !deleted.DeletedAt.Valid {
+		t.Fatalf("soft-deleted invitation = %+v, error = %v", deleted, err)
+	}
+	requests, err := service.ListRequests("")
+	if err != nil || len(requests) != 1 || requests[0].Request.ID != claim.Request.ID {
+		t.Fatalf("request history after invitation deletion = %+v, error = %v", requests, err)
+	}
+	if _, err := service.GetRequest(claim.Request.ID); err != nil {
+		t.Fatalf("request details after invitation deletion: %v", err)
+	}
+	if _, err := service.ApproveRequest(claim.Request.ID, "admin", "verified", "127.0.0.1"); err != nil {
+		t.Fatalf("approve request after invitation deletion: %v", err)
+	}
+}
+
 func TestEnrollmentInvitationBoundariesAndRejection(t *testing.T) {
 	service, db, now := newEnrollmentTestService(t)
 

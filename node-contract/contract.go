@@ -90,12 +90,14 @@ var DataRequestTypesV1 = []DataRequestType{
 const (
 	AdminNodeEnrollmentsRoute              = "/api/v1/admin/node-enrollments"
 	AdminNodeEnrollmentRevokeRoute         = "/api/v1/admin/node-enrollments/:id/revoke"
+	AdminNodeEnrollmentDeleteRoute         = "/api/v1/admin/node-enrollments/:id"
 	AdminNodeEnrollmentRequestsRoute       = "/api/v1/admin/node-enrollment-requests"
 	AdminNodeEnrollmentRequestRoute        = "/api/v1/admin/node-enrollment-requests/:id"
 	AdminNodeEnrollmentRequestApproveRoute = "/api/v1/admin/node-enrollment-requests/:id/approve"
 	AdminNodeEnrollmentRequestRejectRoute  = "/api/v1/admin/node-enrollment-requests/:id/reject"
 	AdminNodeCredentialRotateRoute         = "/api/v1/admin/servers/:id/credentials/rotate"
 	AdminNodeCredentialRevokeRoute         = "/api/v1/admin/servers/:id/credentials/revoke"
+	AdminNodeDisconnectRoute               = "/api/v1/admin/servers/:id/disconnect"
 	NodeEnrollmentClaimRoute               = "/api/v1/node-enrollments/claim"
 	NodeEnrollmentRequestRoute             = "/api/v1/node-enrollments/requests/:id"
 	NodeEnrollmentRequestCompleteRoute     = "/api/v1/node-enrollments/requests/:id/complete"
@@ -110,12 +112,14 @@ var EnrollmentRoutesV1 = []HTTPRoute{
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentsRoute},
 	{Method: http.MethodGet, Path: AdminNodeEnrollmentsRoute},
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentRevokeRoute},
+	{Method: http.MethodDelete, Path: AdminNodeEnrollmentDeleteRoute},
 	{Method: http.MethodGet, Path: AdminNodeEnrollmentRequestsRoute},
 	{Method: http.MethodGet, Path: AdminNodeEnrollmentRequestRoute},
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentRequestApproveRoute},
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentRequestRejectRoute},
 	{Method: http.MethodPost, Path: AdminNodeCredentialRotateRoute},
 	{Method: http.MethodPost, Path: AdminNodeCredentialRevokeRoute},
+	{Method: http.MethodPost, Path: AdminNodeDisconnectRoute},
 	{Method: http.MethodPost, Path: NodeEnrollmentClaimRoute},
 	{Method: http.MethodGet, Path: NodeEnrollmentRequestRoute},
 	{Method: http.MethodPost, Path: NodeEnrollmentRequestCompleteRoute},

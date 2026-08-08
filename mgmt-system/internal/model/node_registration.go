@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 const (
 	EnrollmentPending        = "pending"
@@ -165,6 +169,7 @@ type NodeEnrollmentToken struct {
 	CreatedAt        time.Time         `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt        time.Time         `gorm:"autoUpdateTime" json:"updated_at"`
 	RevokedAt        *time.Time        `json:"revoked_at,omitempty"`
+	DeletedAt        gorm.DeletedAt    `gorm:"index" json:"-"`
 }
 
 // NodeRegistrationAudit records administrator and automatic enrollment state

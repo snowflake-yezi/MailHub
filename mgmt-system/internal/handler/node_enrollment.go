@@ -33,6 +33,7 @@ func (handler *NodeEnrollmentHandler) RegisterAdminRoutes(group *gin.RouterGroup
 	group.POST(adminRoute(nodecontract.AdminNodeEnrollmentsRoute), handler.CreateEnrollment)
 	group.GET(adminRoute(nodecontract.AdminNodeEnrollmentsRoute), handler.ListEnrollments)
 	group.POST(adminRoute(nodecontract.AdminNodeEnrollmentRevokeRoute), handler.RevokeEnrollment)
+	group.DELETE(adminRoute(nodecontract.AdminNodeEnrollmentDeleteRoute), handler.DeleteEnrollment)
 	group.GET(adminRoute(nodecontract.AdminNodeEnrollmentRequestsRoute), handler.ListRequests)
 	group.GET(adminRoute(nodecontract.AdminNodeEnrollmentRequestRoute), handler.GetRequest)
 	group.POST(adminRoute(nodecontract.AdminNodeEnrollmentRequestApproveRoute), handler.ApproveRequest)
@@ -40,6 +41,7 @@ func (handler *NodeEnrollmentHandler) RegisterAdminRoutes(group *gin.RouterGroup
 	group.GET("/servers/:id/credentials", handler.ListCredentials)
 	group.POST(adminRoute(nodecontract.AdminNodeCredentialRotateRoute), handler.RotateCredential)
 	group.POST(adminRoute(nodecontract.AdminNodeCredentialRevokeRoute), handler.RevokeCredentials)
+	group.POST(adminRoute(nodecontract.AdminNodeDisconnectRoute), handler.DisconnectNode)
 }
 
 func (handler *NodeEnrollmentHandler) RegisterBootstrapRoutes(group *gin.RouterGroup) {
@@ -99,6 +101,19 @@ func (handler *NodeEnrollmentHandler) RevokeEnrollment(c *gin.Context) {
 		return
 	}
 	success(c, "node enrollment invitation revoked", nil)
+}
+
+func (handler *NodeEnrollmentHandler) DeleteEnrollment(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		badRequest(c, ErrCodeParamInvalid, "invalid enrollment invitation id")
+		return
+	}
+	if err := handler.service.DeleteEnrollment(id, adminActor(c), c.ClientIP()); err != nil {
+		handleEnrollmentError(c, err)
+		return
+	}
+	success(c, "node enrollment invitation deleted", nil)
 }
 
 func (handler *NodeEnrollmentHandler) ListRequests(c *gin.Context) {
@@ -189,6 +204,18 @@ func (handler *NodeEnrollmentHandler) RevokeCredentials(c *gin.Context) {
 		handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential revoked"))
 	}
 	success(c, "node credentials revoked", nil)
+}
+
+func (handler *NodeEnrollmentHandler) DisconnectNode(c *gin.Context) {
+	serverID, ok := serverIDParam(c)
+	if !ok {
+		return
+	}
+	if handler.sessionRevoker == nil || !handler.sessionRevoker.DisconnectServer(serverID, errors.New("node control session disconnected by administrator")) {
+		fail(c, http.StatusConflict, ErrCodeBusiness, "node does not have an active control session")
+		return
+	}
+	success(c, "node control session disconnected; the agent may reconnect automatically", nil)
 }
 
 type claimEnrollmentRequest struct {

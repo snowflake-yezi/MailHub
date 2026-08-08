@@ -250,6 +250,28 @@ func (service *NodeEnrollmentService) RevokeEnrollment(id uint64, actor, sourceI
 	})
 }
 
+func (service *NodeEnrollmentService) DeleteEnrollment(id uint64, actor, sourceIP string) error {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return fmt.Errorf("actor is required")
+	}
+	return service.store.DB().Transaction(func(tx *gorm.DB) error {
+		var invitation model.NodeEnrollmentToken
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&invitation, id).Error; err != nil {
+			return mapNotFound(err)
+		}
+		if invitation.State != model.EnrollmentTokenRevoked {
+			return ErrEnrollmentInvalidState
+		}
+		if err := createNodeAudit(tx, "invitation.delete", "invitation", fmt.Sprint(id), actor, sourceIP, map[string]any{
+			"token_prefix": invitation.TokenPrefix,
+		}); err != nil {
+			return err
+		}
+		return tx.Delete(&invitation).Error
+	})
+}
+
 func (service *NodeEnrollmentService) Claim(input EnrollmentClaimInput) (*EnrollmentClaimResult, error) {
 	nodeUUID, err := normalizeNodeUUID(input.NodeUUID)
 	if err != nil {
@@ -400,7 +422,7 @@ func (service *NodeEnrollmentService) ListRequests(state string) ([]EnrollmentRe
 	result := make([]EnrollmentRequestDetails, 0, len(requests))
 	for _, request := range requests {
 		var invitation model.NodeEnrollmentToken
-		if err := service.store.DB().First(&invitation, request.EnrollmentTokenID).Error; err != nil {
+		if err := service.store.DB().Unscoped().First(&invitation, request.EnrollmentTokenID).Error; err != nil {
 			return nil, err
 		}
 		details := EnrollmentRequestDetails{Request: request, Invitation: invitation, RecentAudits: []model.NodeRegistrationAudit{}}
@@ -422,7 +444,7 @@ func (service *NodeEnrollmentService) GetRequest(id string) (*EnrollmentRequestD
 		return nil, mapNotFound(err)
 	}
 	var invitation model.NodeEnrollmentToken
-	if err := service.store.DB().First(&invitation, request.EnrollmentTokenID).Error; err != nil {
+	if err := service.store.DB().Unscoped().First(&invitation, request.EnrollmentTokenID).Error; err != nil {
 		return nil, err
 	}
 	details := &EnrollmentRequestDetails{Request: request, Invitation: invitation, RecentAudits: []model.NodeRegistrationAudit{}}
@@ -472,7 +494,7 @@ func (service *NodeEnrollmentService) ApproveRequest(id, actor, note, sourceIP s
 			return ErrEnrollmentInvalidState
 		}
 		var invitation model.NodeEnrollmentToken
-		if err := tx.First(&invitation, approved.EnrollmentTokenID).Error; err != nil {
+		if err := tx.Unscoped().First(&invitation, approved.EnrollmentTokenID).Error; err != nil {
 			return err
 		}
 		var server model.MailServer
