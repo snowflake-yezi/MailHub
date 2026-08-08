@@ -128,7 +128,11 @@ func main() {
 			if authErr != nil {
 				return nodegateway.Principal{}, authErr
 			}
-			return nodegateway.Principal{ServerID: principal.ServerID, NodeUUID: principal.NodeUUID}, nil
+			return nodegateway.Principal{
+				ServerID: principal.ServerID, NodeUUID: principal.NodeUUID,
+				CredentialID: principal.CredentialID, CredentialVersion: principal.CredentialVer,
+				CredentialExpiresAt: principal.CredentialExpiresAt,
+			}, nil
 		}, nodegateway.Config{
 			HeartbeatInterval: time.Duration(cfg.NodeControl.HeartbeatIntervalSeconds) * time.Second,
 			LeaseTimeout:      time.Duration(cfg.NodeControl.LeaseTimeoutSeconds) * time.Second,

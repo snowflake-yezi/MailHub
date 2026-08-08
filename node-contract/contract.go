@@ -95,8 +95,11 @@ const (
 	AdminNodeEnrollmentRequestRoute        = "/api/v1/admin/node-enrollment-requests/:id"
 	AdminNodeEnrollmentRequestApproveRoute = "/api/v1/admin/node-enrollment-requests/:id/approve"
 	AdminNodeEnrollmentRequestRejectRoute  = "/api/v1/admin/node-enrollment-requests/:id/reject"
+	AdminNodeCredentialsRoute              = "/api/v1/admin/servers/:id/credentials"
 	AdminNodeCredentialRotateRoute         = "/api/v1/admin/servers/:id/credentials/rotate"
 	AdminNodeCredentialRevokeRoute         = "/api/v1/admin/servers/:id/credentials/revoke"
+	AdminNodeCredentialRevokeOneRoute      = "/api/v1/admin/servers/:id/credentials/:credential_id/revoke"
+	AdminNodeCredentialDeleteRoute         = "/api/v1/admin/servers/:id/credentials/:credential_id"
 	AdminNodeDisconnectRoute               = "/api/v1/admin/servers/:id/disconnect"
 	NodeEnrollmentClaimRoute               = "/api/v1/node-enrollments/claim"
 	NodeEnrollmentRequestRoute             = "/api/v1/node-enrollments/requests/:id"
@@ -117,8 +120,11 @@ var EnrollmentRoutesV1 = []HTTPRoute{
 	{Method: http.MethodGet, Path: AdminNodeEnrollmentRequestRoute},
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentRequestApproveRoute},
 	{Method: http.MethodPost, Path: AdminNodeEnrollmentRequestRejectRoute},
+	{Method: http.MethodGet, Path: AdminNodeCredentialsRoute},
 	{Method: http.MethodPost, Path: AdminNodeCredentialRotateRoute},
 	{Method: http.MethodPost, Path: AdminNodeCredentialRevokeRoute},
+	{Method: http.MethodPost, Path: AdminNodeCredentialRevokeOneRoute},
+	{Method: http.MethodDelete, Path: AdminNodeCredentialDeleteRoute},
 	{Method: http.MethodPost, Path: AdminNodeDisconnectRoute},
 	{Method: http.MethodPost, Path: NodeEnrollmentClaimRoute},
 	{Method: http.MethodGet, Path: NodeEnrollmentRequestRoute},

@@ -27,11 +27,16 @@ var (
 	ErrEnrollmentInvalidState     = errors.New("invalid enrollment state transition")
 	ErrEnrollmentRequestSecret    = errors.New("invalid enrollment request secret")
 	ErrNodeCredentialInvalid      = errors.New("invalid node credential")
+	ErrNodeCredentialNotFound     = errors.New("node credential not found")
+	ErrNodeCredentialInvalidState = errors.New("invalid node credential state")
 )
 
 const (
-	defaultEnrollmentTTL = 30 * time.Minute
-	maxEnrollmentTTL     = 24 * time.Hour
+	defaultEnrollmentTTL             = 30 * time.Minute
+	maxEnrollmentTTL                 = 24 * time.Hour
+	credentialRotationOverlapConfig  = "node.credential_rotation_overlap_minutes"
+	defaultCredentialRotationOverlap = 30
+	maxCredentialRotationOverlap     = 7 * 24 * 60
 )
 
 type CreateEnrollmentInput struct {
@@ -79,10 +84,11 @@ type EnrollmentRequestDetails struct {
 }
 
 type NodePrincipal struct {
-	ServerID      uint64
-	NodeUUID      string
-	CredentialID  uint64
-	CredentialVer uint64
+	ServerID            uint64
+	NodeUUID            string
+	CredentialID        uint64
+	CredentialVer       uint64
+	CredentialExpiresAt *time.Time
 }
 
 type nodeEnrollmentStore interface {
@@ -93,6 +99,10 @@ type nodeEnrollmentStore interface {
 type NodeEnrollmentService struct {
 	store nodeEnrollmentStore
 	now   func() time.Time
+}
+
+type nodeEnrollmentConfigReader interface {
+	GetConfigInt(key string, defaultValue int) int
 }
 
 func NewNodeEnrollmentService(st *store.Store) *NodeEnrollmentService {
@@ -638,7 +648,7 @@ func (service *NodeEnrollmentService) CompleteRequest(id, requestSecret, sourceI
 		}
 		record.ServerID = server.ID
 		var version uint64
-		if err := tx.Model(&model.NodeCredential{}).Where("server_id = ?", record.ServerID).
+		if err := tx.Unscoped().Model(&model.NodeCredential{}).Where("server_id = ?", record.ServerID).
 			Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
 			return err
 		}
@@ -674,6 +684,7 @@ func (service *NodeEnrollmentService) RotateCredential(serverID uint64, actor, s
 		return "", nil, err
 	}
 	now := service.now().UTC()
+	overlapExpiresAt := now.Add(service.credentialRotationOverlap())
 	record := model.NodeCredential{ServerID: serverID, CredentialPrefix: prefix(credential), CredentialHash: HashNodeSecret(credential), State: model.NodeCredentialActive}
 	err = service.store.DB().Transaction(func(tx *gorm.DB) error {
 		var server model.MailServer
@@ -684,7 +695,7 @@ func (service *NodeEnrollmentService) RotateCredential(serverID uint64, actor, s
 			return ErrEnrollmentInvalidState
 		}
 		var version uint64
-		if err := tx.Model(&model.NodeCredential{}).Where("server_id = ?", serverID).Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
+		if err := tx.Unscoped().Model(&model.NodeCredential{}).Where("server_id = ?", serverID).Select("COALESCE(MAX(version), 0)").Scan(&version).Error; err != nil {
 			return err
 		}
 		record.Version = version + 1
@@ -693,7 +704,7 @@ func (service *NodeEnrollmentService) RotateCredential(serverID uint64, actor, s
 			return err
 		}
 		if err := tx.Model(&model.NodeCredential{}).Where("server_id = ? AND state = ?", serverID, model.NodeCredentialActive).
-			Update("state", model.NodeCredentialRotating).Error; err != nil {
+			Updates(map[string]any{"state": model.NodeCredentialRotating, "expires_at": &overlapExpiresAt}).Error; err != nil {
 			return err
 		}
 		if err := tx.Create(&record).Error; err != nil {
@@ -701,12 +712,69 @@ func (service *NodeEnrollmentService) RotateCredential(serverID uint64, actor, s
 		}
 		return createNodeAudit(tx, "credential.rotate", "server", fmt.Sprint(serverID), actor, sourceIP, map[string]any{
 			"credential_prefix": record.CredentialPrefix, "credential_version": record.Version, "rotated_at": now,
+			"overlap_expires_at": overlapExpiresAt,
 		})
 	})
 	if err != nil {
 		return "", nil, err
 	}
 	return credential, &record, nil
+}
+
+func (service *NodeEnrollmentService) RevokeCredential(serverID, credentialID uint64, actor, sourceIP string) error {
+	now := service.now().UTC()
+	return service.store.DB().Transaction(func(tx *gorm.DB) error {
+		var credential model.NodeCredential
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND server_id = ?", credentialID, serverID).First(&credential).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNodeCredentialNotFound
+			}
+			return err
+		}
+		if credential.State != model.NodeCredentialRotating ||
+			(credential.ExpiresAt != nil && !credential.ExpiresAt.After(now)) {
+			return ErrNodeCredentialInvalidState
+		}
+		if err := tx.Model(&credential).Updates(map[string]any{
+			"state": model.NodeCredentialRevoked, "revoked_at": &now,
+		}).Error; err != nil {
+			return err
+		}
+		return createNodeAudit(tx, "credential.overlap.end", "credential", fmt.Sprint(credential.ID), actor, sourceIP, map[string]any{
+			"server_id": serverID, "credential_prefix": credential.CredentialPrefix, "credential_version": credential.Version,
+		})
+	})
+}
+
+func (service *NodeEnrollmentService) DeleteCredential(serverID, credentialID uint64, actor, sourceIP string) error {
+	now := service.now().UTC()
+	return service.store.DB().Transaction(func(tx *gorm.DB) error {
+		var credential model.NodeCredential
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND server_id = ?", credentialID, serverID).First(&credential).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNodeCredentialNotFound
+			}
+			return err
+		}
+		if credential.State == model.NodeCredentialRotating && credential.ExpiresAt != nil && !credential.ExpiresAt.After(now) {
+			credential.State = model.NodeCredentialExpired
+			if err := tx.Model(&credential).Update("state", model.NodeCredentialExpired).Error; err != nil {
+				return err
+			}
+		}
+		if credential.State != model.NodeCredentialRevoked && credential.State != model.NodeCredentialExpired {
+			return ErrNodeCredentialInvalidState
+		}
+		if err := tx.Delete(&credential).Error; err != nil {
+			return err
+		}
+		return createNodeAudit(tx, "credential.delete", "credential", fmt.Sprint(credential.ID), actor, sourceIP, map[string]any{
+			"server_id": serverID, "credential_prefix": credential.CredentialPrefix,
+			"credential_version": credential.Version, "state": credential.State,
+		})
+	})
 }
 
 func (service *NodeEnrollmentService) RevokeCredentials(serverID uint64, actor, sourceIP string) error {
@@ -739,6 +807,18 @@ func (service *NodeEnrollmentService) RevokeCredentials(serverID uint64, actor, 
 }
 
 func (service *NodeEnrollmentService) ListCredentials(serverID uint64) ([]model.NodeCredential, error) {
+	now := service.now().UTC()
+	overlapExpiresAt := now.Add(service.credentialRotationOverlap())
+	if err := service.store.DB().Model(&model.NodeCredential{}).
+		Where("server_id = ? AND state = ? AND expires_at IS NULL", serverID, model.NodeCredentialRotating).
+		Update("expires_at", &overlapExpiresAt).Error; err != nil {
+		return nil, err
+	}
+	if err := service.store.DB().Model(&model.NodeCredential{}).
+		Where("server_id = ? AND state = ? AND expires_at <= ?", serverID, model.NodeCredentialRotating, now).
+		Update("state", model.NodeCredentialExpired).Error; err != nil {
+		return nil, err
+	}
 	var credentials []model.NodeCredential
 	err := service.store.DB().Where("server_id = ?", serverID).Order("version DESC").Find(&credentials).Error
 	return credentials, err
@@ -755,6 +835,16 @@ func (service *NodeEnrollmentService) AuthenticateCredential(rawCredential, node
 	if err != nil {
 		return nil, ErrNodeCredentialInvalid
 	}
+	if credential.State == model.NodeCredentialRotating && credential.ExpiresAt == nil {
+		overlapExpiresAt := usedAt.UTC().Add(service.credentialRotationOverlap())
+		if err := service.store.DB().Model(&model.NodeCredential{}).
+			Where("id = ? AND expires_at IS NULL", credential.ID).Update("expires_at", &overlapExpiresAt).Error; err != nil {
+			return nil, err
+		}
+		if err := service.store.DB().First(&credential, credential.ID).Error; err != nil {
+			return nil, err
+		}
+	}
 	var server model.MailServer
 	if err := service.store.DB().First(&server, credential.ServerID).Error; err != nil || server.NodeUUID == nil ||
 		*server.NodeUUID != normalizedUUID || server.EnrollmentState != model.EnrollmentApproved {
@@ -763,7 +853,24 @@ func (service *NodeEnrollmentService) AuthenticateCredential(rawCredential, node
 	if err := service.store.DB().Model(&model.NodeCredential{}).Where("id = ?", credential.ID).Update("last_used_at", usedAt.UTC()).Error; err != nil {
 		return nil, err
 	}
-	return &NodePrincipal{ServerID: server.ID, NodeUUID: normalizedUUID, CredentialID: credential.ID, CredentialVer: credential.Version}, nil
+	return &NodePrincipal{
+		ServerID: server.ID, NodeUUID: normalizedUUID, CredentialID: credential.ID,
+		CredentialVer: credential.Version, CredentialExpiresAt: credential.ExpiresAt,
+	}, nil
+}
+
+func (service *NodeEnrollmentService) credentialRotationOverlap() time.Duration {
+	minutes := defaultCredentialRotationOverlap
+	if reader, ok := service.store.(nodeEnrollmentConfigReader); ok {
+		minutes = reader.GetConfigInt(credentialRotationOverlapConfig, defaultCredentialRotationOverlap)
+	}
+	if minutes < 1 {
+		minutes = 1
+	}
+	if minutes > maxCredentialRotationOverlap {
+		minutes = maxCredentialRotationOverlap
+	}
+	return time.Duration(minutes) * time.Minute
 }
 
 func HashNodeSecret(value string) string {

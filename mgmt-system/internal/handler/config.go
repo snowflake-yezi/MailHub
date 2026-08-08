@@ -107,6 +107,7 @@ func (h *ConfigHandler) ListConfigs(c *gin.Context) {
 		"forward":     "邮件转发引擎",
 		"mime":        "MIME 解析",
 		"filter":      "过滤引擎",
+		"node":        "节点安全",
 		"lifecycle":   "生命周期管理",
 		"healthcheck": "健康检查",
 		"heartbeat":   "心跳上报",

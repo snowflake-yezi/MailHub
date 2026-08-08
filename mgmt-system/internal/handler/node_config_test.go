@@ -98,6 +98,23 @@ func TestDefaultRetentionEffectType(t *testing.T) {
 	}
 }
 
+func TestCredentialRotationOverlapConfigIsBoundedAndReadThrough(t *testing.T) {
+	definition, ok := configschema.Get("node.credential_rotation_overlap_minutes")
+	if !ok || definition.Owner != "mgmt-system" || definition.ApplyStrategy != configschema.ReadThrough ||
+		definition.NodeOverridable || definition.Min != 1 || definition.Max != 10080 {
+		t.Fatalf("credential overlap metadata = %#v", definition)
+	}
+	if err := validateGlobalConfigValue(definition.Key, "30"); err != nil {
+		t.Fatalf("valid credential overlap rejected: %v", err)
+	}
+	if err := validateGlobalConfigValue(definition.Key, "0"); err == nil {
+		t.Fatal("zero credential overlap accepted")
+	}
+	if err := validateGlobalConfigValue(definition.Key, "10081"); err == nil {
+		t.Fatal("credential overlap above seven days accepted")
+	}
+}
+
 func TestValidateNodeConfigValueSupportsStringContract(t *testing.T) {
 	definition, ok := configschema.Get("forward.target_address")
 	if !ok {

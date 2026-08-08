@@ -25,8 +25,11 @@ import (
 const currentProtocolVersion uint32 = 1
 
 type Principal struct {
-	ServerID uint64
-	NodeUUID string
+	ServerID            uint64
+	NodeUUID            string
+	CredentialID        uint64
+	CredentialVersion   uint64
+	CredentialExpiresAt *time.Time
 }
 
 type AuthenticateFunc func(rawCredential, nodeUUID string, usedAt time.Time) (Principal, error)
@@ -111,6 +114,7 @@ func (gateway *Gateway) Data(stream grpc.BidiStreamingServer[nodev1.NodeDataFram
 		return status.Error(codes.FailedPrecondition, "an active ControlStream is required")
 	}
 	if hello.NodeUuid != principal.NodeUUID || hello.NodeUuid != controlSession.NodeUUID ||
+		principal.CredentialID != controlSession.CredentialID ||
 		hello.BootId != controlSession.BootID || hello.ControlSessionId != controlSession.ID ||
 		hello.ProtocolVersion == 0 || hello.ProtocolVersion != controlSession.Protocol {
 		return status.Error(codes.PermissionDenied, "data stream identity does not match the active control session")
@@ -167,6 +171,9 @@ func (gateway *Gateway) runDataSession(stream grpc.BidiStreamingServer[nodev1.No
 	for {
 		select {
 		case <-session.Context().Done():
+			if errors.Is(context.Cause(session.Context()), nodesession.ErrCredentialExpired) {
+				return status.Error(codes.Unauthenticated, nodesession.ErrCredentialExpired.Error())
+			}
 			return status.Error(codes.Aborted, context.Cause(session.Context()).Error())
 		case frame := <-session.Outgoing():
 			if err := stream.Send(frame); err != nil {
@@ -234,6 +241,8 @@ func (gateway *Gateway) Control(stream grpc.BidiStreamingServer[nodev1.NodeContr
 	session := gateway.sessions.Register(stream.Context(), nodesession.RegisterInput{
 		ServerID: principal.ServerID, NodeUUID: principal.NodeUUID, BootID: hello.BootId,
 		Protocol: protocol, AgentVersion: hello.AgentVersion, Capabilities: capabilities, ConnectedAt: now,
+		CredentialID: principal.CredentialID, CredentialVersion: principal.CredentialVersion,
+		CredentialExpiresAt: principal.CredentialExpiresAt,
 	})
 	leaseExpiresAt := now.Add(gateway.config.LeaseTimeout)
 	if err := gateway.store.UpdateNodeSessionConnected(principal.ServerID, leaseExpiresAt, hello.AgentVersion, protocol, capabilities, hello.BootId, startedAt, appliedRevision); err != nil {
@@ -299,12 +308,28 @@ func (gateway *Gateway) runControlSession(stream grpc.BidiStreamingServer[nodev1
 
 	leaseTimer := time.NewTimer(gateway.config.LeaseTimeout)
 	defer leaseTimer.Stop()
+	var credentialExpiry <-chan time.Time
+	var credentialTimer *time.Timer
+	if session.CredentialExpiresAt != nil {
+		remaining := session.CredentialExpiresAt.Sub(gateway.now())
+		if remaining <= 0 {
+			return status.Error(codes.Unauthenticated, "node credential rotation overlap expired")
+		}
+		credentialTimer = time.NewTimer(remaining)
+		credentialExpiry = credentialTimer.C
+		defer credentialTimer.Stop()
+	}
 	for {
 		select {
 		case <-session.Context().Done():
+			if errors.Is(context.Cause(session.Context()), nodesession.ErrCredentialExpired) {
+				return status.Error(codes.Unauthenticated, nodesession.ErrCredentialExpired.Error())
+			}
 			return status.Error(codes.Aborted, context.Cause(session.Context()).Error())
 		case <-leaseTimer.C:
 			return status.Error(codes.DeadlineExceeded, "node heartbeat lease expired")
+		case <-credentialExpiry:
+			return status.Error(codes.Unauthenticated, "node credential rotation overlap expired")
 		case dispatchErr := <-dispatchErrors:
 			if dispatchErr != nil && !errors.Is(dispatchErr, nodesession.ErrSessionNotFound) && !errors.Is(dispatchErr, context.Canceled) {
 				return status.Errorf(codes.Internal, "dispatch pending commands: %v", dispatchErr)

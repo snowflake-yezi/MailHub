@@ -47,6 +47,12 @@ var definitionOrder = []string{
 }
 
 var definitions = map[string]Definition{
+	"node.credential_rotation_overlap_minutes": {
+		Key: "node.credential_rotation_overlap_minutes", Owner: "mgmt-system", Category: "node",
+		Label: "节点凭证轮换重叠期", Description: "轮换后旧凭证继续有效的最长时间；到期后使用旧凭证的连接会被断开",
+		ValueType: "int", DefaultValue: "30", Unit: "分钟", Min: 1, Max: 10080,
+		NodeOverridable: false, ApplyStrategy: ReadThrough,
+	},
 	"forward.scan_interval": {
 		Key: "forward.scan_interval", Owner: "mail-node", Category: "forward", Label: "扫描间隔", Description: "Maildir 新邮件扫描频率",
 		ValueType: "int", DefaultValue: "5", Unit: "秒", Min: 1, Max: 3600, NodeOverridable: true, ApplyStrategy: ReloadHook,

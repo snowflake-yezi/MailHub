@@ -226,6 +226,9 @@ func defaultConfigs() []seedConfig {
 		{Key: "filter.auto_quarantine_enabled", Value: "false", Type: "bool", Category: "filter", Label: "自动隔离", Desc: "是否允许广告策略自动隔离邮件；P2 默认关闭", Default: "false", Reloadable: true},
 		{Key: "filter.quarantine_base", Value: "/var/mail/mailhub-quarantine", Type: "string", Category: "filter", Label: "隔离目录", Desc: "Maildir 命名空间外的隔离原件目录，修改后需重启节点", Default: "/var/mail/mailhub-quarantine", Reloadable: false},
 
+		// ── node（节点安全）── mgmt-system ──
+		{Key: "node.credential_rotation_overlap_minutes", Value: "30", Type: "int", Category: "node", Label: "节点凭证轮换重叠期（分钟）", Desc: "轮换后旧凭证继续有效的最长时间；到期后使用旧凭证的 Control/Data 连接会自动断开", Default: "30", Reloadable: true},
+
 		// ── lifecycle（生命周期管理）── 双端 ──
 		{Key: "lifecycle.trash_retention_hours", Value: "24", Type: "int", Category: "lifecycle", Label: "回收站保留时间（小时）", Desc: "超过此时间的 .trash 目录将被物理清除", Default: "24", Reloadable: true},
 		{Key: "lifecycle.message_retention_days", Value: "0", Type: "int", Category: "lifecycle", Label: "节点邮件保留天数（已停用）", Desc: "兼容旧配置保留，邮件清理现统一使用 general.default_retention_days", Default: "0", Reloadable: true},

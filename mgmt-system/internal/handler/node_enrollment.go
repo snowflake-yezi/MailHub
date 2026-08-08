@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/ticket/email-mgmt-system/internal/model"
 	"github.com/ticket/email-mgmt-system/internal/service"
 	nodecontract "github.com/ticket/email-node-contract"
 )
@@ -17,6 +18,14 @@ type NodeEnrollmentHandler struct {
 	sessionRevoker interface {
 		DisconnectServer(uint64, error) bool
 	}
+}
+
+type credentialSessionRevoker interface {
+	DisconnectCredential(serverID, credentialID uint64, cause error) bool
+}
+
+type credentialSessionExpirer interface {
+	ExpireCredentialAt(serverID, credentialID uint64, expiresAt time.Time) bool
 }
 
 func NewNodeEnrollmentHandler(enrollmentService *service.NodeEnrollmentService) *NodeEnrollmentHandler {
@@ -38,9 +47,11 @@ func (handler *NodeEnrollmentHandler) RegisterAdminRoutes(group *gin.RouterGroup
 	group.GET(adminRoute(nodecontract.AdminNodeEnrollmentRequestRoute), handler.GetRequest)
 	group.POST(adminRoute(nodecontract.AdminNodeEnrollmentRequestApproveRoute), handler.ApproveRequest)
 	group.POST(adminRoute(nodecontract.AdminNodeEnrollmentRequestRejectRoute), handler.RejectRequest)
-	group.GET("/servers/:id/credentials", handler.ListCredentials)
+	group.GET(adminRoute(nodecontract.AdminNodeCredentialsRoute), handler.ListCredentials)
 	group.POST(adminRoute(nodecontract.AdminNodeCredentialRotateRoute), handler.RotateCredential)
 	group.POST(adminRoute(nodecontract.AdminNodeCredentialRevokeRoute), handler.RevokeCredentials)
+	group.POST(adminRoute(nodecontract.AdminNodeCredentialRevokeOneRoute), handler.RevokeCredential)
+	group.DELETE(adminRoute(nodecontract.AdminNodeCredentialDeleteRoute), handler.DeleteCredential)
 	group.POST(adminRoute(nodecontract.AdminNodeDisconnectRoute), handler.DisconnectNode)
 }
 
@@ -188,7 +199,36 @@ func (handler *NodeEnrollmentHandler) RotateCredential(c *gin.Context) {
 		handleEnrollmentError(c, err)
 		return
 	}
+	handler.reconcileCredentialSessions(serverID)
 	success(c, "node credential rotated; credential is shown once", gin.H{"credential": credential, "metadata": record})
+}
+
+func (handler *NodeEnrollmentHandler) reconcileCredentialSessions(serverID uint64) {
+	if handler.sessionRevoker == nil {
+		return
+	}
+	expirer, canExpire := handler.sessionRevoker.(credentialSessionExpirer)
+	revoker, canRevoke := handler.sessionRevoker.(credentialSessionRevoker)
+	if !canExpire || !canRevoke {
+		handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential rotated; reconnect required"))
+		return
+	}
+	credentials, err := handler.service.ListCredentials(serverID)
+	if err != nil {
+		handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential rotated; reconnect required"))
+		return
+	}
+	for _, credential := range credentials {
+		switch credential.State {
+		case model.NodeCredentialRotating:
+			if credential.ExpiresAt == nil {
+				continue
+			}
+			expirer.ExpireCredentialAt(serverID, credential.ID, *credential.ExpiresAt)
+		case model.NodeCredentialRevoked, model.NodeCredentialExpired:
+			revoker.DisconnectCredential(serverID, credential.ID, errors.New("node credential revoked during rotation"))
+		}
+	}
 }
 
 func (handler *NodeEnrollmentHandler) RevokeCredentials(c *gin.Context) {
@@ -204,6 +244,45 @@ func (handler *NodeEnrollmentHandler) RevokeCredentials(c *gin.Context) {
 		handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential revoked"))
 	}
 	success(c, "node credentials revoked", nil)
+}
+
+func (handler *NodeEnrollmentHandler) RevokeCredential(c *gin.Context) {
+	serverID, ok := serverIDParam(c)
+	if !ok {
+		return
+	}
+	credentialID, ok := credentialIDParam(c)
+	if !ok {
+		return
+	}
+	if err := handler.service.RevokeCredential(serverID, credentialID, adminActor(c), c.ClientIP()); err != nil {
+		handleEnrollmentError(c, err)
+		return
+	}
+	if handler.sessionRevoker != nil {
+		if revoker, ok := handler.sessionRevoker.(credentialSessionRevoker); ok {
+			revoker.DisconnectCredential(serverID, credentialID, errors.New("node credential rotation overlap ended"))
+		} else {
+			handler.sessionRevoker.DisconnectServer(serverID, errors.New("node credential rotation overlap ended"))
+		}
+	}
+	success(c, "node credential rotation overlap ended", nil)
+}
+
+func (handler *NodeEnrollmentHandler) DeleteCredential(c *gin.Context) {
+	serverID, ok := serverIDParam(c)
+	if !ok {
+		return
+	}
+	credentialID, ok := credentialIDParam(c)
+	if !ok {
+		return
+	}
+	if err := handler.service.DeleteCredential(serverID, credentialID, adminActor(c), c.ClientIP()); err != nil {
+		handleEnrollmentError(c, err)
+		return
+	}
+	success(c, "node credential deleted", nil)
 }
 
 func (handler *NodeEnrollmentHandler) DisconnectNode(c *gin.Context) {
@@ -309,8 +388,19 @@ func serverIDParam(c *gin.Context) (uint64, bool) {
 	return id, true
 }
 
+func credentialIDParam(c *gin.Context) (uint64, bool) {
+	id, err := strconv.ParseUint(c.Param("credential_id"), 10, 64)
+	if err != nil || id == 0 {
+		badRequest(c, ErrCodeParamInvalid, "invalid node credential id")
+		return 0, false
+	}
+	return id, true
+}
+
 func handleEnrollmentError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, service.ErrNodeCredentialNotFound):
+		notFound(c, "node credential not found")
 	case errors.Is(err, service.ErrEnrollmentNotFound):
 		notFound(c, "node enrollment record not found")
 	case errors.Is(err, service.ErrEnrollmentTokenInvalid), errors.Is(err, service.ErrEnrollmentRequestSecret), errors.Is(err, service.ErrNodeCredentialInvalid):
@@ -318,7 +408,8 @@ func handleEnrollmentError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrEnrollmentTokenExpired):
 		fail(c, http.StatusGone, ErrCodeBusiness, err.Error())
 	case errors.Is(err, service.ErrEnrollmentTokenUnavailable), errors.Is(err, service.ErrEnrollmentUUIDMismatch),
-		errors.Is(err, service.ErrEnrollmentDuplicateUUID), errors.Is(err, service.ErrEnrollmentInvalidState):
+		errors.Is(err, service.ErrEnrollmentDuplicateUUID), errors.Is(err, service.ErrEnrollmentInvalidState),
+		errors.Is(err, service.ErrNodeCredentialInvalidState):
 		fail(c, http.StatusConflict, ErrCodeBusiness, err.Error())
 	default:
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must") || strings.Contains(err.Error(), "invalid UUID") || strings.Contains(err.Error(), "expiration") {

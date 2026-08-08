@@ -137,6 +137,19 @@ func TestDefaultConfigReloadabilityMatchesRuntimeBehavior(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigsSeedCredentialRotationOverlap(t *testing.T) {
+	for _, cfg := range defaultConfigs() {
+		if cfg.Key != "node.credential_rotation_overlap_minutes" {
+			continue
+		}
+		if cfg.Value != "30" || cfg.Default != "30" || cfg.Type != "int" || cfg.Category != "node" || !cfg.Reloadable {
+			t.Fatalf("credential rotation overlap seed = %#v", cfg)
+		}
+		return
+	}
+	t.Fatal("credential rotation overlap seed missing")
+}
+
 func TestDefaultConfigVerifiesSMTPTLSCertificates(t *testing.T) {
 	for _, cfg := range defaultConfigs() {
 		if cfg.Key == "forward.tls_insecure_skip" {

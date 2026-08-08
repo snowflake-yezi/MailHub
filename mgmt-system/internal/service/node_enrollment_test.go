@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -175,6 +176,21 @@ func TestNodeEnrollmentStandardLifecycleAndCredentialRevocation(t *testing.T) {
 	if _, err := service.AuthenticateCredential(rawCredential, testNodeUUIDA, *now); err != nil {
 		t.Fatalf("old credential must remain valid during overlap: %v", err)
 	}
+	var overlapping model.NodeCredential
+	if err := db.Where("server_id = ? AND version = ?", *approved.ServerID, 1).First(&overlapping).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantOverlapExpiry := now.Add(defaultCredentialRotationOverlap * time.Minute)
+	if overlapping.State != model.NodeCredentialRotating || overlapping.ExpiresAt == nil || !overlapping.ExpiresAt.Equal(wantOverlapExpiry) {
+		t.Fatalf("overlapping credential = %+v, want rotating until %v", overlapping, wantOverlapExpiry)
+	}
+	oldPrincipal, err := service.AuthenticateCredential(rawCredential, testNodeUUIDA, *now)
+	if err != nil || oldPrincipal.CredentialExpiresAt == nil || !oldPrincipal.CredentialExpiresAt.Equal(wantOverlapExpiry) {
+		t.Fatalf("overlap principal = %+v, %v", oldPrincipal, err)
+	}
+	if _, err := service.AuthenticateCredential(rawCredential, testNodeUUIDA, wantOverlapExpiry); !errors.Is(err, ErrNodeCredentialInvalid) {
+		t.Fatalf("credential must expire at the overlap deadline: %v", err)
+	}
 	thirdRaw, third, err := service.RotateCredential(*approved.ServerID, "admin", "127.0.0.1")
 	if err != nil || third.Version != 3 {
 		t.Fatalf("second rotation = %+v, %v", third, err)
@@ -212,6 +228,111 @@ func TestNodeEnrollmentStandardLifecycleAndCredentialRevocation(t *testing.T) {
 			strings.Contains(audit.Details, rawCredential) || strings.Contains(audit.Details, rotatedRaw) || strings.Contains(audit.Details, thirdRaw) {
 			t.Fatalf("audit contains a secret: %+v", audit)
 		}
+	}
+}
+
+func TestNodeCredentialOverlapCanBeEndedAndHistorySoftDeleted(t *testing.T) {
+	service, db, now := newEnrollmentTestService(t)
+	nodeUUID := testNodeUUIDA
+	server := sqliteEnrollmentMailServer{
+		Name: "credential-node", NodeUUID: &nodeUUID, APIHost: "127.0.0.1:8081",
+		SMTPHost: "smtp.example.com", IMAPHost: "imap.example.com",
+		EnrollmentState: model.EnrollmentApproved, AllocationState: model.AllocationActive,
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	originalRaw := "mhn_original"
+	original := model.NodeCredential{
+		ServerID: server.ID, CredentialPrefix: prefix(originalRaw), CredentialHash: HashNodeSecret(originalRaw),
+		State: model.NodeCredentialActive, Version: 1,
+	}
+	if err := db.Create(&original).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	activeRaw, active, err := service.RotateCredential(server.ID, "admin", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeCredential(server.ID, active.ID, "admin", "127.0.0.1"); !errors.Is(err, ErrNodeCredentialInvalidState) {
+		t.Fatalf("ending overlap for active credential error = %v", err)
+	}
+	if err := service.DeleteCredential(server.ID, active.ID, "admin", "127.0.0.1"); !errors.Is(err, ErrNodeCredentialInvalidState) {
+		t.Fatalf("deleting active credential error = %v", err)
+	}
+	if err := service.RevokeCredential(server.ID, original.ID, "admin", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AuthenticateCredential(originalRaw, nodeUUID, *now); !errors.Is(err, ErrNodeCredentialInvalid) {
+		t.Fatalf("ended overlap credential authentication error = %v", err)
+	}
+	if _, err := service.AuthenticateCredential(activeRaw, nodeUUID, *now); err != nil {
+		t.Fatalf("active credential stopped working after ending overlap: %v", err)
+	}
+	if err := service.DeleteCredential(server.ID, original.ID, "admin", "127.0.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := service.ListCredentials(server.ID)
+	if err != nil || len(credentials) != 1 || credentials[0].ID != active.ID {
+		t.Fatalf("credentials after delete = %+v, %v", credentials, err)
+	}
+	var deleted model.NodeCredential
+	if err := db.Unscoped().First(&deleted, original.ID).Error; err != nil || !deleted.DeletedAt.Valid {
+		t.Fatalf("soft-deleted credential = %+v, %v", deleted, err)
+	}
+
+	expiredAt := now.Add(-time.Minute)
+	expired := model.NodeCredential{
+		ServerID: server.ID, CredentialPrefix: "mhn_expired", CredentialHash: HashNodeSecret("mhn_expired"),
+		State: model.NodeCredentialRotating, Version: 3, ExpiresAt: &expiredAt,
+	}
+	if err := db.Create(&expired).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.DeleteCredential(server.ID, expired.ID, "admin", "127.0.0.1"); err != nil {
+		t.Fatalf("delete expired overlap credential: %v", err)
+	}
+	deleted = model.NodeCredential{}
+	if err := db.Unscoped().First(&deleted, expired.ID).Error; err != nil || deleted.State != model.NodeCredentialExpired || !deleted.DeletedAt.Valid {
+		t.Fatalf("soft-deleted expired credential = %+v, %v", deleted, err)
+	}
+
+	var auditActions []string
+	if err := db.Model(&model.NodeRegistrationAudit{}).Order("id ASC").Pluck("action", &auditActions).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(auditActions, "credential.overlap.end") || !slices.Contains(auditActions, "credential.delete") {
+		t.Fatalf("credential audit actions = %v", auditActions)
+	}
+}
+
+func TestLegacyRotatingCredentialReceivesAnOverlapDeadline(t *testing.T) {
+	service, db, now := newEnrollmentTestService(t)
+	nodeUUID := testNodeUUIDA
+	server := sqliteEnrollmentMailServer{
+		Name: "legacy-overlap-node", NodeUUID: &nodeUUID, APIHost: "127.0.0.1:8081",
+		SMTPHost: "smtp.example.com", IMAPHost: "imap.example.com", EnrollmentState: model.EnrollmentApproved,
+	}
+	if err := db.Create(&server).Error; err != nil {
+		t.Fatal(err)
+	}
+	raw := "mhn_legacy_rotating"
+	credential := model.NodeCredential{
+		ServerID: server.ID, CredentialPrefix: prefix(raw), CredentialHash: HashNodeSecret(raw),
+		State: model.NodeCredentialRotating, Version: 1,
+	}
+	if err := db.Create(&credential).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	principal, err := service.AuthenticateCredential(raw, nodeUUID, *now)
+	wantExpiry := now.Add(defaultCredentialRotationOverlap * time.Minute)
+	if err != nil || principal.CredentialExpiresAt == nil || !principal.CredentialExpiresAt.Equal(wantExpiry) {
+		t.Fatalf("legacy overlap principal = %+v, %v", principal, err)
+	}
+	if _, err := service.AuthenticateCredential(raw, nodeUUID, wantExpiry); !errors.Is(err, ErrNodeCredentialInvalid) {
+		t.Fatalf("legacy overlap credential must expire: %v", err)
 	}
 }
 

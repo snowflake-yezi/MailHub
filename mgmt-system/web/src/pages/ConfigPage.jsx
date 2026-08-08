@@ -31,6 +31,7 @@ const CATEGORY_META = {
   forward: { icon: MailCheck },
 	mime: { icon: FileText },
   filter: { icon: SlidersHorizontal },
+  node: { icon: KeyRound },
   lifecycle: { icon: TimerReset },
   healthcheck: { icon: HeartPulse },
   heartbeat: { icon: Activity },

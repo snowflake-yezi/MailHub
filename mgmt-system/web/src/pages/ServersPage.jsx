@@ -182,14 +182,14 @@ function RequestDialog({ details, busy, onApprove, onReject, onClose }) {
   )
 }
 
-function CredentialDialog({ server, credentials, busy, onRotate, onRevoke, onClose }) {
+function CredentialDialog({ server, credentials, busy, onRotate, onRevoke, onEndRotation, onDelete, onClose }) {
   const { t } = useTranslation('pages')
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal enrollment-request-modal" onClick={event => event.stopPropagation()}>
         <div className="enrollment-modal-heading"><span className="module-icon"><KeyRound size={18} /></span><div><h3>{t('servers.credentials.title', { name: server.name })}</h3><code>{server.node_uuid}</code></div><button className="icon-button" type="button" title={t('common:actions.close')} onClick={onClose}><X size={18} /></button></div>
-        <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.credentials.version')}</th><th>{t('servers.credentials.prefix')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.credentials.lastUsed')}</th></tr></thead><tbody>{credentials.map(item => <tr key={item.id}><td>v{item.version}</td><td><code>{item.credential_prefix}</code></td><td><span className={`tag tag-${item.state === 'active' ? 'success' : item.state === 'rotating' ? 'warning' : 'danger'}`}>{t(`servers.credentials.states.${item.state}`)}</span></td><td>{formatDateTime(item.last_used_at)}</td></tr>)}{credentials.length === 0 && <tr><td colSpan={4} className="muted-text">{t('servers.credentials.empty')}</td></tr>}</tbody></table></div>
-        <div className="modal-footer"><button className="btn btn-danger" type="button" disabled={busy || credentials.every(item => item.state === 'revoked')} onClick={onRevoke}><UserX size={16} /> {t('servers.credentials.revoke')}</button><button className="btn btn-primary" type="button" disabled={busy} onClick={onRotate}><RotateCcw size={16} /> {t('servers.credentials.rotate')}</button></div>
+        <div className="table-wrap"><table className="data-table compact-table"><thead><tr><th>{t('servers.credentials.version')}</th><th>{t('servers.credentials.prefix')}</th><th>{t('servers.credentials.state')}</th><th>{t('servers.credentials.expiresAt')}</th><th>{t('servers.credentials.lastUsed')}</th><th>{t('servers.list.operations')}</th></tr></thead><tbody>{credentials.map(item => <tr key={item.id}><td>v{item.version}</td><td><code>{item.credential_prefix}</code></td><td><span className={`tag tag-${item.state === 'active' ? 'success' : item.state === 'rotating' ? 'warning' : 'danger'}`}>{t(`servers.credentials.states.${item.state}`)}</span></td><td>{formatDateTime(item.expires_at)}</td><td>{formatDateTime(item.last_used_at)}</td><td><div className="row-actions">{item.state === 'rotating' && <button className="icon-button compact" type="button" disabled={busy} title={t('servers.credentials.endRotation')} onClick={() => onEndRotation(item)}><CircleOff size={15} /></button>}{['revoked', 'expired'].includes(item.state) && <button className="icon-button compact danger" type="button" disabled={busy} title={t('servers.credentials.delete')} onClick={() => onDelete(item)}><Trash2 size={15} /></button>}</div></td></tr>)}{credentials.length === 0 && <tr><td colSpan={6} className="muted-text">{t('servers.credentials.empty')}</td></tr>}</tbody></table></div>
+        <div className="modal-footer"><button className="btn btn-danger" type="button" disabled={busy || !credentials.some(item => ['active', 'rotating'].includes(item.state))} onClick={onRevoke}><UserX size={16} /> {t('servers.credentials.revoke')}</button><button className="btn btn-primary" type="button" disabled={busy} onClick={onRotate}><RotateCcw size={16} /> {t('servers.credentials.rotate')}</button></div>
       </div>
     </div>
   )
@@ -609,6 +609,51 @@ export default function ServersPage() {
     onCancel: () => setConfirm(null),
   })
 
+  const endCredentialRotation = (credential) => setConfirm({
+    title: t('servers.credentials.endRotationTitle'),
+    message: t('servers.credentials.endRotationMessage', { version: credential.version, name: credentialDialog.server.name }),
+    confirmLabel: t('servers.credentials.endRotation'),
+    onConfirm: async () => {
+      setEnrollmentBusy(true)
+      try {
+        const server = credentialDialog.server
+        await nodeEnrollmentAPI.revokeCredential(server.id, credential.id)
+        const credentials = await nodeEnrollmentAPI.credentials(server.id)
+        setCredentialDialog({ server, credentials: Array.isArray(credentials) ? credentials : [] })
+        setToast({ type: 'success', message: t('servers.credentials.rotationEnded') })
+        load(true)
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      } finally {
+        setEnrollmentBusy(false)
+        setConfirm(null)
+      }
+    },
+    onCancel: () => setConfirm(null),
+  })
+
+  const deleteCredential = (credential) => setConfirm({
+    title: t('servers.credentials.deleteTitle'),
+    message: t('servers.credentials.deleteMessage', { version: credential.version }),
+    confirmLabel: t('servers.credentials.delete'),
+    onConfirm: async () => {
+      setEnrollmentBusy(true)
+      try {
+        const server = credentialDialog.server
+        await nodeEnrollmentAPI.deleteCredential(server.id, credential.id)
+        const credentials = await nodeEnrollmentAPI.credentials(server.id)
+        setCredentialDialog({ server, credentials: Array.isArray(credentials) ? credentials : [] })
+        setToast({ type: 'success', message: t('servers.credentials.deleted') })
+      } catch (error) {
+        setToast({ type: 'error', message: error.message })
+      } finally {
+        setEnrollmentBusy(false)
+        setConfirm(null)
+      }
+    },
+    onCancel: () => setConfirm(null),
+  })
+
   const disconnectNode = (server) => setConfirm({
     title: t('servers.connection.disconnectTitle'),
     message: t('servers.connection.disconnectMessage', { name: server.name }),
@@ -919,7 +964,7 @@ export default function ServersPage() {
       )}
       {invitationDrawer && <InvitationDrawer form={invitationForm} servers={servers} saving={enrollmentBusy} onChange={setInvitationForm} onSubmit={createInvitation} onClose={() => setInvitationDrawer(false)} />}
       {requestDetails && <RequestDialog details={requestDetails} busy={enrollmentBusy} onApprove={() => reviewRequest('approve')} onReject={() => reviewRequest('reject')} onClose={() => setRequestDetails(null)} />}
-      {credentialDialog && <CredentialDialog {...credentialDialog} busy={enrollmentBusy} onRotate={rotateCredential} onRevoke={revokeCredentials} onClose={() => setCredentialDialog(null)} />}
+      {credentialDialog && <CredentialDialog {...credentialDialog} busy={enrollmentBusy} onRotate={rotateCredential} onRevoke={revokeCredentials} onEndRotation={endCredentialRotation} onDelete={deleteCredential} onClose={() => setCredentialDialog(null)} />}
       {secretDialog && <SecretDialog {...secretDialog} onCopy={copySecret} onClose={() => setSecretDialog(null)} />}
       {confirm && <ConfirmDialog {...confirm} />}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}

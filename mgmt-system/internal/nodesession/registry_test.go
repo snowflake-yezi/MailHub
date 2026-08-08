@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	nodev1 "github.com/ticket/email-node-contract/gen/mailhub/node/v1"
 )
@@ -22,6 +23,40 @@ func TestRegisterReplacesOnlyThePreviousSession(t *testing.T) {
 	}
 	if !registry.Remove(7, second.ID) {
 		t.Fatal("current session was not removed")
+	}
+}
+
+func TestCredentialSpecificDisconnectAndScheduledExpiry(t *testing.T) {
+	registry := NewRegistry()
+	session := registry.Register(context.Background(), RegisterInput{ServerID: 12, NodeUUID: "node-c", CredentialID: 7})
+	if registry.DisconnectCredential(12, 8, ErrSessionRevoked) {
+		t.Fatal("a different credential disconnected the active session")
+	}
+	if !registry.ExpireCredentialAt(12, 7, time.Now().Add(20*time.Millisecond)) {
+		t.Fatal("active credential expiry was not scheduled")
+	}
+	select {
+	case <-session.Context().Done():
+		if !errors.Is(context.Cause(session.Context()), ErrCredentialExpired) {
+			t.Fatalf("credential expiry cause = %v", context.Cause(session.Context()))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("credential expiry did not disconnect the session")
+	}
+	if _, ok := registry.Get(12); ok {
+		t.Fatal("expired credential session remains registered")
+	}
+
+	reconnected := registry.Register(context.Background(), RegisterInput{ServerID: 12, NodeUUID: "node-c", CredentialID: 9})
+	if registry.ExpireCredentialAt(12, 7, time.Now()) {
+		t.Fatal("stale credential expiry attached to the reconnected session")
+	}
+	if !registry.DisconnectCredential(12, 9, ErrSessionRevoked) {
+		t.Fatal("matching credential did not disconnect the session")
+	}
+	<-reconnected.Context().Done()
+	if !errors.Is(context.Cause(reconnected.Context()), ErrSessionRevoked) {
+		t.Fatalf("credential revocation cause = %v", context.Cause(reconnected.Context()))
 	}
 }
 

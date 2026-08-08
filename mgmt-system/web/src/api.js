@@ -70,6 +70,8 @@ export const nodeEnrollmentAPI = {
   credentials(serverId) { return get(`/servers/${serverId}/credentials`); },
   rotateCredential(serverId) { return request(`/servers/${serverId}/credentials/rotate`, { method: 'POST' }); },
   revokeCredentials(serverId) { return request(`/servers/${serverId}/credentials/revoke`, { method: 'POST' }); },
+  revokeCredential(serverId, credentialId) { return request(`/servers/${serverId}/credentials/${credentialId}/revoke`, { method: 'POST' }); },
+  deleteCredential(serverId, credentialId) { return request(`/servers/${serverId}/credentials/${credentialId}`, { method: 'DELETE' }); },
   disconnect(serverId) { return request(`/servers/${serverId}/disconnect`, { method: 'POST' }); },
 };
 

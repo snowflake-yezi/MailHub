@@ -209,16 +209,17 @@ type NodeEnrollmentRequest struct {
 
 // NodeCredential is one revocable version of a per-node runtime token.
 type NodeCredential struct {
-	ID               uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	ServerID         uint64     `gorm:"not null;index;uniqueIndex:uk_node_credential_version" json:"server_id"`
-	CredentialPrefix string     `gorm:"size:32;not null;index" json:"credential_prefix"`
-	CredentialHash   string     `gorm:"type:char(64);not null;uniqueIndex" json:"-"`
-	State            string     `gorm:"size:24;not null;default:active;index" json:"state"`
-	Version          uint64     `gorm:"not null;uniqueIndex:uk_node_credential_version" json:"version"`
-	ExpiresAt        *time.Time `gorm:"index" json:"expires_at,omitempty"`
-	LastUsedAt       *time.Time `json:"last_used_at,omitempty"`
-	CreatedAt        time.Time  `gorm:"autoCreateTime" json:"created_at"`
-	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	ID               uint64         `gorm:"primaryKey;autoIncrement" json:"id"`
+	ServerID         uint64         `gorm:"not null;index;uniqueIndex:uk_node_credential_version" json:"server_id"`
+	CredentialPrefix string         `gorm:"size:32;not null;index" json:"credential_prefix"`
+	CredentialHash   string         `gorm:"type:char(64);not null;uniqueIndex" json:"-"`
+	State            string         `gorm:"size:24;not null;default:active;index" json:"state"`
+	Version          uint64         `gorm:"not null;uniqueIndex:uk_node_credential_version" json:"version"`
+	ExpiresAt        *time.Time     `gorm:"index" json:"expires_at,omitempty"`
+	LastUsedAt       *time.Time     `json:"last_used_at,omitempty"`
+	CreatedAt        time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	RevokedAt        *time.Time     `json:"revoked_at,omitempty"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // NodeCommand is the durable source of truth for an at-least-once command.

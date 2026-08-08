@@ -207,6 +207,94 @@ func TestControlStreamRejectsAuthenticationAndProtocolMismatch(t *testing.T) {
 	}
 }
 
+func TestControlStreamDisconnectsWhenCredentialOverlapExpires(t *testing.T) {
+	store := &fakeStateStore{server: model.MailServer{
+		ID: 42, NodeUUID: stringPointer(testNodeUUID), EnrollmentState: model.EnrollmentApproved,
+		DesiredRevision: 5, AppliedRevision: 5,
+	}}
+	expiresAt := time.Now().Add(250 * time.Millisecond)
+	authenticate := func(credential, nodeUUID string, _ time.Time) (Principal, error) {
+		if credential != "node-secret" || nodeUUID != testNodeUUID {
+			return Principal{}, errors.New("invalid credential")
+		}
+		return Principal{
+			ServerID: 42, NodeUUID: testNodeUUID, CredentialID: 7, CredentialVersion: 2,
+			CredentialExpiresAt: &expiresAt,
+		}, nil
+	}
+	gateway, err := New(store, nodesession.NewRegistry(), authenticate, Config{
+		HeartbeatInterval: time.Second, LeaseTimeout: 3 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, cleanup := newTestGatewayClient(t, gateway)
+	defer cleanup()
+
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
+		"authorization", "Node node-secret", "x-mailhub-node-uuid", testNodeUUID,
+	))
+	stream, err := client.Control(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(helloFrame(testNodeUUID, time.Now().UTC(), []uint32{1})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("receive welcome: %v", err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("credential expiry stream error = %v, want %s", err, codes.Unauthenticated)
+	}
+	waitFor(t, func() bool {
+		_, _, disconnected := store.counts()
+		return disconnected == 1
+	})
+}
+
+func TestControlStreamAcceptsCredentialExpiryScheduledAfterConnect(t *testing.T) {
+	store := &fakeStateStore{server: model.MailServer{
+		ID: 42, NodeUUID: stringPointer(testNodeUUID), EnrollmentState: model.EnrollmentApproved,
+		DesiredRevision: 5, AppliedRevision: 5,
+	}}
+	sessions := nodesession.NewRegistry()
+	authenticate := func(credential, nodeUUID string, _ time.Time) (Principal, error) {
+		if credential != "node-secret" || nodeUUID != testNodeUUID {
+			return Principal{}, errors.New("invalid credential")
+		}
+		return Principal{ServerID: 42, NodeUUID: testNodeUUID, CredentialID: 7, CredentialVersion: 1}, nil
+	}
+	gateway, err := New(store, sessions, authenticate, Config{
+		HeartbeatInterval: time.Second, LeaseTimeout: 3 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, cleanup := newTestGatewayClient(t, gateway)
+	defer cleanup()
+
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
+		"authorization", "Node node-secret", "x-mailhub-node-uuid", testNodeUUID,
+	))
+	stream, err := client.Control(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(helloFrame(testNodeUUID, time.Now().UTC(), []uint32{1})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("receive welcome: %v", err)
+	}
+	if !sessions.ExpireCredentialAt(42, 7, time.Now().Add(50*time.Millisecond)) {
+		t.Fatal("connected credential expiry was not scheduled")
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("scheduled credential expiry stream error = %v, want %s", err, codes.Unauthenticated)
+	}
+}
+
 func TestDataStreamRequiresAndRoutesThroughActiveControlSession(t *testing.T) {
 	store := &fakeStateStore{server: model.MailServer{
 		ID: 42, NodeUUID: stringPointer(testNodeUUID), EnrollmentState: model.EnrollmentApproved,
