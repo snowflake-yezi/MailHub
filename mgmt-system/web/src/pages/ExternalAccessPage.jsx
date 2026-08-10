@@ -4,18 +4,24 @@ import {
   Activity,
   Ban,
   Check,
+  ChevronRight,
   Clipboard,
   Clock3,
+  Code2,
+  Copy,
+  FileJson2,
   KeyRound,
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   ShieldOff,
   Trash2,
   X,
 } from 'lucide-react'
 import { externalAccessAPI } from '../api'
+import { buildCallTemplate, buildResourceReference, TEMPLATE_LANGUAGES } from '../externalApiReference'
 import { formatDateTime } from '../i18n'
 
 const EMPTY_FORM = {
@@ -36,6 +42,34 @@ const RESOURCE_TRANSLATION_KEYS = {
   'GET /api/v1/emails/:message_id/body': 'readEmailBody',
   'GET /api/v1/emails/:message_id/attachments/:index': 'downloadAttachment',
   'GET /api/v1/emails/:message_id/raw': 'downloadRawEmail',
+  'GET /api/v1/manual-filter-revisions/active': 'readActiveManualFilter',
+  'POST /api/v1/manual-filter-revisions': 'createManualFilterDraft',
+  'GET /api/v1/manual-filter-revisions/:revision': 'readManualFilterRevision',
+  'POST /api/v1/manual-filter-revisions/:revision/rules': 'createManualFilterRule',
+  'PUT /api/v1/manual-filter-revisions/:revision/rules/:logical_id': 'updateManualFilterRule',
+  'DELETE /api/v1/manual-filter-revisions/:revision/rules/:logical_id': 'deleteManualFilterRule',
+  'POST /api/v1/manual-filter-revisions/:revision/validate': 'validateManualFilterDraft',
+  'POST /api/v1/manual-filter-revisions/:revision/publish': 'publishManualFilterRevision',
+  'GET /api/v1/ad-filter-revisions/active': 'readActiveAdFilter',
+  'POST /api/v1/ad-filter-revisions': 'createAdFilterDraft',
+  'GET /api/v1/ad-filter-revisions/:revision': 'readAdFilterRevision',
+  'POST /api/v1/ad-filter-revisions/:revision/detectors': 'createAdFilterDetector',
+  'PUT /api/v1/ad-filter-revisions/:revision/detectors/:logical_id': 'updateAdFilterDetector',
+  'DELETE /api/v1/ad-filter-revisions/:revision/detectors/:logical_id': 'deleteAdFilterDetector',
+  'POST /api/v1/ad-filter-revisions/:revision/composites': 'createAdFilterComposite',
+  'PUT /api/v1/ad-filter-revisions/:revision/composites/:logical_id': 'updateAdFilterComposite',
+  'DELETE /api/v1/ad-filter-revisions/:revision/composites/:logical_id': 'deleteAdFilterComposite',
+  'PUT /api/v1/ad-filter-revisions/:revision/weights/:symbol': 'setAdFilterWeight',
+  'DELETE /api/v1/ad-filter-revisions/:revision/weights/:symbol': 'deleteAdFilterWeight',
+  'POST /api/v1/ad-filter-revisions/:revision/validate': 'validateAdFilterDraft',
+  'POST /api/v1/ad-filter-revisions/:revision/publish': 'publishAdFilterRevision',
+}
+
+const PERMISSION_GROUP_KEYS = {
+  '邮箱账号': 'mailbox',
+  '邮件读取': 'email',
+  '人工过滤策略': 'manualFilter',
+  '广告过滤策略': 'adFilter',
 }
 
 function permissionName(t, permission) {
@@ -47,8 +81,29 @@ function resourceName(t, resource) {
   return key ? t(`externalAccess.resources.names.${key}`, { defaultValue: resource.name }) : resource.name
 }
 
+function permissionGroupName(t, group) {
+  const key = PERMISSION_GROUP_KEYS[group]
+  return key ? t(`externalAccess.permissions.groups.${key}`, { defaultValue: group }) : group
+}
+
 function toRFC3339(value) {
   return value ? new Date(value).toISOString() : ''
+}
+
+async function copyText(value) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(value)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = value
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  textarea.remove()
+  if (!copied) throw new Error('copy failed')
 }
 
 function Toast({ message, type, onClose }) {
@@ -63,7 +118,7 @@ function TokenDialog({ token, onClose, onCopied, onCopyError }) {
   const { t } = useTranslation('pages')
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(token)
+      await copyText(token)
       onCopied()
     } catch {
       onCopyError()
@@ -121,7 +176,7 @@ function PermissionSelector({ permissions, selected, onChange }) {
     <div className="permission-groups">
       {Object.entries(groups).map(([group, items]) => (
         <section className="permission-group" key={group}>
-          <div className="permission-group-title">{t(`externalAccess.permissions.groups.${group === '邮箱账号' ? 'mailbox' : group === '邮件读取' ? 'email' : 'unknown'}`, { defaultValue: group })}</div>
+          <div className="permission-group-title">{permissionGroupName(t, group)}</div>
           {items.map(permission => (
             <label className={`permission-option ${selected.includes(permission.code) ? 'selected' : ''}`} key={permission.code}>
               <input type="checkbox" checked={selected.includes(permission.code)} onChange={() => toggle(permission.code)} />
@@ -146,11 +201,45 @@ function PermissionSelector({ permissions, selected, onChange }) {
   )
 }
 
-function CallableResources({ permissions }) {
+function CallableResources({ permissions, onCopied, onCopyError }) {
   const { t } = useTranslation('pages')
+  const [selectedKey, setSelectedKey] = useState('')
+  const [query, setQuery] = useState('')
+  const [language, setLanguage] = useState('curl')
   const resources = useMemo(() => permissions.flatMap(permission =>
-    (permission.resources || []).map(resource => ({ ...resource, permission })),
-  ), [permissions])
+    (permission.resources || []).map(resource => ({
+      ...resource,
+      permission,
+      displayName: resourceName(t, resource),
+      resourceKey: `${resource.method} ${resource.path}`,
+    })),
+  ), [permissions, t])
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filteredResources = useMemo(() => resources.filter(resource => !normalizedQuery || [
+    resource.displayName,
+    resource.method,
+    resource.path,
+    resource.permission_code,
+    permissionName(t, resource.permission),
+  ].some(value => String(value || '').toLocaleLowerCase().includes(normalizedQuery))), [normalizedQuery, resources, t])
+  const catalogGroups = useMemo(() => permissions.map(permission => ({
+    permission,
+    resources: filteredResources.filter(resource => resource.permission.code === permission.code),
+  })).filter(group => group.resources.length > 0), [filteredResources, permissions])
+  const selectedResource = resources.find(resource => resource.resourceKey === selectedKey) || resources[0]
+  const reference = selectedResource ? buildResourceReference(selectedResource, t) : null
+  const template = selectedResource && reference
+    ? buildCallTemplate(selectedResource, reference, language, window.location.origin)
+    : ''
+
+  const copyTemplate = async () => {
+    try {
+      await copyText(template)
+      onCopied()
+    } catch {
+      onCopyError()
+    }
+  }
 
   return (
     <section className="section data-section callable-resources-section">
@@ -160,20 +249,99 @@ function CallableResources({ permissions }) {
           <div className="panel-caption">{t('externalAccess.resources.caption', { count: resources.length })}</div>
         </div>
       </div>
-      <div className="table-wrap">
-        <table className="data-table callable-resources-table">
-          <thead><tr><th>{t('externalAccess.resources.endpoint')}</th><th>{t('externalAccess.resources.request')}</th><th>{t('externalAccess.resources.permission')}</th></tr></thead>
-          <tbody>
-            {resources.map(resource => (
-              <tr key={`${resource.method}-${resource.path}`}>
-                <td><strong>{resourceName(t, resource)}</strong></td>
-                <td><div className="api-route"><span className="api-method" data-method={resource.method}>{resource.method}</span><code>{resource.path}</code></div></td>
-                <td><div className="resource-permission"><strong>{permissionName(t, resource.permission)}</strong><code>{resource.permission_code}</code></div></td>
-              </tr>
+      <div className="api-explorer-grid">
+        <aside className="api-catalog-pane" aria-label={t('externalAccess.resources.catalogTitle')}>
+          <div className="api-pane-heading">
+            <div><h4>{t('externalAccess.resources.catalogTitle')}</h4><span>{t('externalAccess.resources.endpointCount', { count: resources.length })}</span></div>
+          </div>
+          <label className="api-search-field">
+            <Search size={15} />
+            <input value={query} onChange={event => setQuery(event.target.value)} placeholder={t('externalAccess.resources.searchPlaceholder')} aria-label={t('externalAccess.resources.searchAria')} />
+          </label>
+          <div className="api-catalog-list">
+            {catalogGroups.map(group => (
+              <section className="api-catalog-group" key={group.permission.code}>
+                <div className="api-catalog-group-heading">
+                  <strong>{permissionName(t, group.permission)}</strong>
+                  <span>{group.resources.length}</span>
+                </div>
+                {group.resources.map(resource => (
+                  <button
+                    className={`api-endpoint-option ${selectedResource?.resourceKey === resource.resourceKey ? 'active' : ''}`}
+                    type="button"
+                    key={resource.resourceKey}
+                    aria-pressed={selectedResource?.resourceKey === resource.resourceKey}
+                    onClick={() => setSelectedKey(resource.resourceKey)}
+                  >
+                    <span className="api-endpoint-option-main"><span className="api-method" data-method={resource.method}>{resource.method}</span><strong>{resource.displayName}</strong></span>
+                    <code>{resource.path}</code>
+                    <ChevronRight size={16} />
+                  </button>
+                ))}
+              </section>
             ))}
-            {resources.length === 0 && <tr><td colSpan={3}><div className="compact-empty">{t('externalAccess.resources.empty')}</div></td></tr>}
-          </tbody>
-        </table>
+            {resources.length === 0 && <div className="compact-empty">{t('externalAccess.resources.empty')}</div>}
+            {resources.length > 0 && filteredResources.length === 0 && <div className="compact-empty">{t('externalAccess.resources.noMatches')}</div>}
+          </div>
+        </aside>
+
+        <div className="api-reference-pane" aria-live="polite">
+          {selectedResource && reference ? (
+            <>
+              <div className="api-reference-heading">
+                <div>
+                  <span className="api-reference-kicker">{t('externalAccess.resources.reference.detailTitle')}</span>
+                  <h4>{selectedResource.displayName}</h4>
+                </div>
+                <div className="api-route"><span className="api-method" data-method={selectedResource.method}>{selectedResource.method}</span><code>{selectedResource.path}</code></div>
+              </div>
+              <p className="api-reference-description">{reference.description}</p>
+
+              <dl className="api-reference-facts">
+                <div><dt>{t('externalAccess.resources.reference.authorization')}</dt><dd><code>Bearer Token</code></dd></div>
+                <div><dt>{t('externalAccess.resources.permission')}</dt><dd><strong>{permissionName(t, selectedResource.permission)}</strong><code>{selectedResource.permission_code}</code></dd></div>
+                <div><dt>{t('externalAccess.resources.reference.response')}</dt><dd>{t(`externalAccess.resources.reference.responses.${reference.responseKind}`)}</dd></div>
+              </dl>
+
+              {reference.parameters.length > 0 && (
+                <section className="api-reference-section">
+                  <h5>{t('externalAccess.resources.reference.parameters')}</h5>
+                  <div className="api-parameter-list">
+                    {reference.parameters.map(parameter => (
+                      <div className="api-parameter-row" key={`${parameter.location}-${parameter.name}`}>
+                        <div><code>{parameter.name}</code><span>{t(`externalAccess.resources.reference.locations.${parameter.location}`)}</span></div>
+                        <div><strong>{parameter.required ? t('externalAccess.resources.reference.required') : t('externalAccess.resources.reference.optional')}</strong><span>{t(`externalAccess.resources.reference.parameterDescriptions.${parameter.name}`, { defaultValue: parameter.name })}</span></div>
+                        <code>{parameter.example}</code>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="api-reference-section">
+                <h5>{t('externalAccess.resources.reference.requestBody')}</h5>
+                {reference.requestBody ? (
+                  <pre className="api-json-example"><code>{JSON.stringify(reference.requestBody, null, 2)}</code></pre>
+                ) : (
+                  <div className="api-empty-body"><FileJson2 size={17} /><span>{t('externalAccess.resources.reference.noRequestBody')}</span></div>
+                )}
+              </section>
+
+              <section className="api-reference-section api-template-section">
+                <div className="api-template-heading">
+                  <div><Code2 size={17} /><h5>{t('externalAccess.resources.reference.templateTitle')}</h5></div>
+                  <button className="btn btn-outline btn-sm" type="button" onClick={copyTemplate}><Copy size={14} /> {t('externalAccess.resources.reference.copyTemplate')}</button>
+                </div>
+                <div className="api-template-tabs" role="tablist" aria-label={t('externalAccess.resources.reference.templateLanguage')}>
+                  {TEMPLATE_LANGUAGES.map(value => (
+                    <button className={language === value ? 'active' : ''} type="button" role="tab" aria-selected={language === value} key={value} onClick={() => setLanguage(value)}>{t(`externalAccess.resources.reference.languages.${value}`)}</button>
+                  ))}
+                </div>
+                <pre className="api-call-template"><code>{template}</code></pre>
+              </section>
+            </>
+          ) : <div className="compact-empty">{t('externalAccess.resources.empty')}</div>}
+        </div>
       </div>
     </section>
   )
@@ -439,7 +607,7 @@ export default function ExternalAccessPage() {
         <div className="summary-tile" data-tone="warning"><span className="summary-icon"><Clock3 size={18} /></span><div><div className="summary-value">{summary.used}</div><div className="summary-label">{t('externalAccess.summary.used')}</div></div></div>
       </div>
 
-      <CallableResources permissions={permissions} />
+      <CallableResources permissions={permissions} onCopied={() => setToast({ type: 'success', message: t('externalAccess.resources.reference.copied') })} onCopyError={() => setToast({ type: 'error', message: t('externalAccess.resources.reference.copyFailed') })} />
 
       <section className="section data-section">
         <div className="panel-header"><div><h3>{t('externalAccess.list.title')}</h3><div className="panel-caption">{t('externalAccess.list.caption')}</div></div></div>

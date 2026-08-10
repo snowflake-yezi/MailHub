@@ -10,10 +10,11 @@ async function source(relativePath) {
   return readFile(path.join(sourceDirectory, relativePath), 'utf8')
 }
 
-const [api, servers, externalAccess, mailboxes, emails, filters, legacyFilters] = await Promise.all([
+const [api, servers, externalAccess, externalApiReference, mailboxes, emails, filters, legacyFilters] = await Promise.all([
   source('api.js'),
   source('pages/ServersPage.jsx'),
   source('pages/ExternalAccessPage.jsx'),
+  source('externalApiReference.js'),
   source('pages/MailboxesPage.jsx'),
   source('pages/EmailsPage.jsx'),
   source('pages/FiltersPage.jsx'),
@@ -32,8 +33,19 @@ assert.match(externalAccess, /externalAccessAPI\.revokeCredential/, 'credential 
 assert.match(externalAccess, /externalAccessAPI\.deleteCredential/, 'credential delete action is missing')
 assert.match(externalAccess, /function CallableResources/, 'external endpoint inventory is missing')
 assert.match(externalAccess, /permission\.resources/, 'permission editor does not expose its concrete endpoints')
+assert.match(externalAccess, /api-explorer-grid/, 'external endpoint inventory is not using the two-column explorer')
+assert.match(externalAccess, /TEMPLATE_LANGUAGES\.map/, 'external endpoint details do not expose template languages')
+assert.match(externalAccess, /buildResourceReference/, 'external endpoints cannot render reference details')
+assert.match(externalAccess, /copyTemplate/, 'external call templates cannot be copied')
+assert.match(externalApiReference, /export function buildCallTemplate/, 'external call template generator is missing')
+for (const language of ['curlTemplate', 'javascriptTemplate', 'pythonTemplate']) {
+  assert.match(externalApiReference, new RegExp(`function ${language}`), `external API reference is missing ${language}`)
+}
 for (const route of ['orders/:order_id/emails', 'mailboxes/:mailbox_ref/messages', 'emails/:message_id/body', 'emails/:message_id/attachments/:index']) {
   assert.match(externalAccess, new RegExp(route.replaceAll('/', '\\/')), `external endpoint inventory is missing ${route}`)
+}
+for (const route of ['manual-filter-revisions/:revision/rules/:logical_id', 'manual-filter-revisions/:revision/publish', 'ad-filter-revisions/:revision/detectors/:logical_id', 'ad-filter-revisions/:revision/composites/:logical_id', 'ad-filter-revisions/:revision/weights/:symbol', 'ad-filter-revisions/:revision/publish']) {
+  assert.match(externalAccess, new RegExp(route.replaceAll('/', '\\/')), `external endpoint reference is missing ${route}`)
 }
 assert.doesNotMatch(externalAccess, /group === '过滤规则' \? 'filter'/, 'retired legacy filter permissions are still grouped in external access')
 assert.match(mailboxes, /mailboxes\.list\.jumpAria/, 'mailbox direct page navigation is missing')
