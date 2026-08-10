@@ -32,6 +32,18 @@ MailHub 是一套基于 Postfix + Dovecot + OpenDKIM 的自建邮局管理系统
 4. **收取与查询**：邮件到达后，在“邮件查询”输入完整邮箱地址查看正文、HTML 预览和附件；需要统一汇总时，在“邮箱账户 > 集成邮箱”设置当前转发目标。
 5. **开放业务 API**：在“外部访问”创建调用方、按需授权并签发 Token。完整 Token 只展示一次，调用时通过 `Authorization: Bearer <token>` 传入；接口和权限说明见[外部 API 对接文档](docs/api/external-api.md)。
 
+### 节点凭证轮转
+
+首次注册和凭证轮转都会签发新的节点 credential，但交付方式不同：首次注册由 `mail-node enroll` 自动把 credential 写入节点；轮转只在 System 中展示一次新 credential，不会自动下发到节点。
+
+1. 进入“服务器池”，在目标节点的操作栏点击钥匙图标，再点击“轮换凭证”。
+2. 立即复制仅显示一次的新 credential，不要把它放入聊天、截图、命令参数或 Shell 历史。
+3. 在目标节点把新 credential 安全替换到 `management.credential_file`；默认路径为 `/var/lib/mail-node/identity/credential`。
+4. 重启 `mail-node`，在 System 确认节点恢复 `connected / ready`，并且新 active credential 出现“最近使用时间”。
+5. 确认新凭证已使用后，才结束旧凭证重叠期，并按需删除已撤销或已过期的记录。
+
+System 只保存 credential 哈希和元数据，关闭一次性弹窗后不能找回明文；明文丢失或暴露时必须再次轮转。不要使用“撤销全部凭证”代替轮转，该操作会让节点退出注册状态。安全写入命令、失败恢复和验收门禁见[凭证轮转与安装](docs/node-registration-operations-runbook.md#12-凭证轮转与安装)。
+
 ---
 
 ## 当前能力
@@ -232,6 +244,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [控制面部署指南](docs/control-plane-deployment.md) | Docker Compose、systemd、管理员 bootstrap、升级和恢复 |
 | [数据面部署指南](docs/design/deployment-guide.md) | 新 mail-node 的 DNS、Postfix、Dovecot、OpenDKIM 和 Roundcube 部署 |
 | [部署容量与附件存储边界](docs/deployment-capacity.md) | 当前无对象存储版本的服务器配置、性能边界、磁盘规划及后续 MinIO 基线 |
+| [节点注册与 dual 迁移生产运维手册](docs/node-registration-operations-runbook.md) | 逐节点注册、凭证轮转、建连、canary、回滚、最终收口和交接清单 |
 
 ### 当前专题设计
 
@@ -258,6 +271,8 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 | [节点注册发现与出站控制通道实施计划](docs/design/node-registration-control-channel-implementation-plan.md) | 当前 P0 主线的范围、协议、数据模型、阶段、测试和完成定义 |
 | [NR-P6 DataStream 迁移验收记录](docs/design/node-registration-p6-data-stream.md) | DataStream 会话、流式读取、取消、限流和 Control/Data 隔离验证 |
 | [节点注册与加入集群指南](docs/node-registration-guide.md) | 标准审批、严格预绑定 UUID、注册验证、异常恢复和安全检查 |
+| [NR-P7 Canary 与 Legacy 回滚状态](docs/design/node-registration-p7-canary-rollback.md) | transport 门禁、当前生产验收边界和剩余收口条件 |
+| [节点注册与 dual 迁移生产运维手册](docs/node-registration-operations-runbook.md) | 一线注册与凭证轮转、成功门禁、故障处理、回滚和交接模板 |
 
 ### 历史/规划记录
 
