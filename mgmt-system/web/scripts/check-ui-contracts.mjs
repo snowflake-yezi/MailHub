@@ -88,6 +88,11 @@ assert.match(filters, /const TABS = \['overview', 'manual', 'ad', 'decisions', '
 assert.match(filters, /<LegacyFiltersPage \/>/, 'legacy filter panel is missing')
 assert.match(filters, /function RevisionInsights/, 'revision diff and validation panel is missing')
 assert.match(filters, /filterPolicy\.adActionPreview/, 'pre-publish action surface preview is missing')
+assert.match(filters, /function seedCatalogItem/, 'built-in ad policy items are not localized through the seed catalog')
+assert.match(filters, /filterPolicy\.builtInSeed/, 'built-in ad policy items are missing their default annotation')
+assert.match(filters, /conditionValueLabel\(t, condition\)/, 'filter condition summaries omit the configured value')
+assert.match(filters, /onEditingWeight\(\{ symbol: item\.symbol, score: String\(item\.score\) \}\)/, 'existing ad weights do not enter edit mode')
+assert.match(filters, /onAction\('save-weight', editingWeight\)/, 'edited ad weights are not connected to the save action')
 for (const group of ['fields', 'operators', 'actions', 'modes', 'booleanValues', 'scorePolicies', 'groups']) {
   assert.match(filters, new RegExp(`optionLabel\\(t, '${group}'`), `filter policy ${group} are not localized`)
 }
@@ -95,7 +100,7 @@ assert.match(filters, /<option key=\{value\} value=\{value\}>\{optionLabel\(t, '
 assert.match(filters, /conditionSummary\(t, condition\)/, 'condition summaries are not localized')
 assert.doesNotMatch(filters, /<option key=\{value\}>\{value\}<\/option>/, 'filter policy still exposes raw enum options')
 assert.match(legacyFilters, /filters\.actionLabels\.\$\{rule\.action\}/, 'legacy rule actions are not localized')
-for (const method of ['manualRevisions', 'createManual', 'validateManual', 'publishManual', 'adRevisions', 'createAd', 'validateAd', 'publishAd', 'decisions', 'decision', 'quarantines', 'quarantineMessage', 'releaseQuarantine', 'allowAndReleaseQuarantine', 'confirmQuarantineAd']) {
+for (const method of ['manualRevisions', 'createManual', 'validateManual', 'publishManual', 'adRevisions', 'createAd', 'putAdWeight', 'validateAd', 'publishAd', 'decisions', 'decision', 'quarantines', 'quarantineMessage', 'releaseQuarantine', 'allowAndReleaseQuarantine', 'confirmQuarantineAd']) {
   assert.match(api, new RegExp(`\\b${method}\\(`), `filter policy API is missing ${method}`)
 }
 

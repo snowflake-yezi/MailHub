@@ -37,9 +37,38 @@ function optionLabel(t, group, value) {
   return t(`${prefix}.${key}`, { defaultValue: value })
 }
 
+function seedCatalogItem(t, type, item) {
+  const group = type === 'composite' ? 'composites' : 'detectors'
+  const prefix = `filterPolicy.seedCatalog.${group}.${item.symbol}`
+  return {
+    name: t(`${prefix}.name`, { defaultValue: item.name || item.symbol }),
+    description: t(`${prefix}.description`, { defaultValue: '' }),
+    builtIn: item.source_reference === 'ad-seed-v1' || item.logical_id?.startsWith('seed-'),
+  }
+}
+
+function conditionValueLabel(t, condition) {
+  if (condition.value === null || condition.value === undefined) return ''
+  if (typeof condition.value === 'boolean') return optionLabel(t, 'booleanValues', String(condition.value))
+  return JSON.stringify(condition.value)
+}
+
 function conditionSummary(t, condition) {
-  const summary = `${optionLabel(t, 'fields', condition.field)} ${optionLabel(t, 'operators', condition.operator)}`
+  const value = conditionValueLabel(t, condition)
+  const summary = `${optionLabel(t, 'fields', condition.field)} ${optionLabel(t, 'operators', condition.operator)}${value ? ` ${value}` : ''}`
   return condition.negated ? t('filterPolicy.negatedCondition', { condition: summary }) : summary
+}
+
+function compositeSummary(t, item) {
+  return ['all_of', 'any_of', 'none_of']
+    .filter(group => item[group]?.length)
+    .map(group => `${optionLabel(t, 'groups', group)}: ${item[group].join(', ')}`)
+    .join(' · ')
+}
+
+function validWeightScore(value) {
+  const score = Number(value)
+  return value !== '' && Number.isFinite(score) && score >= -100 && score <= 100
 }
 
 function Toast({ toast, onClose }) {
@@ -67,7 +96,7 @@ function StatusTag({ value, group = 'statuses' }) {
   return <span className={`tag ${tone}`}>{value ? optionLabel(t, group, value) : '-'}</span>
 }
 
-function RevisionToolbar({ kind, revisions, selected, detail, busy, onSelect, onCreate, onClone, onValidate, onPublish }) {
+function RevisionToolbar({ revisions, selected, detail, busy, onSelect, onCreate, onClone, onValidate, onPublish }) {
   const { t } = useTranslation('pages')
   const editable = detail?.status === 'draft'
   return (
@@ -86,7 +115,6 @@ function RevisionToolbar({ kind, revisions, selected, detail, busy, onSelect, on
         <button className="btn btn-outline" type="button" onClick={onValidate} disabled={!editable || busy}><CheckCircle2 size={16} />{t('filterPolicy.validate')}</button>
         <button className="btn btn-primary" type="button" onClick={onPublish} disabled={!editable || busy}><Send size={16} />{t('filterPolicy.publish')}</button>
       </div>
-      <span className="sr-only">{kind}</span>
     </div>
   )
 }
@@ -242,24 +270,90 @@ function ManualPanel({ revisions, selected, detail, base, validation, busy, onSe
   const rules = detail?.rules || []
   const editable = detail?.status === 'draft'
   return <>
-    <RevisionToolbar kind="manual" revisions={revisions} selected={selected} detail={detail} busy={busy} onSelect={onSelect} onCreate={() => onAction('create')} onClone={() => onAction('clone')} onValidate={() => onAction('validate')} onPublish={() => onAction('publish')} />
+    <RevisionToolbar revisions={revisions} selected={selected} detail={detail} busy={busy} onSelect={onSelect} onCreate={() => onAction('create')} onClone={() => onAction('clone')} onValidate={() => onAction('validate')} onPublish={() => onAction('publish')} />
     <RevisionInsights kind="manual" detail={detail} base={base} validation={validation} />
     <section className="section data-section"><div className="panel-header"><div><h3>{t('filterPolicy.manualRules')}</h3><div className="panel-caption">{t('filterPolicy.manualCaption')}</div></div>{editable && <button className="btn btn-primary" type="button" onClick={() => onEdit('manual')}><Plus size={16} />{t('filterPolicy.addRule')}</button>}</div><div className="table-wrap"><table className="data-table filters-table"><thead><tr><th>{t('filterPolicy.priority')}</th><th>{t('filterPolicy.name')}</th><th>{t('filterPolicy.action')}</th><th>{t('filterPolicy.mode')}</th><th>{t('filterPolicy.conditions')}</th><th>{t('filterPolicy.operations')}</th></tr></thead><tbody>{rules.map(rule => <tr key={rule.logical_id}><td>{rule.priority}</td><td><strong>{rule.name}</strong><small>{rule.logical_id}</small></td><td><StatusTag value={rule.action} group="actions" /></td><td><StatusTag value={rule.mode} group="modes" /></td><td><code>{rule.conditions.map(condition => conditionSummary(t, condition)).join(t('filterPolicy.conditionJoiner'))}</code></td><td><div className="row-actions"><button className="icon-button compact" type="button" disabled={!editable} onClick={() => onEdit('manual', rule)}><Pencil size={14} /></button><button className="icon-button compact danger" type="button" disabled={!editable} onClick={() => onAction('delete-rule', rule)}><Trash2 size={14} /></button></div></td></tr>)}{rules.length === 0 && <tr><td colSpan="6"><div className="empty-state"><AlertTriangle size={26} /><strong>{t('filterPolicy.noRules')}</strong></div></td></tr>}</tbody></table></div></section>
   </>
 }
 
-function AdPanel({ revisions, selected, detail, base, validation, busy, weightDraft, onWeightDraft, onSelect, onAction, onEdit }) {
+function AdPolicyItem({ type, item, editable, onEdit, onDelete }) {
+  const { t } = useTranslation('pages')
+  const presentation = seedCatalogItem(t, type, item)
+  const summary = type === 'detector'
+    ? (item.conditions || []).map(condition => conditionSummary(t, condition)).join(t('filterPolicy.conditionJoiner'))
+    : compositeSummary(t, item)
+  return (
+    <div className="policy-item">
+      <div className="policy-item-copy">
+        <div className="policy-item-title">
+          <strong>{presentation.name}</strong>
+          {presentation.builtIn && <span className="tag tag-info">{t('filterPolicy.builtInSeed')}</span>}
+        </div>
+        {presentation.description && <p>{presentation.description}</p>}
+        <code>{item.symbol}</code>
+        {summary && <span className="policy-item-condition">{t(type === 'detector' ? 'filterPolicy.detectorCondition' : 'filterPolicy.compositeCondition', { condition: summary })}</span>}
+      </div>
+      <StatusTag value={item.mode} group="modes" />
+      <div className="row-actions">
+        <button className="icon-button compact" type="button" title={t('common:actions.edit')} disabled={!editable} onClick={() => onEdit(type, item)}><Pencil size={14} /></button>
+        <button className="icon-button compact danger" type="button" title={t('common:actions.delete')} disabled={!editable} onClick={() => onDelete(item)}><Trash2 size={14} /></button>
+      </div>
+    </div>
+  )
+}
+
+function AdPanel({ revisions, selected, detail, base, validation, busy, weightDraft, editingWeight, onWeightDraft, onEditingWeight, onSelect, onAction, onEdit }) {
   const { t } = useTranslation('pages')
   const editable = detail?.status === 'draft'
+  const producerBySymbol = new Map([
+    ...(detail?.detectors || []).map(item => [item.symbol, { type: 'detector', item }]),
+    ...(detail?.composites || []).map(item => [item.symbol, { type: 'composite', item }]),
+  ])
   return <>
-    <RevisionToolbar kind="ad" revisions={revisions} selected={selected} detail={detail} busy={busy} onSelect={onSelect} onCreate={() => onAction('create-seed')} onClone={() => onAction('clone')} onValidate={() => onAction('validate')} onPublish={() => onAction('publish')} />
+    <RevisionToolbar revisions={revisions} selected={selected} detail={detail} busy={busy} onSelect={onSelect} onCreate={() => onAction('create-seed')} onClone={() => onAction('clone')} onValidate={() => onAction('validate')} onPublish={() => onAction('publish')} />
     <RevisionInsights kind="ad" detail={detail} base={base} validation={validation} />
     {detail && <section className="filter-threshold-band"><div className="form-group"><label>{t('filterPolicy.tagThreshold')}</label><input type="number" step="0.001" value={detail.tag_threshold} disabled={!editable} onChange={event => onAction('threshold-local', { field: 'tag_threshold', value: event.target.value })} /></div><div className="form-group"><label>{t('filterPolicy.quarantineThreshold')}</label><input type="number" step="0.001" value={detail.quarantine_threshold} disabled={!editable} onChange={event => onAction('threshold-local', { field: 'quarantine_threshold', value: event.target.value })} /></div><button className="btn btn-outline" type="button" disabled={!editable || busy} onClick={() => onAction('save-thresholds')}><Save size={15} />{t('common:actions.save')}</button></section>}
     <div className="filter-policy-columns">
-      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.detectors')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('detector')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.detectors || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} group="modes" /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('detector', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-detector', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
-      <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.composites')}</h3>{editable && <button className="icon-button" type="button" onClick={() => onEdit('composite')}><Plus size={16} /></button>}</div><div className="policy-item-list">{(detail?.composites || []).map(item => <div className="policy-item" key={item.logical_id}><div><strong>{item.name}</strong><code>{item.symbol}</code></div><StatusTag value={item.mode} group="modes" /><div className="row-actions"><button className="icon-button compact" disabled={!editable} onClick={() => onEdit('composite', item)}><Pencil size={14} /></button><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-composite', item)}><Trash2 size={14} /></button></div></div>)}</div></section>
+      <section className="section data-section">
+        <div className="panel-header"><div><h3>{t('filterPolicy.detectors')}</h3><div className="panel-caption">{t('filterPolicy.detectorsCaption')}</div></div>{editable && <button className="icon-button" type="button" title={t('filterPolicy.addDetector')} onClick={() => onEdit('detector')}><Plus size={16} /></button>}</div>
+        <div className="policy-item-list">{(detail?.detectors || []).map(item => <AdPolicyItem type="detector" item={item} editable={editable} onEdit={onEdit} onDelete={value => onAction('delete-detector', value)} key={item.logical_id} />)}</div>
+      </section>
+      <section className="section data-section">
+        <div className="panel-header"><div><h3>{t('filterPolicy.composites')}</h3><div className="panel-caption">{t('filterPolicy.compositesCaption')}</div></div>{editable && <button className="icon-button" type="button" title={t('filterPolicy.addComposite')} onClick={() => onEdit('composite')}><Plus size={16} /></button>}</div>
+        <div className="policy-item-list">{(detail?.composites || []).map(item => <AdPolicyItem type="composite" item={item} editable={editable} onEdit={onEdit} onDelete={value => onAction('delete-composite', value)} key={item.logical_id} />)}</div>
+      </section>
     </div>
-    <section className="section data-section"><div className="panel-header"><h3>{t('filterPolicy.weights')}</h3>{editable && <div className="weight-editor"><input placeholder="AD_SYMBOL" value={weightDraft.symbol} onChange={event => onWeightDraft({ ...weightDraft, symbol: event.target.value.toUpperCase() })} /><input type="number" step="0.001" value={weightDraft.score} onChange={event => onWeightDraft({ ...weightDraft, score: event.target.value })} /><button className="btn btn-outline btn-sm" type="button" onClick={() => onAction('save-weight', weightDraft)}><Save size={14} />{t('common:actions.save')}</button></div>}</div><div className="table-wrap"><table className="data-table"><thead><tr><th>{t('filterPolicy.symbol')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.operations')}</th></tr></thead><tbody>{(detail?.weights || []).map(item => <tr key={item.symbol}><td><code>{item.symbol}</code></td><td>{item.score}</td><td><button className="icon-button compact danger" disabled={!editable} onClick={() => onAction('delete-weight', item)}><Trash2 size={14} /></button></td></tr>)}</tbody></table></div></section>
+    <section className="section data-section">
+      <div className="panel-header">
+        <div><h3>{t('filterPolicy.weights')}</h3><div className="panel-caption">{editable ? t('filterPolicy.weightsCaption') : t('filterPolicy.weightsReadOnly')}</div></div>
+        {editable && <div className="weight-editor">
+          <input aria-label={t('filterPolicy.newWeightSymbol')} placeholder="AD_SYMBOL" value={weightDraft.symbol} onChange={event => onWeightDraft({ ...weightDraft, symbol: event.target.value.toUpperCase() })} />
+          <input aria-label={t('filterPolicy.newWeightScore')} type="number" min="-100" max="100" step="0.001" value={weightDraft.score} onChange={event => onWeightDraft({ ...weightDraft, score: event.target.value })} />
+          <button className="btn btn-outline btn-sm" type="button" disabled={busy || !weightDraft.symbol || !validWeightScore(weightDraft.score)} onClick={() => onAction('save-weight', weightDraft)}><Plus size={14} />{t('filterPolicy.addWeight')}</button>
+        </div>}
+      </div>
+      <div className="table-wrap"><table className="data-table policy-weight-table">
+        <thead><tr><th>{t('filterPolicy.producer')}</th><th>{t('filterPolicy.score')}</th><th>{t('filterPolicy.operations')}</th></tr></thead>
+        <tbody>{(detail?.weights || []).map(item => {
+          const producer = producerBySymbol.get(item.symbol)
+          const presentation = producer ? seedCatalogItem(t, producer.type, producer.item) : { name: item.symbol, description: '' }
+          const isEditing = editingWeight?.symbol === item.symbol
+          return <tr key={item.symbol}>
+            <td><div className="weight-producer"><strong>{presentation.name}</strong><code>{item.symbol}</code>{presentation.description && <span>{presentation.description}</span>}</div></td>
+            <td>{isEditing
+              ? <input className="weight-score-input" aria-label={t('filterPolicy.editWeightScore', { name: presentation.name })} type="number" min="-100" max="100" step="0.001" value={editingWeight.score} onChange={event => onEditingWeight({ ...editingWeight, score: event.target.value })} autoFocus />
+              : <strong>{item.score}</strong>}</td>
+            <td><div className="row-actions">{isEditing ? <>
+              <button className="icon-button compact" type="button" title={t('common:actions.save')} disabled={busy || !validWeightScore(editingWeight.score)} onClick={() => onAction('save-weight', editingWeight)}><Save size={14} /></button>
+              <button className="icon-button compact" type="button" title={t('common:actions.cancel')} disabled={busy} onClick={() => onEditingWeight(null)}><X size={14} /></button>
+            </> : <>
+              <button className="icon-button compact" type="button" title={t('filterPolicy.editWeight')} disabled={!editable || busy} onClick={() => onEditingWeight({ symbol: item.symbol, score: String(item.score) })}><Pencil size={14} /></button>
+              <button className="icon-button compact danger" type="button" title={t('common:actions.delete')} disabled={!editable || busy} onClick={() => onAction('delete-weight', item)}><Trash2 size={14} /></button>
+            </>}</div></td>
+          </tr>
+        })}</tbody>
+      </table></div>
+    </section>
   </>
 }
 
@@ -342,6 +436,7 @@ export default function FiltersPage() {
   const [quarantineMessage, setQuarantineMessage] = useState(null)
   const [editor, setEditor] = useState(null)
   const [weightDraft, setWeightDraft] = useState({ symbol: '', score: '0' })
+  const [editingWeight, setEditingWeight] = useState(null)
 
   const latest = values => values.find(value => value.status === 'draft')?.revision || values[0]?.revision || 0
   const loadBase = useCallback(async (silent = false) => {
@@ -368,6 +463,7 @@ export default function FiltersPage() {
   useEffect(() => { loadBase() }, [loadBase])
   useEffect(() => { setManualValidation(null); if (manualID) filterPolicyAPI.manualRevision(manualID).then(setManual).catch(error => setToast({ type: 'error', message: error.message })); else setManual(null) }, [manualID])
   useEffect(() => { setAdValidation(null); if (adID) filterPolicyAPI.adRevision(adID).then(setAd).catch(error => setToast({ type: 'error', message: error.message })); else setAd(null) }, [adID])
+  useEffect(() => { setEditingWeight(null); setWeightDraft({ symbol: '', score: '0' }) }, [adID])
   useEffect(() => {
     let active = true
     if (!manual?.base_revision) { setManualBase(null); return () => { active = false } }
@@ -443,7 +539,7 @@ export default function FiltersPage() {
       if (updated) { setAd(updated); setAdValidation(null) }
     } else if (action === 'save-weight' && value.symbol) {
       const updated = await run(() => filterPolicyAPI.putAdWeight(adID, value.symbol, Number(value.score)))
-      if (updated) { setAd(updated); setAdValidation(null); setWeightDraft({ symbol: '', score: '0' }) }
+      if (updated) { setAd(updated); setAdValidation(null); setWeightDraft({ symbol: '', score: '0' }); setEditingWeight(null) }
     } else if (action === 'delete-weight') {
       const updated = await run(() => filterPolicyAPI.removeAdWeight(adID, value.symbol))
       if (updated) { setAd(updated); setAdValidation(null) }
@@ -523,7 +619,7 @@ export default function FiltersPage() {
     <div className="phase-tabs policy-tabs filter-main-tabs">{TABS.map(value => <button className={tab === value ? 'active' : ''} key={value} type="button" onClick={() => setTab(value)}>{t(`filterPolicy.tabs.${value}`)}</button>)}</div>
     {tab === 'overview' && <OverviewPanel status={status} manualRevisions={manualRevisions} adRevisions={adRevisions} />}
     {tab === 'manual' && <ManualPanel revisions={manualRevisions} selected={manualID} detail={manual} base={manualBase} validation={manualValidation} busy={busy} onSelect={setManualID} onAction={manualAction} onEdit={openEditor} />}
-    {tab === 'ad' && <AdPanel revisions={adRevisions} selected={adID} detail={ad} base={adBase} validation={adValidation} busy={busy} weightDraft={weightDraft} onWeightDraft={setWeightDraft} onSelect={setAdID} onAction={adAction} onEdit={openEditor} />}
+    {tab === 'ad' && <AdPanel revisions={adRevisions} selected={adID} detail={ad} base={adBase} validation={adValidation} busy={busy} weightDraft={weightDraft} editingWeight={editingWeight} onWeightDraft={setWeightDraft} onEditingWeight={setEditingWeight} onSelect={setAdID} onAction={adAction} onEdit={openEditor} />}
     {tab === 'decisions' && <DecisionsPanel page={decisions} action={decisionAction} selected={selectedDecision} onAction={setDecisionAction} onSelect={selectDecision} />}
     {tab === 'quarantines' && <QuarantinesPanel page={quarantines} status={quarantineStatus} selected={selectedQuarantine} message={quarantineMessage} busy={busy} onStatus={setQuarantineStatus} onSelect={selectQuarantine} onAction={quarantineAction} />}
     {tab === 'legacy' && <div className="legacy-filter-panel"><LegacyFiltersPage /></div>}
