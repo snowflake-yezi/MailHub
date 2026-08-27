@@ -27,10 +27,22 @@ The mailbox page filters accounts by domain, server, and status and provides sin
 ## Basic workflow
 
 1. **Deploy and sign in**: follow the [control-plane deployment guide](docs/control-plane-deployment.md) to prepare the database, configuration, and administrator bootstrap, then open `https://<management-domain>/admin/login`. If bootstrap used `--must-change-password`, change the password on first sign-in.
-2. **Connect mail resources**: register each `mail-node` in **Server Pool**, bind its domains, and complete DNS, Postfix, Dovecot, and OpenDKIM setup using the [data-plane deployment guide](docs/design/deployment-guide.md). Healthy nodes become eligible for automatic allocation.
+2. **Connect mail resources**: register each `mail-node` in **Server Pool**, bind its domains, and complete DNS, Postfix, Dovecot, and OpenDKIM setup using the [data-plane deployment guide](docs/design/deployment-guide.md). Migrate existing Legacy nodes in place, one at a time, with the canary and rollback procedure in the [node enrollment and dual-migration production runbook](docs/node-registration-operations-runbook.md). Only healthy nodes become eligible for automatic allocation.
 3. **Create mailboxes**: open **Mailbox Accounts > Create Mailbox**. Let MailHub choose a healthy node and domain or select them explicitly; provision one account, paste a batch, or import CSV/TXT.
 4. **Receive and inspect email**: enter a full mailbox address under **Email Query** to inspect bodies, HTML previews, and attachments. To aggregate delivery, select the active forwarding target under **Mailbox Accounts > Integrated Mailbox**.
 5. **Expose the business API**: create a caller under **External Access**, grant only the required capabilities, and issue a token. The complete token is shown once; send it as `Authorization: Bearer <token>`. See the [external API guide](docs/api/external-api.md) for endpoints and permissions.
+
+### Rotating node credentials
+
+Initial enrollment and credential rotation both issue a new node credential, but delivery differs. `mail-node enroll` writes the initial credential to the node automatically. A rotation shows the new credential once in System and does not deliver it to the node.
+
+1. Open **Server Pool**, select the key icon for the target node, and choose **Rotate credential**.
+2. Copy the one-time credential immediately. Do not place it in chat, screenshots, command arguments, or shell history.
+3. Securely replace `management.credential_file` on the target node. The default path is `/var/lib/mail-node/identity/credential`.
+4. Restart `mail-node`. Confirm in System that the node returns to `connected / ready` and that the new active credential has a recent last-used time.
+5. End the old-credential overlap only after confirming the new credential is in use, then remove revoked or expired records as needed.
+
+System stores only credential hashes and metadata. Plaintext cannot be recovered after closing the one-time dialog; rotate again if it is lost or exposed. Do not use **Revoke all credentials** as a replacement for rotation because that removes the node from its enrolled state. See [credential rotation and installation](docs/node-registration-operations-runbook.md#12-凭证轮转与安装) for secure write commands, failure recovery, and acceptance gates.
 
 ---
 
@@ -40,7 +52,7 @@ The mailbox page filters accounts by domain, server, and status and provides sin
 
 - Administration console: React SPA under `/admin/*`, protected by session authentication.
 - External APIs: `/api/v1/mailboxes`, `/api/v1/orders/*/emails`, `/api/v1/mailboxes/*/messages`, and `/api/v1/emails/*`. Administrators create external applications, grant individual capabilities, and issue Bearer tokens from the console.
-- Internal APIs: `/api/v1/internal/*`, authenticated between mgmt-system and mail-node with a shared `X-Internal-Token` secret.
+- Node communication: enrolled nodes establish outbound ControlStream/DataStream connections with independent credentials. During migration, `/api/v1/internal/*` and node port `8081` retain compatible shared-secret/node-credential authentication; the shared secret is removed only after final convergence.
 - Resource management: mailbox accounts, server pool, domain pool, filter rules, system configuration, and integrated mailboxes.
 - Scheduling: health checks, heartbeat ingestion, lifecycle watchdogs, soft-deletion expiry, and configuration/rule reload notifications.
 - Storage: MySQL or MariaDB. The control plane uses GORM AutoMigrate on startup to create or update current tables and retains the migration path from historical `order_mailboxes` records to the current account model.
@@ -51,8 +63,9 @@ The mailbox page filters accounts by domain, server, and status and provides sin
 - Mailbox operations: create mailboxes, change passwords, delete safely, and restore from `.trash`.
 - Domain operations: provision Postfix virtual domains and write DKIM keys, SigningTable, and KeyTable entries.
 - Mail processing: scan Maildir `new/` and `cur/`, apply `pass / flag / block` rules, and forward via SMTP to the active integrated mailbox.
-- Email access: parse MIME into structured headers, bodies, and attachment metadata, with binary attachment downloads.
+- Email access: parse MIME into structured headers, bodies, and attachment metadata. A bounded local-path index supports body reads, previews, and binary attachment downloads.
 - Compatibility: infer types and extensions from magic bytes for inline images with missing filenames, missing extensions, or incorrect `application/octet-stream` types. API reads, HTML previews, and SMTP forwarding use the same behavior.
+- Node identity: permanent `node_uuid`, independent per-node credentials, outbound ControlStream/DataStream connections, and per-node `legacy_http / dual / control_stream` transport gates.
 
 ---
 
@@ -70,7 +83,7 @@ flowchart TB
         web["React administration console<br/>Mailboxes / Servers / Domains / Filters / Configuration / Integrated mailboxes"]
         api["External API<br/>Mailbox creation / Email queries / Attachment downloads / Filter rules"]
         control["Control services<br/>Allocation / Health checks / Lifecycle / Reload notifications"]
-        auth["Authentication<br/>Session / Bearer permission / Shared secret"]
+        auth["Authentication<br/>Session / Bearer permission<br/>Node credential / Shared secret"]
         db[("MySQL / MariaDB<br/>Accounts / Servers / Domains / Rules / Token hashes / Configuration")]
     end
 
@@ -89,8 +102,10 @@ flowchart TB
     auth --> web
     auth --> api
     control --> db
-    control -->|"X-Internal-Token"| node1
-    control -->|"X-Internal-Token"| nodeN
+    node1 -->|"TLS ControlStream / DataStream<br/>Node credential"| control
+    nodeN -->|"TLS ControlStream / DataStream<br/>Node credential"| control
+    control -.->|"Legacy HTTP fallback<br/>Migration-time shared secret"| node1
+    control -.->|"Legacy HTTP fallback<br/>Migration-time shared secret"| nodeN
     node1 -->|"SMTP forwarding"| union
     nodeN -->|"SMTP forwarding"| union
 ```
@@ -146,73 +161,219 @@ See the [architecture overview](docs/architecture-overview.md) for the complete 
 
 ---
 
-## Quick Start
+## Development and Operation
 
-### 1. Prerequisites
+### Choose the runtime scope first
 
-- Control-plane host: MySQL 8.0 or MariaDB 10.5+.
-- At least one data-plane host with SMTP port 25 open and Postfix, Dovecot, and OpenDKIM installed.
-- A mail domain with manageable DNS records.
+MailHub is not a monolithic application that can perform real mail delivery by starting only its Go processes. A complete system consists of:
 
-### 2. Configuration
+```text
+MariaDB/MySQL
+  -> mgmt-system control plane and administration console
+  -> at least one mail-node data plane
+  -> Postfix + Dovecot + OpenDKIM
+  -> DNS, SMTP ports 25/587, and optional Roundcube
+```
+
+Starting the control plane is enough for administration-console development, control-plane API work, and unit tests. Real inbound mail, Maildir, DKIM, SMTP forwarding, and IMAP verification also require a Linux data plane.
+
+### What must be done manually for the database
+
+**No deployment mode requires manually creating business tables.** On every startup, `mgmt-server` runs GORM AutoMigrate to create or update the current schema and seed required defaults.
+
+| Item | Recommended Docker Compose deployment | Self-managed MySQL/MariaDB |
+|------|---------------------------------------|----------------------------|
+| Database service | Compose pulls and starts MariaDB automatically | Install the service or start a container yourself |
+| `email_mgmt` database | Created by the MariaDB container on first startup | Create an empty database and application account first |
+| Business tables and columns | Created/upgraded by `mgmt-server` | Created/upgraded by `mgmt-server` |
+| DDL permissions | Granted to the application account by Compose | Keep `CREATE`, `ALTER`, `INDEX`, `DROP`, `REFERENCES`, and normal read/write privileges |
+| Administrator initialization | Performed by the Compose `bootstrap` service | Run `admin bootstrap` once before first startup |
+
+With the repository Compose deployment, you do not run `CREATE DATABASE` or `CREATE TABLE`, and you do not need to run `docker pull mariadb` in advance. When running the Go program directly against an external database, create the empty `email_mgmt` database and its application account first; the application always manages the tables.
+
+### Path 1: start the control plane quickly
+
+This is the recommended path for trying the administration console locally and deploying the control plane. It requires Docker Engine and Docker Compose v2.
+
+From the repository root:
+
+```bash
+cd deploy/docker
+cp .env.example .env
+cp secrets/admin_password.example secrets/admin_password
+chmod 600 .env secrets/admin_password
+```
+
+On Windows PowerShell:
+
+```powershell
+Set-Location deploy/docker
+Copy-Item .env.example .env
+Copy-Item secrets/admin_password.example secrets/admin_password
+```
+
+Edit the following files:
+
+- `.env`: set different values for `MAILHUB_DB_PASSWORD` and `MAILHUB_DB_ROOT_PASSWORD`, plus a sufficiently long `MAILHUB_SHARED_SECRET`.
+- `secrets/admin_password`: store only the initial administrator password; release mode requires at least 12 characters.
+- `mgmt-config.yaml`: replace `domains` with the real mail domain. A test domain is sufficient when only evaluating the local interface.
+
+Never commit `.env`, `secrets/admin_password`, or a real `config.yaml` file.
+
+Validate and start:
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+```
+
+Compose starts services in this order:
+
+```text
+MariaDB healthy
+  -> bootstrap initializes the administrator and exits 0
+  -> mgmt-system starts
+```
+
+Verify the deployment:
+
+```bash
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/health/ready
+docker compose logs --no-log-prefix bootstrap
+docker compose logs --tail=100 mgmt
+```
+
+Open the administration console at `http://127.0.0.1:8080/admin/`. Compose binds only to the loopback interface by default. Use a TLS reverse proxy for remote access instead of exposing the control-plane port directly to the Internet.
+
+The current Compose stack contains only MariaDB and `mgmt-system`. It does not include `mail-node`, Postfix, Dovecot, or OpenDKIM, so it runs the complete control plane but cannot deliver real mail by itself.
+
+### Path 2: run the control plane from source
+
+Use this path to debug the Go API or React interface. It requires Go 1.22+, Node.js 20+, and a reachable MySQL 8.0 or MariaDB 10.5+ instance.
+
+When not using the Compose deployment above, create an empty database and application account first. **Create and grant access to the database only; do not create business tables manually.** See the [control-plane deployment guide](docs/control-plane-deployment.md#3-裸机systemd-新部署) for the standard SQL and permission list.
+
+Prepare the configuration:
 
 ```bash
 cp mgmt-system/config.example.yaml mgmt-system/config.yaml
-cp mail-node/config.example.yaml mail-node/config.yaml
 ```
 
-Important settings:
+At minimum, update:
 
-- `database.dsn`: control-plane database connection.
-- Administrator credentials: write the bcrypt hash to the database with `mgmt-server admin bootstrap`. `auth.admin_user` and `auth.admin_pass` are deprecated and are not used for runtime login.
-- `auth.shared_secret`: must match between mgmt-system and every mail-node.
-- External API tokens: create them from the External Access page after the control plane starts. Do not configure `auth.tokens` for new deployments.
-- `management.api_url`: mgmt-system URL used by mail-node.
-- `forward.smtp_*`: SMTP connection settings for forwarding. The forwarding target is managed through Integrated Mailboxes and synchronized into dynamic configuration.
-- `dkim.*`, `postfix.*`, and `maildir.*`: paths used to provision Postfix, Dovecot, and OpenDKIM on data-plane hosts.
+- `database.dsn`: point to an existing `email_mgmt` database.
+- `auth.shared_secret`: use a long random value. A mail-node in the Legacy/dual phase must use the same value.
+- `domains`: set the real domain or a development test domain.
+- `node_control.enabled`: keep this `false` for basic local development.
 
-#### Automatic Database Setup and Upgrades
-
-`mgmt-server` automatically creates and updates table structures, but it does not create the database named in the DSN. Create the database before deployment and grant the database account `CREATE`, `ALTER`, `INDEX`, `DROP`, and normal read/write privileges. The service refuses to start when required permissions are missing.
-
-- New deployments: create `api_applications`, `api_credentials`, `api_permissions`, `api_resources`, `api_application_permissions`, `api_access_logs`, and other current tables. The historical plaintext `api_tokens` table is not created.
-- Upgrades from older versions: on first startup, create or update current tables, then import enabled tokens from `api_tokens` and existing `auth.tokens` entries as hashed credentials. Each credential must be verified successfully before `api_tokens` is deleted. Any failure prevents service startup.
-- After a successful upgrade: verify external APIs and confirm that `api_tokens` no longer exists, then remove `auth.tokens` from the actual configuration file. New external credentials can only be issued from the administration console.
-- Rollback restriction: do not run an old binary after `api_tokens` has been deleted. Older versions may recreate the plaintext table and restore tokens from old configuration. A rollback must restore both the pre-upgrade database backup and its matching configuration file.
-
-Initialize the administrator before starting the control plane for the first time:
+Build and initialize the administrator:
 
 ```bash
+cd mgmt-system
+go build -o mgmt-server ./cmd/server
 ./mgmt-server admin bootstrap \
   --config ./config.yaml \
   --username admin \
-  --password-file /run/secrets/mailhub_initial_admin_password \
+  --password-file /path/to/initial-admin-password \
   --must-change-password
-
 ./mgmt-server serve
 ```
 
-Use `admin reset-password` for explicit account recovery. In production mode, `serve` refuses to start until bootstrap is complete. Runtime login only validates the bcrypt hash stored in the database. See [O2-P5 administrator bootstrap and recovery design](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) for migration and recovery details.
-
-Existing deployments can perform a one-time import from legacy configuration. It only applies when no administrator has been initialized and forces a password change on first login:
+In release mode, `serve` refuses to start until bootstrap is complete. Administrator login validates only the bcrypt hash stored in the database; `auth.admin_user` and `auth.admin_pass` are deprecated. Use `admin reset-password` for recovery. Existing deployments can perform a one-time legacy credential migration with:
 
 ```bash
 ./mgmt-server admin bootstrap-from-config --config ./config.yaml
 ```
 
-### 3. Build
+For React development, start a second terminal:
 
 ```bash
-cd mgmt-system
-go build -o mgmt-server ./cmd/server
+cd mgmt-system/web
+npm ci
+npm run dev
+```
 
-cd ../mail-node
+Vite listens at `http://127.0.0.1:5173/` by default. The production image builds the frontend during the Docker build and packages the assets into `mgmt-system`, so Vite does not run separately in production.
+
+### Path 3: add mail-node for real mail delivery
+
+Deploy the data plane on Linux. Windows can start `mail-node` for configuration, HTTP API, and partial business-logic debugging, but it cannot replace production Postfix, Dovecot, and OpenDKIM.
+
+Prepare the following first:
+
+- A Linux host supporting Postfix, Dovecot, and OpenDKIM, with a fixed `vmail` UID/GID.
+- A manageable mail domain with correct A, MX, SPF, DKIM, and DMARC records.
+- A usable SMTP port 25. Open authenticated, TLS-protected port 587 when clients must send mail.
+- A `mgmt-system` instance whose `/health/ready` endpoint succeeds.
+
+Copy and edit the node configuration:
+
+```bash
+cp mail-node/config.example.yaml mail-node/config.yaml
+```
+
+Review these settings carefully:
+
+- `management.api_url`: a control-plane URL reachable from mail-node; do not leave `127.0.0.1` when deploying across hosts.
+- `shared_secret`: must match the control plane during the Legacy/dual phase.
+- `maildir.base_path`, `vmail_uid`, and `vmail_gid`: must match the Postfix/Dovecot virtual-user configuration.
+- `forward.smtp_*`: SMTP settings for the integrated mailbox. Never commit real credentials.
+- `filter.outbox_path` and `filter.quarantine_base`: use persistent paths; quarantine must remain outside Maildir and the Dovecot namespace.
+- `postfix.*` and `dkim.*`: point to the Postfix map files, OpenDKIM key directory, and SigningTable/KeyTable.
+- `management.transport_mode`: register a new node before enabling its control transport. During migration, preserve the `legacy_http -> dual -> control_stream` canary and rollback gates.
+
+Build a Linux binary:
+
+```bash
+cd mail-node
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o mail-node ./cmd/node
 ```
 
-### 4. Deploy
+After installing Postfix, Dovecot, OpenDKIM, the systemd unit, and required file permissions, start the services:
 
-See the [data-plane deployment guide](docs/design/deployment-guide.md) for DNS, Postfix, Dovecot, OpenDKIM, and Roundcube setup on a new mail-node. Basic control-plane configuration is documented here and in `mgmt-system/config.example.yaml`.
+```bash
+systemctl enable postfix dovecot opendkim mail-node
+systemctl restart postfix dovecot opendkim mail-node
+systemctl status postfix dovecot opendkim mail-node
+curl -fsS http://127.0.0.1:8081/internal/health
+```
+
+Next, create an enrollment invitation from Server Pool and run `mail-node enroll` on the node. The administrator verifies the UUID, Request ID, machine fingerprint, and source before approval. The node may participate in automatic mailbox allocation only after it receives its independent credential, establishes the Control/Data channels, and passes ready/lease checks.
+
+Postfix, Dovecot, OpenDKIM, DNS, systemd, enrollment, and acceptance require additional commands. Follow all of these documents:
+
+- [Data-plane deployment guide](docs/design/deployment-guide.md)
+- [Node enrollment guide](docs/node-registration-guide.md)
+- [Node enrollment and dual-migration production runbook](docs/node-registration-operations-runbook.md)
+
+Roundcube is optional and does not affect startup of the MailHub control plane or mail-node. Install it from the data-plane guide only when Webmail is required.
+
+### Database upgrade boundaries
+
+- New deployments create all current business tables automatically and do not create the historical plaintext `api_tokens` table.
+- On the first upgrade from an older version, the service updates the schema before migrating enabled plaintext tokens from the database and old configuration to hashed credentials. Any failure prevents startup.
+- After confirming the external APIs work and `api_tokens` no longer exists, remove `auth.tokens` from the actual configuration.
+- After `api_tokens` is deleted, do not roll back only the binary. Restore both the pre-upgrade database backup and its matching configuration file.
+
+### Development verification
+
+```bash
+go test -C mgmt-system ./...
+go vet -C mgmt-system ./...
+go test -C mail-node ./...
+go vet -C mail-node ./...
+go test -C filter-contract ./...
+go test -C node-contract ./...
+
+cd mgmt-system/web
+npm ci
+npm test
+npm run build
+```
+
+A real release also requires smoke and acceptance evidence for control-plane `/health` and `/health/ready`, mail-node `/internal/health`, SMTP reception, IMAP reads, DKIM signatures, forwarding, and attachment downloads.
 
 ---
 
@@ -227,6 +388,8 @@ See the [data-plane deployment guide](docs/design/deployment-guide.md) for DNS, 
 | [External API guide](docs/api/external-api.md) | Interfaces, authentication, response envelopes, and attachment downloads for external clients |
 | [Control-plane deployment guide](docs/control-plane-deployment.md) | Docker Compose, systemd, administrator bootstrap, upgrades, and recovery |
 | [Data-plane deployment guide](docs/design/deployment-guide.md) | DNS, Postfix, Dovecot, OpenDKIM, and Roundcube for a new mail-node |
+| [Deployment capacity and attachment-storage boundaries](docs/deployment-capacity.md) | Server sizing, performance boundaries, disk planning, and the future MinIO baseline for the current local-storage architecture |
+| [Node enrollment and dual-migration production runbook](docs/node-registration-operations-runbook.md) | Per-node enrollment, credential rotation, connectivity, canary, rollback, final convergence, and handoff checklists |
 
 ### Current Topic Designs
 
@@ -235,12 +398,29 @@ See the [data-plane deployment guide](docs/design/deployment-guide.md) for DNS, 
 | [Dynamic configuration](docs/design/dynamic-config-design.md) | `system_configs`, administration UI, and hot reload |
 | [Integrated mailboxes](docs/design/integrated-mailbox-design.md) | Forwarding target pool and the active integrated mailbox |
 | [Attachment downloads](docs/design/attachment-download-design.md) | Attachment proxy, binary responses, and safe HTML previews |
+| [Maildir message path index](docs/design/maildir-message-index-design.md) | Lightweight local index, cold lookup, invalidation, and targeted single-pass parsing |
+| [MIME body projection, media detection, and safe preview](docs/design/mime-media-detection-and-safe-preview-design.md) | Authoritative v2 contract for MIME trees, body selection, CID scope, media policy, Range/HEAD, forwarding, and safe rendering |
+| [MIME body projection, media detection, and safe-preview implementation plan](docs/design/mime-media-detection-implementation-plan.md) | Real fixtures, shared DAG, test gates, rollback, and persistence prerequisites |
+| [Asynchronous MIME parsing and persistent read model](docs/design/async-mime-read-model-design.md) | Parse-once ingestion, read model, blob storage, consistency, and migration boundaries |
 | [Inline-image compatibility](docs/design/inline-image-filename-inference-design.md) | Type/extension inference and Roundcube compatibility |
 | [Lifecycle recovery](docs/design/t9-restore-design.md) | `.trash` recovery and conflict handling |
 | [Server and domain pool](docs/design/t4-t5-server-domain-pool-design.md) | Server-domain binding, DKIM, and DNS records |
 | [Authentication](docs/design/t6-auth-design.md) | Session, Bearer scope, and shared-secret authentication |
 | [Health checks](docs/design/t7-healthcheck-design.md) | Active probes, passive heartbeats, and status transitions |
 | [Administrator bootstrap and recovery](docs/design/ui-second-optimization-p5-admin-bootstrap-design.md) | First-time initialization, database login, password changes, CLI recovery, and login UI |
+
+### Node Architecture Evolution
+
+The following documents cover completed NR-P0-NR-P6 work, implemented NR-P7 code, and the remaining remote acceptance. Use the node enrollment guide for current operations; capabilities without remote acceptance are not considered complete production cutovers.
+
+| Document | Purpose |
+|------|------|
+| [Node enrollment, identity, and outbound control-channel design](docs/design/node-enrollment-control-channel-design.md) | Permanent UUID, one-time enrollment, per-node credentials, outbound control channels, and migration strategy |
+| [Node enrollment discovery and outbound control-channel implementation plan](docs/design/node-registration-control-channel-implementation-plan.md) | Scope, protocol, data model, phases, tests, and completion criteria for the current P0 track |
+| [NR-P6 DataStream migration acceptance record](docs/design/node-registration-p6-data-stream.md) | DataStream sessions, streaming reads, cancellation, rate limits, and Control/Data isolation evidence |
+| [Node enrollment and cluster-join guide](docs/node-registration-guide.md) | Standard approval, strict UUID prebinding, enrollment verification, recovery, and security checks |
+| [NR-P7 canary and Legacy rollback status](docs/design/node-registration-p7-canary-rollback.md) | Transport gates, current production acceptance boundary, and remaining convergence conditions |
+| [Node enrollment and dual-migration production runbook](docs/node-registration-operations-runbook.md) | Frontline enrollment and credential rotation, success gates, troubleshooting, rollback, and handoff templates |
 
 ### Historical and Planning Documents
 
@@ -264,10 +444,11 @@ These files preserve decision history and earlier proposals. They are not curren
 | Multi-server pool, domain pool, DKIM, DNS records | Complete |
 | React administration console (简体中文 / English / 日本語) | Complete |
 | Three-layer authentication | Complete |
-| Health checks, heartbeats, node discovery | Complete |
+| UUID enrollment, per-node credentials, outbound ControlStream/DataStream, leases, and durable commands | NR-P0-NR-P7 code complete; the first production node is in `dual`; full business canary, rollback drill, remaining nodes, and final port `8081` shutdown are pending |
 | Filter rules, active reloads, Maildir forwarding | Complete |
 | Integrated mailbox management and SMTP credential hot reload | Complete |
-| Structured MIME parsing, body queries, attachment downloads | Complete |
+| Basic structured MIME parsing, body queries, attachment downloads | Complete; complex body-tree projection and safe rendering are now the highest-priority redesign |
+| Maildir Message-ID path index and targeted single-pass parsing | Complete |
 | Trash, restore, purge, deletion recovery after restart | Complete |
 | Inline-image MIME, filename, and extension compatibility | Complete |
 | Administrator bootstrap, database login, password changes, and CLI recovery | Complete |
@@ -276,5 +457,9 @@ These files preserve decision history and earlier proposals. They are not curren
 
 | Priority | Item | Status |
 |--------|------|------|
-| P1 | General node-configuration overrides and observability | Design draft; first align NC-P0 retention semantics, ownership, and actual key names |
+| P0 (development) | MIME body projection and safe rendering | Design and implementation contracts are ready; fix real fixtures, body-tree semantics, and safe CID rendering before asynchronous persistence |
+| P0 (operations) | Node enrollment discovery and outbound control channel | NR-P7 code complete; the first production Legacy node is enrolled in place with Control/Data connected and `dual` enabled; full business canary, rollback drill, remaining nodes, and final control_stream convergence are pending |
+| P1 | General node-configuration overrides and observability | Design draft; implementation follows MIME P0 and current node-operations convergence |
+| Paused | Advertising-mail filter refactor S11/S12 | Keep `dual_shadow/false`; do not continue policy, sample, or automatic-quarantine work before node enrollment converges |
 | Candidate | Allow external mailbox creation API to select `server_id` | Not scheduled; client permissions and node-allocation policy must be decided first |
+| Candidate | MinIO attachment object storage and presigned URLs | Build after capacity triggers are reached; use the deployment-capacity document as the server baseline |
